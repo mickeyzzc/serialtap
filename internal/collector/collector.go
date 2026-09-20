@@ -264,11 +264,6 @@ const maxTail = 1 << 16 // 无换行的二进制泥石流保护：超限整块�
 
 func (a *lineAssembler) feed(data []byte) []string {
 	a.tail = append(a.tail, data...)
-	if len(a.tail) > maxTail {
-		out := string(a.tail)
-		a.tail = a.tail[:0]
-		return []string{out}
-	}
 	var lines []string
 	for {
 		i := bytes.IndexByte(a.tail, '\n')
@@ -278,6 +273,13 @@ func (a *lineAssembler) feed(data []byte) []string {
 		line := strings.TrimSuffix(string(a.tail[:i]), "\r")
 		a.tail = append(a.tail[:0], a.tail[i+1:]...) // copy=memmove，重叠安全
 		lines = append(lines, line)
+	}
+	// Split first, then flood-protect the unterminated remainder. A single
+	// read that is both huge and contains newlines must still emit real
+	// lines; dumping the whole buffer would smuggle CR/LF into a "line".
+	if len(a.tail) > maxTail {
+		lines = append(lines, string(a.tail))
+		a.tail = a.tail[:0]
 	}
 	return lines
 }

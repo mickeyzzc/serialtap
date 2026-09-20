@@ -44,6 +44,24 @@ func TestLineAssemblerFloodProtection(t *testing.T) {
 	}
 }
 
+func TestLineAssemblerSplitsBeforeFloodDump(t *testing.T) {
+	var a lineAssembler
+	payload := "rst:0x1 (POWERON_RESET)\n" + strings.Repeat("x", maxTail+50)
+	lines := a.feed([]byte(payload))
+	if len(lines) != 2 {
+		t.Fatalf("want banner + flood dump, got %d lines", len(lines))
+	}
+	if lines[0] != "rst:0x1 (POWERON_RESET)" {
+		t.Fatalf("banner lost in flood path: %q", lines[0])
+	}
+	if strings.Contains(lines[0], "\n") || strings.Contains(lines[1], "\n") {
+		t.Fatalf("flood dump smuggled a newline: %#v", lines)
+	}
+	if len(lines[1]) != maxTail+50 {
+		t.Fatalf("flood remainder size %d", len(lines[1]))
+	}
+}
+
 // runCollector: 启动采集器并注册"等待退出"清理（防泄漏协程与后续测试
 // 写 OpenPort 全局竞态 —— CI race 实锤过一次）。
 func runCollector(t *testing.T, c *Collector) *sync.WaitGroup {
