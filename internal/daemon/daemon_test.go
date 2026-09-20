@@ -202,3 +202,30 @@ func TestFlashOrchestrationWithFakeEsptool(t *testing.T) {
 	}
 	d.Shutdown()
 }
+
+// —— resume 无参必须清空整个 PAUSED（与无参 pause 对称）——
+func TestResumeAllClearsEntirePausedFile(t *testing.T) {
+	root := t.TempDir()
+	pause.PauseCLI(root, true, []string{"a", "b"}) // PAUSED 含两条
+	d, err := newTestDaemon(t, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := d.ResumeAll(""); err != nil || n == 0 {
+		t.Fatalf("ResumeAll 失败: n=%d err=%v", n, err)
+	}
+	st, _, _ := pause.LoadPauseFile(root)
+	if st.Len() != 0 {
+		t.Fatalf("PAUSED 未清空: %d 条", st.Len())
+	}
+	// 带参 resume 只删单条
+	pause.PauseCLI(root, true, []string{"a", "b"})
+	if n, _ := d.ResumeAll("a"); n == 0 {
+		t.Fatal("单条 resume 失败")
+	}
+	st, _, _ = pause.LoadPauseFile(root)
+	if st.Len() != 1 || !st.Matches(device.DeviceInfo{Name: "b"}) {
+		t.Fatalf("单条 resume 语义错误: len=%d", st.Len())
+	}
+	d.Shutdown()
+}

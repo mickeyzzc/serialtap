@@ -78,12 +78,15 @@ func (d *daemon) Release(pattern string, forDur time.Duration, untilIdle bool) (
 }
 
 // ResumeAll: 恢复匹配设备（清 PAUSED 文件条目 + 撤销 release + 直接 Resume）。
+// pattern 为空 = 恢复全部（清空 PAUSED，与无参 pause 全停对称）。
 func (d *daemon) ResumeAll(pattern string) (int, error) {
 	n := 0
+	pats := []string{}
 	if pattern != "" {
-		if err := pause.PauseCLI(d.cfg.Root, false, []string{pattern}); err == nil {
-			n++
-		}
+		pats = []string{pattern}
+	}
+	if err := pause.PauseCLI(d.cfg.Root, false, pats); err == nil {
+		n++
 	}
 	d.mu.Lock()
 	var resumed []string
