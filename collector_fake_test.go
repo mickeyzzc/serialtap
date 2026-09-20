@@ -44,6 +44,23 @@ func TestAnalyzeChronologicalFirstLast(t *testing.T) {
 	}
 }
 
+// runCollector: 启动采集器并注册"等待退出"清理（防止泄漏协程与后续测试
+// 写 portOpener 全局竞态 —— CI race 实锤过一次）。
+func runCollector(t *testing.T, c *Collector) *sync.WaitGroup {
+	t.Helper()
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		c.Run()
+	}()
+	t.Cleanup(func() {
+		c.Stop()
+		wg.Wait()
+	})
+	return &wg
+}
+
 // —— 假串口：让采集器全链路可离线测试 ——
 type fakePort struct {
 	mu     sync.Mutex
@@ -188,7 +205,7 @@ func TestCollectorSilentWatchdog(t *testing.T) {
 		w, _ := NewDeviceWriter(root, "quiet", 64)
 		c := NewCollector(DeviceInfo{Tty: "/dev/fake", Key: "k", Name: "quiet"}, cfg, w,
 			NewSignatureEngine(nil), NewPauseState(), func(string, ...any) {})
-		go c.Run()
+		runCollector(t, c)
 		time.Sleep(1500 * time.Millisecond)
 		c.Stop()
 		day := time.Now().Format("20060102")
@@ -207,7 +224,7 @@ func TestCollectorSilentWatchdog(t *testing.T) {
 		w, _ := NewDeviceWriter(root, "chatty", 64)
 		c := NewCollector(DeviceInfo{Tty: "/dev/fake", Key: "k", Name: "chatty"}, cfg, w,
 			NewSignatureEngine(nil), NewPauseState(), func(string, ...any) {})
-		go c.Run()
+		runCollector(t, c)
 		day := time.Now().Format("20060102")
 		waitFor(t, 5*time.Second, func() bool {
 			return strings.Contains(readLogFile(t, filepath.Join(root, "chatty", "events-"+day+".log")), "forcing reopen")
@@ -240,7 +257,7 @@ func TestCollectorReadErrorReopens(t *testing.T) {
 	w, _ := NewDeviceWriter(root, "errdev", 64)
 	c := NewCollector(DeviceInfo{Tty: "/dev/fake", Key: "k", Name: "errdev"}, cfg, w,
 		NewSignatureEngine(nil), NewPauseState(), func(string, ...any) {})
-	go c.Run()
+	runCollector(t, c)
 	day := time.Now().Format("20060102")
 	waitFor(t, 5*time.Second, func() bool {
 		return strings.Contains(readLogFile(t, filepath.Join(root, "errdev", "serial-"+day+".log")), "after reopen")
@@ -270,7 +287,7 @@ func TestCollectorPauseResume(t *testing.T) {
 	w, _ := NewDeviceWriter(root, "pdev", 64)
 	c := NewCollector(DeviceInfo{Tty: "/dev/ttyFAKE", Key: "k", Name: "pdev"}, cfg, w,
 		NewSignatureEngine(nil), NewPauseState(), func(string, ...any) {})
-	go c.Run()
+	runCollector(t, c)
 	day := time.Now().Format("20060102")
 	waitFor(t, 3*time.Second, func() bool {
 		return strings.Contains(readLogFile(t, filepath.Join(root, "pdev", "events-"+day+".log")), "serial opened")
@@ -321,7 +338,7 @@ func TestCollectorOpenFailureLogsError(t *testing.T) {
 	w, _ := NewDeviceWriter(root, "busydev", 64)
 	c := NewCollector(DeviceInfo{Tty: "/dev/fake", Key: "k", Name: "busydev"}, cfg, w,
 		NewSignatureEngine(nil), NewPauseState(), func(string, ...any) {})
-	go c.Run()
+	runCollector(t, c)
 	day := time.Now().Format("20060102")
 	waitFor(t, 5*time.Second, func() bool {
 		ev := readLogFile(t, filepath.Join(root, "busydev", "events-"+day+".log"))

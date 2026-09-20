@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -134,6 +135,7 @@ type daemon struct {
 	namesUsed  map[string]bool
 	enum       func() ([]DeviceInfo, error)
 	logf       func(format string, args ...any)
+	wg         sync.WaitGroup // 采集器 Run 协程追踪（shutdown 等待，防泄漏）
 }
 
 func newDaemon(cfg Config, excl []*regexp.Regexp, enum func() ([]DeviceInfo, error), logf func(string, ...any)) (*daemon, error) {
@@ -183,7 +185,11 @@ func (d *daemon) tick() {
 		d.collectors[inf.Key] = c
 		d.logf("[watch] 设备接入 %s → %s (key=%s by-id=%s vid:pid=%s:%s)",
 			inf.Tty, name, inf.Key, inf.ByID, inf.VID, inf.PID)
-		go c.Run()
+		d.wg.Add(1)
+		go func() {
+			defer d.wg.Done()
+			c.Run()
+		}()
 	}
 	for key, c := range d.collectors {
 		if !seen[key] {
@@ -224,6 +230,7 @@ func (d *daemon) shutdown() {
 	for _, c := range d.collectors {
 		c.Stop()
 	}
+	d.wg.Wait() // 等全部采集协程退出，不留泄漏 goroutine
 }
 
 func cmdRun(args []string) error {
