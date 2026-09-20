@@ -1,3 +1,5 @@
+//go:build linux
+
 package collector
 
 import (
@@ -299,3 +301,76 @@ func TestSuspendTimeout(t *testing.T) {
 	}
 	c.sr.portOpen.Store(false)
 }
+
+// —— issue #4：成功会话后退避必须复位，不得棘轮到上限 ——
+func TestBackoffResetsAfterSuccessfulSession(t *testing.T) {
+	root := t.TempDir()
+	var mu sync.Mutex
+	opens := 0
+	old := OpenPort
+	OpenPort = func(tty string, baud int) (Port, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		opens++
+		switch {
+		case opens <= 2: // 前两次 open 失败 → backoff 1s→2s
+			return nil, os.ErrPermission
+		case opens == 3: // 第三次成功会话（读到数据后 read 错）
+			return &errReadOncePort{chunks: [][]byte{[]byte("ok\n")}}, nil
+		default:
+			return nil, os.ErrPermission // 再次失败
+		}
+	}
+	t.Cleanup(func() { OpenPort = old })
+
+	cfg := config.DefaultConfig()
+	cfg.Root = root
+	cfg.ReopenMinS = 1
+	cfg.ReopenMaxS = 8
+	w, _ := logstore.NewDeviceWriter(root, "bdev", 64)
+	c := NewCollector(device.DeviceInfo{Tty: "/dev/fake", Key: "k", Name: "bdev"}, cfg, w,
+		signature.New(nil), pause.NewPauseState(), nil)
+	wg := runCollector(t, c)
+
+	// 等到第 4 次 open 失败（退避已按复位后的值记账）
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := opens
+		mu.Unlock()
+		if n >= 4 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	c.Stop()
+	wg.Wait()
+	mu.Lock()
+	defer mu.Unlock()
+	if opens < 4 {
+		t.Fatalf("序列未走完: opens=%d", opens)
+	}
+	// 时序：open3 成功会话复位 backoff=1s；port-lost 重连睡 1s（=min ✓ 复位生效）
+	// 后翻倍到 2s；open4 失败是新连击的第二次失败 → 2s（而非旧棘轮 4s/8s）
+	if got := c.curBackoff; got != 2*time.Second {
+		t.Fatalf("退避复位语义错误: %s (want 2s = min 翻倍一次，非棘轮值)", got)
+	}
+}
+
+// errReadOncePort: 吐一块数据后读错误（制造"成功会话"）
+type errReadOncePort struct {
+	chunks [][]byte
+}
+
+func (p *errReadOncePort) Read(b []byte) (int, error) {
+	if len(p.chunks) > 0 {
+		c := p.chunks[0]
+		p.chunks = p.chunks[1:]
+		return copy(b, c), nil
+	}
+	return 0, os.ErrClosed
+}
+func (p *errReadOncePort) Close() error                         { return nil }
+func (p *errReadOncePort) SetDTR(bool) error                    { return nil }
+func (p *errReadOncePort) SetRTS(bool) error                    { return nil }
+func (p *errReadOncePort) SetReadTimeout(d time.Duration) error { return nil }

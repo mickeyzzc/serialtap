@@ -24,12 +24,15 @@ type DeviceWriter struct {
 	name     string
 	maxBytes int64
 
-	mu         sync.Mutex
-	day        string
-	serialF    *os.File
-	eventsF    *os.File
-	serialSize int64
-	suffix     int
+	mu             sync.Mutex
+	day            string
+	serialF        *os.File
+	eventsF        *os.File
+	serialSize     int64
+	eventsSize     int64
+	serialSuffix   int
+	eventsSuffix   int
+	eventsMaxBytes int64 // events 通道大小轮转阈值（默认同 maxBytes）
 }
 
 func NewDeviceWriter(root, name string, maxMB int) (*DeviceWriter, error) {
@@ -50,6 +53,18 @@ func (w *DeviceWriter) filePath(kind, day string, suffix int) string {
 		base += fmt.Sprintf(".%03d", suffix)
 	}
 	return filepath.Join(w.root, w.name, base+".log")
+}
+
+// highestSuffix: 某通道当日既有文件的最大轮转后缀（0 = 只有基础文件/无）。
+// 重启后续写要从这里续起，否则轮转会 O_APPEND 到旧编号文件上（issue #5）。
+func (w *DeviceWriter) highestSuffix(kind, day string) int {
+	best := 0
+	for i := 1; ; i++ {
+		if _, err := os.Stat(w.filePath(kind, day, i)); err != nil {
+			return best
+		}
+		best = i
+	}
 }
 
 func (w *DeviceWriter) ensureDayLocked(now time.Time) error {
@@ -79,7 +94,15 @@ func (w *DeviceWriter) ensureDayLocked(now time.Time) error {
 	} else {
 		w.serialSize = 0
 	}
-	w.day, w.serialF, w.eventsF, w.suffix = day, sf, ef, 0
+	if fi, err := ef.Stat(); err == nil {
+		w.eventsSize = fi.Size()
+	} else {
+		w.eventsSize = 0
+	}
+	// 重启续写：suffix 从既有最大编号续起，避免轮转时撞车（issue #5）
+	w.day, w.serialF, w.eventsF = day, sf, ef
+	w.serialSuffix = w.highestSuffix("serial", day)
+	w.eventsSuffix = w.highestSuffix("events", day)
 	return nil
 }
 
@@ -93,8 +116,8 @@ func (w *DeviceWriter) WriteLine(line string) error {
 	}
 	if w.maxBytes > 0 && w.serialSize >= w.maxBytes {
 		_ = w.serialF.Close()
-		w.suffix++
-		nf, err := os.OpenFile(w.filePath("serial", w.day, w.suffix), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		w.serialSuffix++
+		nf, err := os.OpenFile(w.filePath("serial", w.day, w.serialSuffix), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 		if err != nil {
 			w.serialF = nil
 			return err
@@ -107,7 +130,8 @@ func (w *DeviceWriter) WriteLine(line string) error {
 	return err
 }
 
-// WriteEvent: 写一行事件流（调用方已格式化好内容）。
+// WriteEvent: 写一行事件流（调用方已格式化好内容）。事件量低，
+// 但刷屏型故障（如复位循环）下同样需要大小轮转兜底（issue #5）。
 func (w *DeviceWriter) WriteEvent(line string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -115,7 +139,23 @@ func (w *DeviceWriter) WriteEvent(line string) error {
 	if err := w.ensureDayLocked(now); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintf(w.eventsF, "[%s] %s\n", Stamp(now), line)
+	maxB := w.eventsMaxBytes
+	if maxB == 0 {
+		maxB = w.maxBytes
+	}
+	if maxB > 0 && w.eventsSize >= maxB {
+		_ = w.eventsF.Close()
+		w.eventsSuffix++
+		nf, err := os.OpenFile(w.filePath("events", w.day, w.eventsSuffix), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		if err != nil {
+			w.eventsF = nil
+			return err
+		}
+		w.eventsF = nf
+		w.eventsSize = 0
+	}
+	n, err := fmt.Fprintf(w.eventsF, "[%s] %s\n", Stamp(now), line)
+	w.eventsSize += int64(n)
 	return err
 }
 

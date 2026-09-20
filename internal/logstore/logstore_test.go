@@ -90,3 +90,48 @@ func TestStampFormat(t *testing.T) {
 		t.Fatalf("Stamp 格式长度异常: %q", ts)
 	}
 }
+
+// —— issue #5：重启后大小轮转后缀不得与既有文件撞车 ——
+func TestSizeRotationSuffixSkipsExistingAfterRestart(t *testing.T) {
+	root := t.TempDir()
+	day := time.Now().Format("20060102")
+	dir := filepath.Join(root, "rdev")
+	os.MkdirAll(dir, 0o755)
+	// 模拟"上次运行遗留的 .001"
+	os.WriteFile(filepath.Join(dir, "serial-"+day+".001.log"), []byte("OLD"), 0o644)
+
+	w, _ := NewDeviceWriter(root, "rdev", 1)
+	w.maxBytes = 50
+	for i := 0; i < 10; i++ {
+		if err := w.WriteLine(strings.Repeat("a", 20)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w.Close()
+
+	old, err := os.ReadFile(filepath.Join(dir, "serial-"+day+".001.log"))
+	if err != nil || string(old) != "OLD" {
+		t.Fatalf("遗留 .001 被污染: %q err=%v", old, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "serial-"+day+".002.log")); err != nil {
+		t.Fatalf("新轮转文件应为 .002: %v", err)
+	}
+}
+
+// —— issue #5：events 通道也要按大小轮转 ——
+func TestEventsRotateBySize(t *testing.T) {
+	root := t.TempDir()
+	w, _ := NewDeviceWriter(root, "evrot", 1)
+	w.eventsMaxBytes = 60 // 直接压小阈值
+	for i := 0; i < 10; i++ {
+		if err := w.WriteEvent(strings.Repeat("e", 20)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w.Close()
+	day := time.Now().Format("20060102")
+	m, _ := filepath.Glob(filepath.Join(root, "evrot", "events-"+day+"*.log"))
+	if len(m) < 2 {
+		t.Fatalf("events 未按大小轮转: %v", m)
+	}
+}

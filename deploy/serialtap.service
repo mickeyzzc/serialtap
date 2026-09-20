@@ -1,6 +1,6 @@
 [Unit]
-Description=serialtap — USB 串口持续采集器（MiBee Cam 家族调试）
-Documentation=file://%h/Projects/esp-cam/serialtap/README.md
+Description=serialtap — USB serial log collector
+Documentation=https://github.com/mickeyzzc/serialtap
 
 [Service]
 # 用户级 systemd 服务（systemctl --user）。开机自启需:

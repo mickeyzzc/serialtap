@@ -55,12 +55,13 @@ func defaultOpenPort(tty string, baud int) (Port, error) {
 //     看门狗在静默超阈值时强制重开。只对"保证周期性输出日志"的设备开启
 //     （如 30s 心跳），否则合法的安静设备会被复位循环打死。
 type Collector struct {
-	dev    device.DeviceInfo
-	cfg    config.Config
-	w      *logstore.DeviceWriter
-	sigs   *signature.SignatureEngine
-	pause  *pause.PauseState
-	stdlog func(format string, args ...any)
+	curBackoff time.Duration // 当前重开退避（测试可观测）
+	dev        device.DeviceInfo
+	cfg        config.Config
+	w          *logstore.DeviceWriter
+	sigs       *signature.SignatureEngine
+	pause      *pause.PauseState
+	stdlog     func(format string, args ...any)
 
 	stopOnce sync.Once
 	stop     chan struct{}
@@ -123,6 +124,13 @@ func (c *Collector) Run() {
 
 		reason, openErr := c.collectOnce()
 
+		// 成功 open 过的会话（任何非 openFailed 退出）把退避复位 ——
+		// 否则长期运行中偶发断连会把 backoff 棘轮到上限，之后每次
+		// 瞬断都白等 reopen_max_s（issue #4）
+		if reason != reasonOpenFailed {
+			backoff = time.Duration(c.cfg.ReopenMinS) * time.Second
+		}
+
 		select {
 		case <-c.stop:
 			c.event("collector stopped")
@@ -135,6 +143,7 @@ func (c *Collector) Run() {
 		case reasonOpenFailed:
 			// 设备可能已拔走（watcher 会 Stop 我们）；也可能被别的进程占用
 			// （EBUSY）——错误详情必须进事件流，否则排查全靠猜。指数退避防刷屏。
+			c.curBackoff = backoff
 			c.event("open failed: %v — retry in %s", openErr, backoff)
 			if !c.sleep(backoff) {
 				return
