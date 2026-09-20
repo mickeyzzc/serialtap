@@ -1,0 +1,98 @@
+package ctl
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+func TestServerClientRoundTrip(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "s.sock")
+	srv, err := Listen(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go srv.Serve(func(req Request, respond func(Response)) {
+		switch req.Cmd {
+		case "status":
+			respond(Response{OK: true, Devices: []DevState{{Name: "a", Tty: "/dev/x", Key: "k", State: "collecting"}}})
+		case "flash":
+			respond(Response{OK: true, Event: "flash-log", Line: "flashing 50%"})
+			respond(Response{OK: true, Event: "flash-done", Code: 0})
+		default:
+			respond(Response{OK: false, Error: "unknown cmd"})
+		}
+	})
+	defer srv.Close()
+
+	// 单响应
+	var got DevState
+	err = Send(sock, Request{Cmd: "status"}, func(r Response) bool {
+		if r.OK && len(r.Devices) == 1 {
+			got = r.Devices[0]
+			return true
+		}
+		return false
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "a" || got.State != "collecting" {
+		t.Fatalf("status 数据错误: %+v", got)
+	}
+
+	// flash 流式：两行后 flash-done 结束
+	var lines []string
+	err = Send(sock, Request{Cmd: "flash"}, func(r Response) bool {
+		if r.Event == "flash-log" {
+			lines = append(lines, r.Line)
+		}
+		return r.Event == "flash-done"
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lines) != 1 || lines[0] != "flashing 50%" {
+		t.Fatalf("flash 流错误: %v", lines)
+	}
+
+	// 未知命令
+	if err := Send(sock, Request{Cmd: "zzz"}, func(r Response) bool { return true }); err != nil {
+		t.Fatal(err)
+	}
+
+	// 守护不在 → 连接错误
+	if err := Send(filepath.Join(t.TempDir(), "nope.sock"), Request{Cmd: "status"}, nil); err == nil {
+		t.Fatal("缺 socket 应报错")
+	}
+}
+
+func TestSocketFileCleanedUp(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "s2.sock")
+	srv, err := Listen(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go srv.Serve(func(req Request, respond func(Response)) { respond(Response{OK: true}) })
+	time.Sleep(50 * time.Millisecond)
+	srv.Close()
+	if _, err := osStat(sock); !osIsNotExist(err) {
+		t.Fatal("Close 后 socket 文件应删除")
+	}
+	// 残留 socket 可被 Listen 清理
+	srv2, err := Listen(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv2.Close()
+}
+
+// 小包装避免直接引 os（测试文件顶部已够干净）
+func osStat(p string) (any, error) {
+	return os.Stat(p)
+}
+
+func osIsNotExist(err error) bool {
+	return err != nil && os.IsNotExist(err)
+}

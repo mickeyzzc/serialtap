@@ -14,6 +14,10 @@
 - 错误签名引擎：ESP-IDF 常见故障行内置（`rst:0x`、`E (`、lwIP `accept (n)`、
   Guru Meditation、WDT、Backtrace 等），`signatures_extra` 正则扩展
 - 刷写安全门：`pause`/`resume` 暂停清单，USB 刷机前让出串口
+- **代理刷固件**：`flash` 一条命令完成让口 → esptool → 自动回采，进度流式回传；
+  支持 `bin@offset` 多镜像与 ESP-IDF `flasher_args.json`
+- **临时让口**：`release`（端口空闲 3s 自动回采 / `--for` 限时回采），
+  经守护进程 unix socket 控制通道；`status` 查实时设备状态
 - 离线分析：`analyze` 签名汇总（计数/首末时间/样本）、
   `decode-backtrace` addr2line 解码（自动发现 ESP-IDF 工具链，`elf_map` 按设备名配）
 - 零丢失：跨块行拼装，端口关闭时残余半行以 `…partial` 标记落盘

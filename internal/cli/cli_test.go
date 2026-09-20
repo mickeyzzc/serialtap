@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/mickeyzzc/serialtap/internal/collector"
+	"github.com/mickeyzzc/serialtap/internal/ctl"
+	"github.com/mickeyzzc/serialtap/internal/pause"
 	"github.com/mickeyzzc/serialtap/internal/testutil"
 )
 
@@ -161,5 +163,81 @@ func TestMiscSmallSurfaces(t *testing.T) {
 	}
 	if len(m) != 2 || m.String() != "" {
 		t.Fatalf("multiFlag 错误: %v", m)
+	}
+}
+
+// —— 控制通道子命令（本地起真 socket 服务验证 CLI → 协议全链路）——
+func TestCtlSubcommandsAgainstLiveServer(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "ctl.sock")
+	srv, err := ctl.Listen(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go srv.Serve(func(req ctl.Request, respond func(ctl.Response)) {
+		switch req.Cmd {
+		case "status":
+			respond(ctl.Response{OK: true, Devices: []ctl.DevState{
+				{Name: "luatos", Tty: "/dev/ttyACM1", Key: "k1", State: "collecting"}}})
+		case "release":
+			if req.Pattern == "" || (!req.UntilIdle && req.ForMs == 0) {
+				respond(ctl.Response{OK: false, Error: "bad release"})
+				return
+			}
+			respond(ctl.Response{OK: true, Line: "1"})
+		case "flash":
+			if req.Spec.Bins == nil && req.Spec.ArgsFile == "" {
+				respond(ctl.Response{OK: false, Error: "no bins"})
+				return
+			}
+			respond(ctl.Response{OK: true, Event: "flash-log", Line: "progress 1"})
+			respond(ctl.Response{OK: true, Event: "flash-done"})
+		default:
+			respond(ctl.Response{OK: true})
+		}
+	})
+	t.Cleanup(srv.Close)
+
+	// status
+	if code := Run([]string{"status", "--sock", sock}); code != 0 {
+		t.Fatalf("status 失败: %d", code)
+	}
+	// release（默认 until_idle）
+	if code := Run([]string{"release", "luatos", "--sock", sock}); code != 0 {
+		t.Fatalf("release 失败: %d", code)
+	}
+	// release --for
+	if code := Run([]string{"release", "luatos", "--for", "2m", "--sock", sock}); code != 0 {
+		t.Fatalf("release --for 失败: %d", code)
+	}
+	// flash bin@offset
+	if code := Run([]string{"flash", "luatos", "/dev/null@0x10000", "--sock", sock}); code != 0 {
+		t.Fatalf("flash 失败: %d", code)
+	}
+	// flash 参数校验失败（无 bin 无 args-file）
+	if code := Run([]string{"flash", "luatos", "--sock", sock}); code != 1 {
+		t.Fatalf("flash 无镜像应退出码 1: %d", code)
+	}
+	// release 缺参数
+	if code := Run([]string{"release", "--sock", sock}); code != 1 {
+		t.Fatalf("release 缺设备应退出码 1: %d", code)
+	}
+	// --for 坏值
+	if code := Run([]string{"release", "x", "--for", "bad", "--sock", sock}); code != 1 {
+		t.Fatalf("坏 --for 应退出码 1: %d", code)
+	}
+}
+
+func TestPauseFallsBackToFileWhenNoDaemon(t *testing.T) {
+	// socket 不存在 → 回退文件直改（历史行为）
+	root := t.TempDir()
+	sock := filepath.Join(t.TempDir(), "gone.sock")
+	if code := Run([]string{"pause", "ch340", "--sock", sock, "--root", root}); code != 0 {
+		t.Fatalf("pause 文件回退失败: %d", code)
+	}
+	if _, err := os.Stat(pause.PauseFilePath(root)); err != nil {
+		t.Fatal("回退后 PAUSED 文件应存在")
+	}
+	if code := Run([]string{"resume", "--sock", sock, "--root", root}); code != 0 {
+		t.Fatalf("resume 文件回退失败: %d", code)
 	}
 }

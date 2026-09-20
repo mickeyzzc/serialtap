@@ -3,13 +3,12 @@ package device
 
 import (
 	"os"
-
-	"github.com/mickeyzzc/serialtap/internal/config"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 
+	"github.com/mickeyzzc/serialtap/internal/config"
 	serial "go.bug.st/serial"
 )
 

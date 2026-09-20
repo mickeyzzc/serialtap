@@ -21,8 +21,9 @@ USB serial device (CH340/CH343/CP210x/FTDI/native USB-CDC…).
   lwIP `accept (n)`、Guru Meditation、WDT、Backtrace…），正则可自由扩展
 - **Backtrace 解码**：`decode-backtrace` 提取地址帧交给 addr2line 翻译成
   `源文件:行号`，自动发现 ESP-IDF 工具链
-- **刷写安全门**：`pause`/`resume` 暂停清单 —— USB 刷机前 pause，采集器主动让出
-  端口（防止 esptool 与常驻采集器抢口把 ESP32 楔进 ROM 下载模式）
+- **刷写安全门**：`pause`/`resume` 暂停清单、`release` 临时让口（空闲自动回采）、
+  `flash` 代理刷固件（守护进程经 unix socket 控制通道编排：让口 → esptool → 回采，
+  防止 esptool 与常驻采集器抢口把 ESP32 楔进 ROM 下载模式）
 - **零丢失**：跨读取块行拼装，端口关闭时的残余半行以 `…partial` 标记落盘
 - **纯 Go 静态二进制**：无 CGO、无 libudev 依赖，vendor 已含全部依赖，
   离线可构建，交叉编译即拷即用
@@ -45,7 +46,10 @@ make build                 # 或: go build .
 | `run` | 守护模式。轮询发现 USB 串口，每设备一个采集协程 |
 | `attach TTY [--name N]` | 单口采集（手动围观/测试，可接 socat PTY） |
 | `list` | 列出当前设备与身份 |
-| `pause [RE]` / `resume [RE]` | 暂停/恢复采集（省略 = 全部）。**USB 刷机前必 pause** |
+| `pause [RE]` / `resume [RE]` | 暂停/恢复采集（省略 = 全部） |
+| `release RE [--for 5m]` | **临时让出串口**给外部工具：默认端口空闲 3 秒自动回采，或限时自动回采 |
+| `flash RE <bin>[@0x10000]...` | **代理刷固件**：让口 → esptool → 自动回采，进度流式回传；`--args-file build/flasher_args.json` 一键刷 IDF 全套 |
+| `status` | 守护进程与设备实时状态（collecting/paused/suspended/flashing） |
 | `analyze LOG...` | 离线签名扫描：计数 / 首末时间 / 样本行汇总表 |
 | `decode-backtrace LOG` | `Backtrace:` 地址帧 addr2line 解码 |
 
@@ -130,7 +134,9 @@ internal/collector/        # 单设备采集器（open-once-and-hold、可注入
 internal/logstore/         # 双通道日志写入 / 轮转 / 保留期清理
 internal/signature/        # 错误签名引擎
 internal/pause/            # 刷写暂停清单
-internal/daemon/           # 热插拔守护循环（枚举 diff + 起停采集器）
+internal/daemon/           # 热插拔守护循环（枚举 diff + 起停采集器 + release/flash 编排）
+internal/flash/            # 代理刷固件（esptool 编排 + flasher_args.json 解析）
+internal/ctl/              # 控制 unix socket（JSON 行协议）
 internal/analyze/          # 离线分析（签名汇总 + addr2line 解码）
 internal/testutil/         # 跨包测试助手（假串口等）
 ```

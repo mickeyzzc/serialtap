@@ -142,3 +142,28 @@ func TestSanitizeName(t *testing.T) {
 		t.Fatalf("非法字符未替换: %q", SanitizeName("a/b\\c*d"))
 	}
 }
+
+// PortHolders: 用假 /proc 树验证 fd 符号链接扫描（含"不报自己"语义）
+func TestPortHoldersAtFakeProc(t *testing.T) {
+	proc := t.TempDir()
+	// 假进程 4242：fd 3 → /dev/ttyFAKE0；fd 4 → 别的
+	pDir := filepath.Join(proc, "4242", "fd")
+	os.MkdirAll(pDir, 0o755)
+	os.Symlink("/dev/ttyFAKE0", filepath.Join(pDir, "3"))
+	os.Symlink("/dev/null", filepath.Join(pDir, "4"))
+	// 假进程 5353：不持有
+	os.MkdirAll(filepath.Join(proc, "5353", "fd"), 0o755)
+
+	got := PortHoldersAt(proc, "/dev/ttyFAKE0")
+	if len(got) != 1 || got[0] != 4242 {
+		t.Fatalf("持有者识别错误: %v", got)
+	}
+	if got := PortHoldersAt(proc, "/dev/ttyNONE"); len(got) != 0 {
+		t.Fatalf("无人持有应返回空: %v", got)
+	}
+	// 非进程目录被忽略
+	os.MkdirAll(filepath.Join(proc, "notapid", "fd"), 0o755)
+	if got := PortHoldersAt(proc, "/dev/ttyFAKE0"); len(got) != 1 {
+		t.Fatalf("非 PID 目录干扰: %v", got)
+	}
+}

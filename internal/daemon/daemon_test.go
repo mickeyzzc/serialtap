@@ -10,6 +10,7 @@ import (
 	"github.com/mickeyzzc/serialtap/internal/collector"
 	"github.com/mickeyzzc/serialtap/internal/config"
 	"github.com/mickeyzzc/serialtap/internal/device"
+	"github.com/mickeyzzc/serialtap/internal/flash"
 	"github.com/mickeyzzc/serialtap/internal/pause"
 	"github.com/mickeyzzc/serialtap/internal/testutil"
 )
@@ -82,5 +83,122 @@ func TestEnumErrorDoesNotPanic(t *testing.T) {
 		t.Fatal(err)
 	}
 	d.Tick() // 只记日志不崩
+	d.Shutdown()
+}
+
+// —— release / flash 编排（fake esptool + 假端口，无硬件）——
+func newTestDaemon(t *testing.T, root string, devs ...device.DeviceInfo) (*daemon, error) {
+	cfg := config.DefaultConfig()
+	cfg.Root = root
+	cfg.PollMs = 10
+	return New(cfg, nil, func() ([]device.DeviceInfo, error) { return devs, nil }, nil)
+}
+
+func TestReleaseUntilIdleAutoResumes(t *testing.T) {
+	root := t.TempDir()
+	old := collector.OpenPort
+	collector.OpenPort = func(tty string, baud int) (collector.Port, error) {
+		return &testutil.FakePort{Chunks: [][]byte{[]byte("x\n")}}, nil
+	}
+	t.Cleanup(func() { collector.OpenPort = old })
+
+	d, err := newTestDaemon(t, root, device.DeviceInfo{Tty: "/dev/ttyFAKE", Key: "kA", Name: "fakeA"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Tick()
+	testutil.WaitFor(t, 3*time.Second, func() bool { return d.Collectors() == 1 }, "采集器未起")
+
+	// 让口：until_idle（无人持有 → idleQuietS 后自动回采）
+	n, err := d.Release("fakeA", 0, true)
+	if err != nil || n != 1 {
+		t.Fatalf("Release 失败: n=%d err=%v", n, err)
+	}
+	if st := d.Status()[0].State; st != "suspended" {
+		t.Fatalf("Release 后状态应为 suspended: %s", st)
+	}
+	// 手动驱动 tick 直到自动回采（3s 空闲确认）
+	deadline := time.Now().Add(10 * time.Second)
+	resumed := false
+	for time.Now().Before(deadline) {
+		d.Tick()
+		if len(d.releases) == 0 {
+			resumed = true
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if !resumed {
+		t.Fatal("until_idle 未自动回采")
+	}
+	d.Shutdown()
+}
+
+func TestReleaseTimedAutoResumes(t *testing.T) {
+	root := t.TempDir()
+	old := collector.OpenPort
+	collector.OpenPort = func(tty string, baud int) (collector.Port, error) {
+		return &testutil.FakePort{}, nil
+	}
+	t.Cleanup(func() { collector.OpenPort = old })
+
+	d, err := newTestDaemon(t, root, device.DeviceInfo{Tty: "/dev/ttyFAKE", Key: "kA", Name: "fakeA"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Tick()
+	if _, err := d.Release("fakeA", 100*time.Millisecond, false); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		d.Tick()
+		if len(d.releases) == 0 {
+			d.Shutdown()
+			return // 到期自动回采 ✓
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	d.Shutdown()
+	t.Fatal("限时 release 未自动回采")
+}
+
+func TestFlashOrchestrationWithFakeEsptool(t *testing.T) {
+	root := t.TempDir()
+	a2l := filepath.Join(root, "fake-esptool")
+	os.WriteFile(a2l, []byte("#!/bin/sh\necho \"fake flashing $*\"\nexit 0\n"), 0o755)
+
+	old := collector.OpenPort
+	collector.OpenPort = func(tty string, baud int) (collector.Port, error) {
+		return &testutil.FakePort{}, nil
+	}
+	t.Cleanup(func() { collector.OpenPort = old })
+
+	d, err := newTestDaemon(t, root, device.DeviceInfo{Tty: "/dev/ttyFAKE", Key: "kA", Name: "fakeA"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Tick()
+
+	var lines []string
+	bin := filepath.Join(root, "app.bin")
+	os.WriteFile(bin, []byte("x"), 0o644)
+	err = d.Flash("fakeA", flash.Spec{
+		Esptool: a2l, Bins: []flash.BinSpec{{Path: bin, Offset: "0x0"}},
+	}, func(l string) { lines = append(lines, l) })
+	if err != nil {
+		t.Fatalf("代理刷失败: %v", err)
+	}
+	if len(lines) == 0 || !strings.Contains(lines[0], "fake flashing") {
+		t.Fatalf("esptool 输出未流式回传: %v", lines)
+	}
+	// 刷完自动回采
+	if c := d.collectors["kA"]; c == nil || c.State() != "collecting" {
+		t.Fatalf("刷完未回采: %+v", d.Status())
+	}
+	// 无匹配设备
+	if err := d.Flash("nope", flash.Spec{}, func(string) {}); err == nil {
+		t.Fatal("无匹配设备应报错")
+	}
 	d.Shutdown()
 }

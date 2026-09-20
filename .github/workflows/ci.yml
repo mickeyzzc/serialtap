@@ -24,7 +24,7 @@ jobs:
           go-version-file: go.mod
       - name: Test with coverage gate (80%)
         run: |
-          go test -race -count=1 -covermode=atomic -coverprofile=cover.out ./...
+          go test -race -count=1 -coverpkg=./... -covermode=atomic -coverprofile=cover.out ./...
           pct=$(go tool cover -func cover.out | awk '/^total:/ {sub("%","",$3); print $3}')
           echo "coverage: ${pct}%"
           awk -v p="$pct" 'BEGIN { exit (p < 80) ? 1 : 0 }'

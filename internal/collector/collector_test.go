@@ -214,7 +214,7 @@ func TestPauseResume(t *testing.T) {
 	c.pauseState().Clear()
 	testutil.WaitFor(t, 5*time.Second, func() bool {
 		s := testutil.ReadFile(t, evPath)
-		return strings.Contains(s, "unpaused") && strings.Count(s, "serial opened") >= 2
+		return strings.Contains(s, "hold cleared") && strings.Count(s, "serial opened") >= 2
 	}, "解除暂停后未重开")
 	c.Stop()
 	wg.Wait()
@@ -243,4 +243,59 @@ func TestOpenFailureLogsError(t *testing.T) {
 	}, "open 错误详情未进事件流")
 	c.Stop()
 	wg.Wait()
+}
+
+// —— Suspend/Resume 直控：让出端口要等真关闭，恢复后回采 ——
+func TestSuspendResumeDirectControl(t *testing.T) {
+	root := t.TempDir()
+	withFakePort(t, &testutil.FakePort{Chunks: [][]byte{[]byte("before\n")}})
+	cfg := config.DefaultConfig()
+	cfg.Root = root
+	w, _ := logstore.NewDeviceWriter(root, "sdev", 64)
+	c := NewCollector(device.DeviceInfo{Tty: "/dev/fake", Key: "k", Name: "sdev"}, cfg, w,
+		signature.New(nil), pause.NewPauseState(), nil)
+	wg := runCollector(t, c)
+	day := time.Now().Format("20060102")
+	evPath := filepath.Join(root, "sdev", "events-"+day+".log")
+	testutil.WaitFor(t, 3*time.Second, func() bool {
+		return strings.Contains(testutil.ReadFile(t, evPath), "serial opened")
+	}, "未开端口")
+
+	if !c.Suspend(3 * time.Second) {
+		t.Fatal("Suspend 未在超时内确认端口关闭")
+	}
+	if c.State() != "suspended" {
+		t.Fatalf("状态错误: %s", c.State())
+	}
+	testutil.WaitFor(t, 3*time.Second, func() bool {
+		return strings.Contains(testutil.ReadFile(t, evPath), "port released")
+	}, "让出未记事件")
+
+	// 恢复 → 重开
+	c.Resume()
+	testutil.WaitFor(t, 5*time.Second, func() bool {
+		return strings.Count(testutil.ReadFile(t, evPath), "serial opened") >= 2
+	}, "恢复后未重开")
+	if c.State() != "collecting" {
+		t.Fatalf("恢复后状态错误: %s", c.State())
+	}
+	c.Stop()
+	wg.Wait()
+}
+
+// Suspend 超时（端口持续开着，采集器无响应时）必须返回 false 而非死等
+func TestSuspendTimeout(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.DefaultConfig()
+	cfg.Root = root
+	w, _ := logstore.NewDeviceWriter(root, "tdev", 64)
+	c := NewCollector(device.DeviceInfo{Tty: "/dev/fake", Key: "k", Name: "tdev"}, cfg, w,
+		signature.New(nil), pause.NewPauseState(), nil)
+	// 不启动 Run —— Suspend 端口从未开过 → portOpen=false 立即确认……
+	// 改测：手动把 portOpen 置真模拟"卡住"，Suspend 应超时
+	c.sr.portOpen.Store(true)
+	if c.Suspend(100 * time.Millisecond) {
+		t.Fatal("端口未关闭时 Suspend 应超时返回 false")
+	}
+	c.sr.portOpen.Store(false)
 }

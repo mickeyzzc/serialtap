@@ -26,6 +26,9 @@ type Config struct {
 	Names         []NameRule        `json:"names"`            // 设备命名规则
 	ExtraSigs     []string          `json:"signatures_extra"` // 追加事件签名正则
 	ElfMap        map[string]string `json:"elf_map"`          // 设备名 → 固件 .elf（decode-backtrace 自动解码用）
+	ControlSocket string            `json:"control_socket"`   // 控制 unix socket（空 = 默认路径）
+	Esptool       string            `json:"esptool_cmd"`      // 代理刷固件的 esptool 命令（空 = PATH 自动发现）
+	FlashBaud     int               `json:"flash_baud"`       // 代理刷波特率（0 = esptool 默认）
 }
 
 func DefaultConfig() Config {

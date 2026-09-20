@@ -7,14 +7,17 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/mickeyzzc/serialtap/internal/analyze"
 	"github.com/mickeyzzc/serialtap/internal/collector"
 	"github.com/mickeyzzc/serialtap/internal/config"
+	"github.com/mickeyzzc/serialtap/internal/ctl"
 	"github.com/mickeyzzc/serialtap/internal/daemon"
 	"github.com/mickeyzzc/serialtap/internal/device"
+	"github.com/mickeyzzc/serialtap/internal/flash"
 	"github.com/mickeyzzc/serialtap/internal/logstore"
 	"github.com/mickeyzzc/serialtap/internal/pause"
 	"github.com/mickeyzzc/serialtap/internal/signature"
@@ -34,8 +37,12 @@ func usage() {
   serialtap analyze LOG... [--lines]     离线签名扫描汇总
   serialtap decode-backtrace LOG         Backtrace addr2line 解码
       [--elf F] [--addr2line BIN] [--config F]
-  serialtap pause [RE]...                暂停采集（省略=全部）— USB 刷写前必做
+  serialtap pause [RE]...                暂停采集（省略=全部）
   serialtap resume [RE]...               恢复采集（省略=全部）
+  serialtap release RE [--for 5m]        临时让出串口给外部工具（默认空闲 3s 自动回采）
+  serialtap flash RE <bin>[@0x10000]...  代理刷固件：让口 → esptool → 自动回采
+      [--args-file F] [--esptool CMD] [--baud N] [--chip C]
+  serialtap status                       查看守护进程与设备实时状态
   serialtap version
 
 日志布局: <root>/<设备名>/serial-YYYYMMDD.log（全量）+ events-YYYYMMDD.log（事件）
@@ -93,10 +100,16 @@ func Run(args []string) int {
 		err = cmdAnalyzeCLI(args[1:])
 	case "decode-backtrace":
 		err = cmdDecodeCLI(args[1:])
+	case "status":
+		err = cmdStatus(args[1:])
+	case "release":
+		err = cmdRelease(args[1:])
+	case "flash":
+		err = cmdFlash(args[1:])
 	case "pause":
-		err = cmdPauseCLI(args[1:], true)
+		err = cmdPauseSocket(args[1:], true)
 	case "resume":
-		err = cmdPauseCLI(args[1:], false)
+		err = cmdPauseSocket(args[1:], false)
 	case "version":
 		fmt.Println("serialtap " + Version)
 	default:
@@ -162,6 +175,60 @@ func cmdRun(args []string) error {
 		stdoutLog("[watch] 保留期清理: 删除 %d 个旧日志", n)
 	}
 	stdoutLog("[watch] serialtap run v%s root=%s poll=%dms", Version, cfg.Root, cfg.PollMs)
+
+	// 控制 socket（flash/release/status/pause/resume 的服务端）
+	sockPath := cfg.ControlSocket
+	if sockPath == "" {
+		sockPath = ctl.DefaultSocketPath()
+	}
+	ctlSrv, err := ctl.Listen(sockPath)
+	if err != nil {
+		return err
+	}
+	defer ctlSrv.Close()
+	go ctlSrv.Serve(func(req ctl.Request, respond func(ctl.Response)) {
+		switch req.Cmd {
+		case "status":
+			respond(ctl.Response{OK: true, Devices: d.Status()})
+		case "pause":
+			pats := []string{}
+			if req.Pattern != "" {
+				pats = []string{req.Pattern}
+			}
+			if err := pause.PauseCLI(cfg.Root, true, pats); err != nil {
+				respond(ctl.Response{OK: false, Error: err.Error()})
+				return
+			}
+			respond(ctl.Response{OK: true})
+		case "resume":
+			n, err := d.ResumeAll(req.Pattern)
+			if err != nil && n == 0 {
+				respond(ctl.Response{OK: false, Error: err.Error()})
+				return
+			}
+			respond(ctl.Response{OK: true})
+		case "release":
+			forDur := time.Duration(req.ForMs) * time.Millisecond
+			n, err := d.Release(req.Pattern, forDur, req.UntilIdle)
+			if err != nil {
+				respond(ctl.Response{OK: false, Error: err.Error()})
+				return
+			}
+			respond(ctl.Response{OK: true, Line: fmt.Sprintf("%d", n)})
+		case "flash":
+			err := d.Flash(req.Pattern, req.Spec, func(line string) {
+				respond(ctl.Response{OK: true, Event: "flash-log", Line: line})
+			})
+			if err != nil {
+				respond(ctl.Response{OK: false, Event: "flash-done", Error: err.Error()})
+				return
+			}
+			respond(ctl.Response{OK: true, Event: "flash-done"})
+		default:
+			respond(ctl.Response{OK: false, Error: "unknown cmd: " + req.Cmd})
+		}
+	})
+	stdoutLog("[ctl] 控制通道: %s", sockPath)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
@@ -282,6 +349,7 @@ func cmdDecodeCLI(args []string) error {
 func cmdPauseCLI(args []string, pauseMode bool) error {
 	fs := flag.NewFlagSet("pause/resume", flag.ExitOnError)
 	root := fs.String("root", "", "日志根目录")
+	fs.String("sock", "", "（socket 路径；文件直改模式忽略）")
 	pos := parseFlags(fs, args)
 	r := *root
 	if r == "" {
@@ -301,4 +369,152 @@ func (m *multiFlag) String() string { return "" }
 func (m *multiFlag) Set(v string) error {
 	*m = append(*m, v)
 	return nil
+}
+
+// —— 控制通道子命令：status / release / flash；pause/resume 走 socket 优先 ——
+
+func ctlSend(sockOverride string, req ctl.Request, onEvent func(ctl.Response) bool) error {
+	path := sockOverride
+	if path == "" {
+		path = ctl.DefaultSocketPath()
+	}
+	return ctl.Send(path, req, onEvent)
+}
+
+func cmdStatus(args []string) error {
+	fs := flag.NewFlagSet("status", flag.ExitOnError)
+	sock := fs.String("sock", "", "控制 socket 路径（默认自动）")
+	parseFlags(fs, args)
+	return ctlSend(*sock, ctl.Request{Cmd: "status"}, func(r ctl.Response) bool {
+		if !r.OK {
+			return errOut(r.Error)
+		}
+		if len(r.Devices) == 0 {
+			fmt.Println("（无采集设备）")
+			return true
+		}
+		fmt.Printf("%-16s %-14s %-10s %s\n", "NAME", "TTY", "STATE", "KEY")
+		for _, d := range r.Devices {
+			fmt.Printf("%-16s %-14s %-10s %s\n", d.Name, d.Tty, d.State, d.Key)
+		}
+		return true
+	})
+}
+
+func errOut(msg string) bool {
+	fmt.Fprintln(os.Stderr, "错误:", msg)
+	return true
+}
+
+func cmdRelease(args []string) error {
+	fs := flag.NewFlagSet("release", flag.ExitOnError)
+	sock := fs.String("sock", "", "控制 socket 路径")
+	forDur := fs.String("for", "", "限时自动回采（如 5m / 90s）；省略则端口空闲自动回采")
+	pos := parseFlags(fs, args)
+	if len(pos) != 1 {
+		return fmt.Errorf("release 需要一个设备匹配正则，如 release luatos")
+	}
+	req := ctl.Request{Cmd: "release", Pattern: pos[0], UntilIdle: true}
+	if *forDur != "" {
+		d, err := time.ParseDuration(*forDur)
+		if err != nil {
+			return fmt.Errorf("--for 解析失败: %w", err)
+		}
+		req.ForMs = d.Milliseconds()
+		req.UntilIdle = false
+	}
+	return ctlSend(*sock, req, func(r ctl.Response) bool {
+		if !r.OK {
+			return errOut(r.Error)
+		}
+		if req.ForMs > 0 {
+			fmt.Printf("已让出端口（%s 限时 %s 后自动回采）—— 其他工具现在可用该口\n", pos[0], *forDur)
+		} else {
+			fmt.Printf("已让出端口（%s，空闲 3s 后自动回采）—— 其他工具现在可用该口\n", pos[0])
+		}
+		return true
+	})
+}
+
+func cmdFlash(args []string) error {
+	fs := flag.NewFlagSet("flash", flag.ExitOnError)
+	sock := fs.String("sock", "", "控制 socket 路径")
+	cfgPath := fs.String("config", "", "配置文件 JSON")
+	esptool := fs.String("esptool", "", "esptool 命令（默认 PATH 自动发现或配置）")
+	baud := fs.Int("baud", 0, "刷写波特率")
+	chip := fs.String("chip", "", "芯片类型（如 esp32s3，省略自动识别）")
+	argsFile := fs.String("args-file", "", "ESP-IDF build/flasher_args.json（与其余 bin 参数二选一）")
+	pos := parseFlags(fs, args)
+	if len(pos) < 1 || (len(pos) < 2 && *argsFile == "") {
+		return fmt.Errorf("用法: flash <设备正则> <镜像>[@<offset>]... 或 --args-file build/flasher_args.json")
+	}
+	cfg, err := loadCfgMerged(*cfgPath, "", 0)
+	if err != nil {
+		return err
+	}
+	spec := flash.Spec{ArgsFile: *argsFile}
+	if *esptool != "" {
+		spec.Esptool = *esptool
+	} else if cfg.Esptool != "" {
+		spec.Esptool = cfg.Esptool
+	}
+	if *baud > 0 {
+		spec.Baud = *baud
+	} else if cfg.FlashBaud > 0 {
+		spec.Baud = cfg.FlashBaud
+	}
+	spec.Chip = *chip
+	for _, p := range pos[1:] {
+		bin := flash.BinSpec{Path: p, Offset: "0x0"}
+		if i := strings.LastIndex(p, "@"); i > 0 {
+			bin.Path, bin.Offset = p[:i], p[i+1:]
+		}
+		spec.Bins = append(spec.Bins, bin)
+	}
+	return ctlSend(*sock, ctl.Request{Cmd: "flash", Pattern: pos[0], Spec: spec}, func(r ctl.Response) bool {
+		switch r.Event {
+		case "flash-log":
+			fmt.Println(r.Line)
+			return false
+		case "flash-done":
+			if !r.OK {
+				fmt.Fprintf(os.Stderr, "刷写失败: %s\n", r.Error)
+			} else {
+				fmt.Println("✓ 刷写完成，已恢复采集")
+			}
+			return true
+		default:
+			if !r.OK {
+				return errOut(r.Error)
+			}
+			return false
+		}
+	})
+}
+
+// pause/resume：守护进程在 → socket（立即生效且走同一文件语义）；不在 → 直接改文件
+func cmdPauseSocket(args []string, pauseMode bool) error {
+	fs := flag.NewFlagSet("pause/resume", flag.ExitOnError)
+	sock := fs.String("sock", "", "控制 socket 路径")
+	fs.String("root", "", "日志根目录（回退文件直改时用）")
+	pos := parseFlags(fs, args)
+	pattern := ""
+	if len(pos) > 0 {
+		pattern = pos[0]
+	}
+	cmd := "resume"
+	if pauseMode {
+		cmd = "pause"
+	}
+	err := ctlSend(*sock, ctl.Request{Cmd: cmd, Pattern: pattern}, func(r ctl.Response) bool { return true })
+	if err == nil {
+		if pauseMode {
+			fmt.Println("已暂停（守护进程已生效）")
+		} else {
+			fmt.Println("已恢复（守护进程已生效）")
+		}
+		return nil
+	}
+	// 守护不在 → 文件直改（历史行为）
+	return cmdPauseCLI(args, pauseMode)
 }

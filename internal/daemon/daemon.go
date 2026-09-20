@@ -28,6 +28,8 @@ type daemon struct {
 	enum       func() ([]device.DeviceInfo, error)
 	logf       func(format string, args ...any)
 	wg         sync.WaitGroup // 采集器 Run 协程追踪（shutdown 等待，防泄漏）
+	mu         sync.Mutex     // 保护 releases
+	releases   map[string]releaseSpec
 }
 
 func discardLog(string, ...any) {}
@@ -101,6 +103,7 @@ func (d *daemon) Tick() {
 		}
 	}
 	d.reloadPause()
+	d.tickReleases()
 }
 
 // reloadPause: PAUSED 文件 mtime 变更 → 热替换暂停模式表。

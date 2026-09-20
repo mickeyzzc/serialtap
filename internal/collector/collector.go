@@ -64,6 +64,7 @@ type Collector struct {
 
 	stopOnce sync.Once
 	stop     chan struct{}
+	sr       SuspendResume // 程序化让出/收回（release 与代理刷固件）
 }
 
 func NewCollector(dev device.DeviceInfo, cfg config.Config, w *logstore.DeviceWriter,
@@ -111,11 +112,12 @@ func (c *Collector) Run() {
 		default:
 		}
 
-		if c.pause.Matches(c.dev) {
-			c.event("paused by PAUSED file — port closed, waiting")
-			if !c.waitUnpause() {
+		if c.Held() || c.pause.Matches(c.dev) {
+			c.event("port released — waiting (PAUSED file or explicit suspend)")
+			if !c.waitHeldCleared() {
 				return
 			}
+			c.event("hold cleared — resuming")
 			continue
 		}
 
@@ -163,6 +165,8 @@ func (c *Collector) collectOnce() (collectExit, error) {
 	if err != nil {
 		return reasonOpenFailed, err
 	}
+	c.sr.portOpen.Store(true)
+	defer c.sr.portOpen.Store(false)
 	// 见文件头注释第 2 条：open 后立即释放 DTR/RTS
 	_ = port.SetDTR(false)
 	_ = port.SetRTS(false)
@@ -189,7 +193,7 @@ func (c *Collector) collectOnce() (collectExit, error) {
 			return reasonStopped, nil
 		default:
 		}
-		if c.pause.Matches(c.dev) {
+		if c.Held() || c.pause.Matches(c.dev) {
 			c.event("paused — closing port")
 			c.flushTail(&asm)
 			return reasonPaused, nil
@@ -239,22 +243,6 @@ func (c *Collector) sleep(d time.Duration) bool {
 	}
 }
 
-func (c *Collector) waitUnpause() bool {
-	tick := time.NewTicker(time.Second)
-	defer tick.Stop()
-	for {
-		select {
-		case <-c.stop:
-			return false
-		case <-tick.C:
-			if !c.pause.Matches(c.dev) {
-				c.event("unpaused — resuming")
-				return true
-			}
-		}
-	}
-}
-
 // lineAssembler: 跨读取块的行拼装（残余半行保留在内部）。
 type lineAssembler struct {
 	tail []byte
@@ -294,3 +282,14 @@ func truncate(s string, n int) string {
 	}
 	return s[:n] + "…"
 }
+
+// Key: 设备稳定身份（by-path）。
+func (c *Collector) Key() string { return c.dev.Key }
+
+// ByID: 设备的 by-id 字符串（可能为空）。
+func (c *Collector) ByID() string { return c.dev.ByID }
+
+// LogEvent: 外部（如代理刷固件）向事件流追加记录。
+func (c *Collector) LogEvent(format string, args ...any) { c.event(format, args...) }
+
+// Tty: 该采集器持有的串口路径。
