@@ -129,3 +129,21 @@ func TestSplitCRLF(t *testing.T) {
 		t.Fatalf("splitCRLF 错误: %d %q %v", advance, token, err)
 	}
 }
+
+// 真实 IDF flasher_args.json 形状：extra_esptool_args 混有 bool/number
+func TestParseFlasherArgsHeterogeneousValues(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "app.bin"), []byte("a"), 0o644)
+	fa := filepath.Join(dir, "flasher_args.json")
+	os.WriteFile(fa, []byte(`{
+		"extra_esptool_args": {"--chip": "esp32s3", "--baud": "921600", "stub": true, "trace": 0},
+		"flash_files": {"0x0": "app.bin"}
+	}`), 0o644)
+	args, err := BuildArgs("/dev/x", Spec{ArgsFile: fa})
+	if err != nil {
+		t.Fatalf("异构 extra_esptool_args 解析失败: %v", err)
+	}
+	if !strings.Contains(strings.Join(args, " "), "--chip esp32s3") {
+		t.Fatalf("chip 未提取: %v", args)
+	}
+}

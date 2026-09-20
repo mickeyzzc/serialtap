@@ -33,7 +33,9 @@ type Spec struct {
 
 // flasherArgs: ESP-IDF build/flasher_args.json 的相关子集。
 type flasherArgs struct {
-	ExtraEsptoolArgs map[string]string `json:"extra_esptool_args"`
+	// extra_esptool_args 是异构值表（"--chip":"esp32s3"、"stub":true、"trace":0），
+	// 只取 string 值（chip 等），布尔/数字忽略（stub/trace 走默认即可）
+	ExtraEsptoolArgs map[string]any    `json:"extra_esptool_args"`
 	FlashFiles       map[string]string `json:"flash_files"`
 }
 
@@ -135,12 +137,12 @@ func parsedChip(path string) (string, bool) {
 		return "", false
 	}
 	var fa struct {
-		ExtraEsptoolArgs map[string]string `json:"extra_esptool_args"`
+		ExtraEsptoolArgs map[string]any `json:"extra_esptool_args"`
 	}
 	if json.Unmarshal(data, &fa) != nil {
 		return "", false
 	}
-	if c, ok := fa.ExtraEsptoolArgs["--chip"]; ok && c != "" {
+	if c, ok := fa.ExtraEsptoolArgs["--chip"].(string); ok && c != "" {
 		return c, true
 	}
 	return "", false
