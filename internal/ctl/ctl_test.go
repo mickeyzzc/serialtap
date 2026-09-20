@@ -96,3 +96,25 @@ func osStat(p string) (any, error) {
 func osIsNotExist(err error) bool {
 	return err != nil && os.IsNotExist(err)
 }
+
+// —— 双实例抢 socket：活着的主人拒绝后来者；死 socket（残留文件）可接管 ——
+func TestListenRefusesWhenSocketOwned(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "own.sock")
+	first, err := Listen(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go first.Serve(func(req Request, respond func(Response)) { respond(Response{OK: true}) })
+
+	if _, err := Listen(sock); err == nil {
+		t.Fatal("第二实例抢活 socket 应被拒绝")
+	}
+
+	// 主人退出 → 残留 socket 文件 → 后来者可接管
+	first.Close()
+	second, err := Listen(sock)
+	if err != nil {
+		t.Fatalf("接管残留 socket 失败: %v", err)
+	}
+	second.Close()
+}

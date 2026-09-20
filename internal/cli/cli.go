@@ -147,6 +147,7 @@ func cmdRun(args []string) error {
 	pollMs := fs.Int("poll-ms", 0, "轮询间隔 ms")
 	var exclude multiFlag
 	fs.Var(&exclude, "exclude", "忽略设备正则（可多次）")
+	sockFlag := fs.String("sock", "", "控制 socket 路径（默认自动；被占用时启动会被拒绝）")
 	parseFlags(fs, args)
 
 	cfg, err := loadCfgMerged(*cfgPath, *root, *baud)
@@ -178,6 +179,9 @@ func cmdRun(args []string) error {
 
 	// 控制 socket（flash/release/status/pause/resume 的服务端）
 	sockPath := cfg.ControlSocket
+	if *sockFlag != "" {
+		sockPath = *sockFlag
+	}
 	if sockPath == "" {
 		sockPath = ctl.DefaultSocketPath()
 	}

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/mickeyzzc/serialtap/internal/flash"
 )
@@ -59,9 +60,17 @@ func DefaultSocketPath() string {
 	return fmt.Sprintf("/tmp/serialtap-%d.sock", os.Getuid())
 }
 
-// Listen: 建立监听（socket 权限 0600，同用户专用；残留 socket 先清理）。
+// Listen: 建立监听（socket 权限 0600，同用户专用）。
+// socket 已被活着的实例持有 → 拒绝（防止第二实例偷走控制通道）；
+// 仅残留文件（上次异常退出，无人监听）才清理接管。
 func Listen(path string) (*Server, error) {
-	_ = os.Remove(path) // 残留（上次异常退出）直接清
+	if _, err := os.Stat(path); err == nil {
+		if c, derr := net.DialTimeout("unix", path, time.Second); derr == nil {
+			_ = c.Close()
+			return nil, fmt.Errorf("控制 socket 已被另一个 serialtap 实例占用: %s", path)
+		}
+		_ = os.Remove(path) // 死 socket
+	}
 	ln, err := net.Listen("unix", path)
 	if err != nil {
 		return nil, fmt.Errorf("控制 socket 监听失败: %w", err)
@@ -82,6 +91,7 @@ func (s *Server) Serve(h Handler) {
 			case <-s.stopCh:
 				return // 正常关闭
 			default:
+				time.Sleep(10 * time.Millisecond) // 防 Accept 错误热自旋
 				continue
 			}
 		}
