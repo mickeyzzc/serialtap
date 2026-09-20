@@ -265,3 +265,135 @@ func TestResumeAllClearsEntirePausedFile(t *testing.T) {
 	}
 	d.Shutdown()
 }
+
+// —— G2/G3：并发互斥、撤销 pending release、dry-run 预演 ——
+
+// flash 进行中：并发的 flash/release/resume 必须 fail-fast 报错
+// （否则两个 esptool 抢同一口 / resume 在 esptool 工作中途抢回口）
+func TestFlashRejectsConcurrentOps(t *testing.T) {
+	root := t.TempDir()
+	tool := testutil.FakeTool(t)
+	t.Setenv("FAKE_SLEEP", "800ms")
+	t.Setenv("FAKE_EXIT", "0")
+	t.Setenv("FAKE_OUT", "slow flashing\n")
+
+	old := collector.OpenPort
+	collector.OpenPort = func(tty string, baud int) (collector.Port, error) {
+		return &testutil.FakePort{}, nil
+	}
+	t.Cleanup(func() { collector.OpenPort = old })
+
+	d, err := newTestDaemon(t, root, device.DeviceInfo{Tty: "/dev/ttyFAKE", Key: "kA", Name: "fakeA"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(d.Shutdown)
+	d.Tick()
+	bin := filepath.Join(root, "app.bin")
+	os.WriteFile(bin, []byte("x"), 0o644)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- d.Flash("fakeA", flash.Spec{Esptool: tool,
+			Bins: []flash.BinSpec{{Path: bin, Offset: "0x0"}}}, func(string) {})
+	}()
+	// 等第一个 flash 真正拿到锁
+	time.Sleep(200 * time.Millisecond)
+
+	if _, err := d.Release("fakeA", time.Hour, false); err == nil {
+		t.Fatal("flash 进行中 release 应报错")
+	}
+	if _, err := d.ResumeAll(""); err == nil {
+		t.Fatal("flash 进行中 resume 应报错")
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("首个 flash 应成功: %v", err)
+	}
+	// 完成后恢复可用
+	if _, err := d.ResumeAll(""); err != nil {
+		t.Fatalf("结束后 resume 不应报错: %v", err)
+	}
+}
+
+// 刷写开始时撤销 pending 的限时 release —— 否则到期会在 esptool 工作中途抢回口
+func TestFlashRevokesPendingTimedRelease(t *testing.T) {
+	root := t.TempDir()
+	tool := testutil.FakeTool(t)
+	t.Setenv("FAKE_SLEEP", "")
+	t.Setenv("FAKE_EXIT", "0")
+	t.Setenv("FAKE_OUT", "flashing\n")
+
+	old := collector.OpenPort
+	collector.OpenPort = func(tty string, baud int) (collector.Port, error) {
+		return &testutil.FakePort{}, nil
+	}
+	t.Cleanup(func() { collector.OpenPort = old })
+
+	d, err := newTestDaemon(t, root, device.DeviceInfo{Tty: "/dev/ttyFAKE", Key: "kA", Name: "fakeA"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(d.Shutdown)
+	d.Tick()
+	bin := filepath.Join(root, "app.bin")
+	os.WriteFile(bin, []byte("x"), 0o644)
+
+	// 限时 1 小时的 release 挂着，然后刷写
+	if _, err := d.Release("fakeA", time.Hour, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Flash("fakeA", flash.Spec{Esptool: tool,
+		Bins: []flash.BinSpec{{Path: bin, Offset: "0x0"}}}, func(string) {}); err != nil {
+		t.Fatal(err)
+	}
+	d.mu.Lock()
+	pending := len(d.releases)
+	d.mu.Unlock()
+	if pending != 0 {
+		t.Fatalf("刷写后 pending release 应被撤销: %d", pending)
+	}
+	if st := d.Status()[0].State; st != "collecting" {
+		t.Fatalf("刷完应回采: %s", st)
+	}
+}
+
+// dry-run：daemon 侧解析 esptool 命令并回显，不动端口、不切状态、不执行
+func TestFlashDryRun(t *testing.T) {
+	root := t.TempDir()
+	tool := testutil.FakeTool(t)
+	t.Setenv("FAKE_EXIT", "0")
+	t.Setenv("FAKE_OUT", "SHOULD-NOT-APPEAR\n")
+
+	old := collector.OpenPort
+	collector.OpenPort = func(tty string, baud int) (collector.Port, error) {
+		return &testutil.FakePort{}, nil
+	}
+	t.Cleanup(func() { collector.OpenPort = old })
+
+	d, err := newTestDaemon(t, root, device.DeviceInfo{Tty: "/dev/ttyFAKE", Key: "kA", Name: "fakeA"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(d.Shutdown)
+	d.Tick()
+	testutil.WaitFor(t, 3*time.Second, func() bool { return d.Collectors() == 1 }, "采集器未起")
+	bin := filepath.Join(root, "app.bin")
+	os.WriteFile(bin, []byte("x"), 0o644)
+
+	var lines []string
+	err = d.Flash("fakeA", flash.Spec{Esptool: tool, DryRun: true,
+		Bins: []flash.BinSpec{{Path: bin, Offset: "0x0"}}}, func(l string) { lines = append(lines, l) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "write_flash") || !strings.Contains(joined, "fakeA") {
+		t.Fatalf("dry-run 应回显 esptool 命令: %v", lines)
+	}
+	if strings.Contains(joined, "SHOULD-NOT-APPEAR") {
+		t.Fatal("dry-run 不应执行 esptool")
+	}
+	if st := d.Status()[0].State; st != "collecting" {
+		t.Fatalf("dry-run 不应改变状态: %s", st)
+	}
+}

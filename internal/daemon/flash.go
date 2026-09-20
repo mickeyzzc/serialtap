@@ -3,6 +3,7 @@ package daemon
 import (
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/mickeyzzc/serialtap/internal/collector"
@@ -50,6 +51,7 @@ func (d *daemon) matches(pattern string) ([]string, []*collector.Collector) {
 // untilIdle=true 时端口连续空闲 idleQuietS 秒后自动回采。
 // 空闲检测依赖 /proc（Linux）或 lsof（macOS）—— Windows 两者皆无，
 // 显式拒绝而非静默误判（恒"无人占用"会导致 3s 后抢回口、打断外部工具）。
+// 与 Flash/ResumeAll 互斥：刷写进行中时立即报错（fail-fast，不排队）。
 func (d *daemon) Release(pattern string, forDur time.Duration, untilIdle bool) (int, error) {
 	keys, cs := d.matches(pattern)
 	if len(cs) == 0 {
@@ -59,6 +61,10 @@ func (d *daemon) Release(pattern string, forDur time.Duration, untilIdle bool) (
 		return 0, fmt.Errorf("此平台不支持空闲自动回采（Windows 无 /proc/lsof 占用检测）；" +
 			"请用 --for <时长> 限时回采，或让口后 serialtap resume 手动回采")
 	}
+	if !d.opMu.TryLock() {
+		return 0, fmt.Errorf("另一个 flash/release 操作进行中，请稍后再试")
+	}
+	defer d.opMu.Unlock()
 	spec := releaseSpec{untilIdle: untilIdle}
 	if forDur > 0 {
 		spec.until = time.Now().Add(forDur)
@@ -85,7 +91,12 @@ func (d *daemon) Release(pattern string, forDur time.Duration, untilIdle bool) (
 
 // ResumeAll: 恢复匹配设备（清 PAUSED 文件条目 + 撤销 release + 直接 Resume）。
 // pattern 为空 = 恢复全部（清空 PAUSED，与无参 pause 全停对称）。
+// 刷写进行中拒绝 —— 否则 resume 会让采集器在 esptool 工作中途重新抢口。
 func (d *daemon) ResumeAll(pattern string) (int, error) {
+	if !d.opMu.TryLock() {
+		return 0, fmt.Errorf("刷写进行中，resume 被拒绝（防止中途抢口），请稍后再试")
+	}
+	defer d.opMu.Unlock()
 	n := 0
 	pats := []string{}
 	if pattern != "" {
@@ -175,20 +186,52 @@ func devInfoOf(c *collector.Collector) device.DeviceInfo {
 }
 
 // Flash: 代理刷固件 —— 让口 → 调 esptool（输出流式回调）→ 回采。
-// 匹配多个设备时逐个刷。
+// 匹配多个设备时逐个刷。与 Release/ResumeAll 互斥（TryLock fail-fast）；
+// 刷写前撤销匹配设备的 pending release，防止限时到期在 esptool 工作中途抢回口。
 func (d *daemon) Flash(pattern string, spec flash.Spec, out func(line string)) error {
-	_, cs := d.matches(pattern)
+	keys, cs := d.matches(pattern)
 	if len(cs) == 0 {
 		return fmt.Errorf("没有匹配 %q 的采集设备", pattern)
 	}
+	if !d.opMu.TryLock() {
+		return fmt.Errorf("另一个 flash/release 操作进行中，请稍后再试")
+	}
+	defer d.opMu.Unlock()
+
+	// 预演：解析并回显将执行的 esptool 命令，不动端口、不切状态
+	if spec.DryRun {
+		for _, c := range cs {
+			argv, err := flash.Plan(c.Tty(), spec)
+			if err != nil {
+				return fmt.Errorf("%s: %w", c.DeviceName(), err)
+			}
+			c.LogEvent("flash dry-run: %s", strings.Join(argv, " "))
+			out(fmt.Sprintf("[%s] %s", c.DeviceName(), strings.Join(argv, " ")))
+		}
+		out(fmt.Sprintf("（dry-run：%d 台设备，未动端口）", len(cs)))
+		return nil
+	}
+
+	// 撤销匹配设备的 pending release（限时到期会中途抢口）
+	d.mu.Lock()
+	for _, k := range keys {
+		delete(d.releases, k)
+	}
+	d.mu.Unlock()
+
+	timeout := time.Duration(d.cfg.FlashTimeoutS) * time.Second
 	for _, c := range cs {
-		c.LogEvent("proxy flash start (bins=%d args_file=%q)", len(spec.Bins), spec.ArgsFile)
+		c.LogEvent("proxy flash start (bins=%d args_file=%q timeout=%s)",
+			len(spec.Bins), spec.ArgsFile, timeout)
+		if argv, err := flash.Plan(c.Tty(), spec); err == nil {
+			c.LogEvent("flash plan: %s", strings.Join(argv, " "))
+		}
 		if !c.Suspend(10 * time.Second) {
 			c.LogEvent("proxy flash abort: port did not release")
 			return fmt.Errorf("%s: 端口让出超时", c.DeviceName())
 		}
 		c.SetFlashing(true)
-		err := flash.Run(spec.Esptool, c.Tty(), spec, func(line string) {
+		err := flash.Run(spec.Esptool, c.Tty(), spec, timeout, func(line string) {
 			out(line)
 		})
 		c.SetFlashing(false)

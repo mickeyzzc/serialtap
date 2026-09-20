@@ -27,8 +27,9 @@ type Config struct {
 	ExtraSigs     []string          `json:"signatures_extra"` // 追加事件签名正则
 	ElfMap        map[string]string `json:"elf_map"`          // 设备名 → 固件 .elf（decode-backtrace 自动解码用）
 	ControlSocket string            `json:"control_socket"`   // 控制 unix socket（空 = 默认路径）
-	Esptool       string            `json:"esptool_cmd"`      // 代理刷固件的 esptool 命令（空 = PATH 自动发现）
+	Esptool       string            `json:"esptool_cmd"`      // 代理刷固件的 esptool 命令（空 = PATH/espressif 环境自动发现）
 	FlashBaud     int               `json:"flash_baud"`       // 代理刷波特率（0 = esptool 默认）
+	FlashTimeoutS int               `json:"flash_timeout_s"`  // 单台设备刷写超时（秒，超时杀 esptool 并回采；显式写 0 = 不限时）
 }
 
 func DefaultConfig() Config {
@@ -41,6 +42,7 @@ func DefaultConfig() Config {
 		ReopenMaxS:    60,
 		RotateMB:      64,
 		RetentionDays: 14,
+		FlashTimeoutS: 600, // 10 分钟兜底；注意：LoadConfig 不回填此字段，显式 0 = 不限时
 	}
 }
 

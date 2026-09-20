@@ -3,8 +3,10 @@ package flash
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mickeyzzc/serialtap/internal/testutil"
 )
@@ -104,7 +106,7 @@ func TestRunStreamsOutputAndExitCode(t *testing.T) {
 		"Writing at 0x1000... (50 %)\r"+
 		"Hash of data verified.\n")
 	var lines []string
-	if err := Run(fake, "/dev/ttyFAKE0", Spec{Bins: []BinSpec{{Path: bin, Offset: "0x0"}}},
+	if err := Run(fake, "/dev/ttyFAKE0", Spec{Bins: []BinSpec{{Path: bin, Offset: "0x0"}}}, 0,
 		func(l string) { lines = append(lines, l) }); err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +119,7 @@ func TestRunStreamsOutputAndExitCode(t *testing.T) {
 
 	t.Setenv("FAKE_EXIT", "2")
 	t.Setenv("FAKE_OUT", "boom\n")
-	err := Run(fake, "/dev/ttyFAKE0", Spec{Bins: []BinSpec{{Path: bin, Offset: "0x0"}}},
+	err := Run(fake, "/dev/ttyFAKE0", Spec{Bins: []BinSpec{{Path: bin, Offset: "0x0"}}}, 0,
 		func(string) {})
 	if err == nil || !strings.Contains(err.Error(), "2") {
 		t.Fatalf("非零退出码应报错: %v", err)
@@ -146,5 +148,106 @@ func TestParseFlasherArgsHeterogeneousValues(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(args, " "), "--chip esp32s3") {
 		t.Fatalf("chip 未提取: %v", args)
+	}
+}
+
+// —— esptool 自动发现（PATH 之外的 glob 途径）——
+
+// 把 FakeTool 的二进制复制到假 python_env 树的 esptool 位置
+func plantFakeEsptool(t *testing.T, envRoot string) {
+	t.Helper()
+	sub := "bin"
+	name := "esptool"
+	if runtime.GOOS == "windows" {
+		sub, name = "Scripts", "esptool.exe"
+	}
+	dir := filepath.Join(envRoot, "python_env", "esp5.3_test_env", sub)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(testutil.FakeTool(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, name)
+	if err := os.WriteFile(dst, data, 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestResolveEsptoolEspressifEnvGlob(t *testing.T) {
+	t.Setenv("FAKE_EXIT", "0")
+	t.Setenv("FAKE_OUT", "")
+	env := t.TempDir()
+	plantFakeEsptool(t, env)
+
+	// 直接测 glob 注入口（ResolveEsptool 全链路的 home 不可注入）
+	p, ok := globLast(esptoolEnvGlobs(env))
+	if !ok || !strings.Contains(filepath.ToSlash(p), "/python_env/esp5.3_test_env/") {
+		t.Fatalf("python_env glob 未命中: %q ok=%v", p, ok)
+	}
+	// 空 glob 不命中
+	if _, ok := globLast([]string{filepath.Join(env, "nope", "*", "x")}); ok {
+		t.Fatal("空 glob 不应命中")
+	}
+}
+
+// 多个 python_env 命中时取排序后最后一个（与 addr2line 策略一致）
+func TestGlobLastTakesHighestSorted(t *testing.T) {
+	env := t.TempDir()
+	plantFakeEsptool(t, env) // esp5.3_test_env
+	// 再放一个排序更小的 env
+	older := "esp5.0_env"
+	sub, name := "bin", "esptool"
+	if runtime.GOOS == "windows" {
+		sub, name = "Scripts", "esptool.exe"
+	}
+	os.MkdirAll(filepath.Join(env, "python_env", older, sub), 0o755)
+	os.WriteFile(filepath.Join(env, "python_env", older, sub, name), []byte("x"), 0o755)
+
+	p, ok := globLast(esptoolEnvGlobs(env))
+	if !ok || !strings.Contains(p, "esp5.3_test_env") {
+		t.Fatalf("应取排序最后的 env: %q", p)
+	}
+}
+
+func TestPlan(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "app.bin")
+	os.WriteFile(bin, []byte("x"), 0o644)
+	tool := testutil.FakeTool(t)
+
+	argv, err := Plan("/dev/ttyFAKE0", Spec{Esptool: tool,
+		Bins: []BinSpec{{Path: bin, Offset: "0x10000"}}, Chip: "esp32s3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(argv, " ")
+	for _, want := range []string{"--port /dev/ttyFAKE0", "--chip esp32s3", "write_flash", "0x10000"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("Plan 缺 %q: %s", want, joined)
+		}
+	}
+	// 坏 Spec（无镜像）应报错
+	if _, err := Plan("/dev/x", Spec{Esptool: tool}); err == nil {
+		t.Fatal("空 bins 应报错")
+	}
+}
+
+func TestRunTimeoutKillsEsptool(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "x.bin")
+	os.WriteFile(bin, []byte("x"), 0o644)
+	t.Setenv("FAKE_SLEEP", "3s")
+	t.Setenv("FAKE_EXIT", "0")
+	t.Setenv("FAKE_OUT", "")
+	start := time.Now()
+	err := Run(testutil.FakeTool(t), "/dev/ttyFAKE0",
+		Spec{Bins: []BinSpec{{Path: bin, Offset: "0x0"}}}, 300*time.Millisecond, func(string) {})
+	if err == nil || !strings.Contains(err.Error(), "超时") {
+		t.Fatalf("超时应杀进程并报错: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("超时未及时返回: %s", elapsed)
 	}
 }

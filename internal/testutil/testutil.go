@@ -102,7 +102,7 @@ func (e *ErrPort) SetReadTimeout(d time.Duration) error { return nil }
 // —— 假外部命令（esptool / addr2line 替身）——
 // shell 脚本假件在 Windows 不可执行，统一编译成真二进制；进程内只编译一次。
 // 行为由环境变量驱动（exec.Command 自动继承）：FAKE_EXIT=退出码；
-// FAKE_OUT=要打印的内容（字面输出，可含 \r/\n）。
+// FAKE_OUT=要打印的内容（字面输出，可含 \r/\n）；FAKE_SLEEP=先睡的时长（如 2s）。
 
 var (
 	fakeOnce sync.Once
@@ -145,8 +145,14 @@ const fakeToolSrc = "package main\n" +
 	"\t\"fmt\"\n" +
 	"\t\"os\"\n" +
 	"\t\"strings\"\n" +
+	"\t\"time\"\n" +
 	")\n" +
 	"func main() {\n" +
+	"\tif v := os.Getenv(\"FAKE_SLEEP\"); v != \"\" {\n" +
+	"\t\tif d, err := time.ParseDuration(v); err == nil {\n" +
+	"\t\t\ttime.Sleep(d)\n" +
+	"\t\t}\n" +
+	"\t}\n" +
 	"\tcode := 0\n" +
 	"\tif v := os.Getenv(\"FAKE_EXIT\"); v != \"\" {\n" +
 	"\t\tif _, err := fmt.Sscanf(v, \"%d\", &code); err != nil {\n" +

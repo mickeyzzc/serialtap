@@ -30,6 +30,8 @@ type daemon struct {
 	wg         sync.WaitGroup // 采集器 Run 协程追踪（shutdown 等待，防泄漏）
 	mu         sync.Mutex     // 保护 releases
 	releases   map[string]releaseSpec
+	// opMu 串行化 Flash/Release/ResumeAll（TryLock fail-fast，见 flash.go）
+	opMu sync.Mutex
 }
 
 func discardLog(string, ...any) {}

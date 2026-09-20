@@ -41,7 +41,7 @@ func usage() {
   serialtap resume [RE]...               恢复采集（省略=全部）
   serialtap release RE [--for 5m]        临时让出串口给外部工具（默认空闲 3s 自动回采）
   serialtap flash RE <bin>[@0x10000]...  代理刷固件：让口 → esptool → 自动回采
-      [--args-file F] [--esptool CMD] [--baud N] [--chip C]
+      [--args-file F] [--esptool CMD] [--baud N] [--chip C] [--dry-run]
   serialtap status                       查看守护进程与设备实时状态
   serialtap version
 
@@ -448,6 +448,7 @@ func cmdFlash(args []string) error {
 	baud := fs.Int("baud", 0, "刷写波特率")
 	chip := fs.String("chip", "", "芯片类型（如 esp32s3，省略自动识别）")
 	argsFile := fs.String("args-file", "", "ESP-IDF build/flasher_args.json（与其余 bin 参数二选一）")
+	dryRun := fs.Bool("dry-run", false, "只预演：显示每台匹配设备将执行的 esptool 命令，不动端口")
 	pos := parseFlags(fs, args)
 	if len(pos) < 1 || (len(pos) < 2 && *argsFile == "") {
 		return fmt.Errorf("用法: flash <设备正则> <镜像>[@<offset>]... 或 --args-file build/flasher_args.json")
@@ -456,7 +457,7 @@ func cmdFlash(args []string) error {
 	if err != nil {
 		return err
 	}
-	spec := flash.Spec{ArgsFile: *argsFile}
+	spec := flash.Spec{ArgsFile: *argsFile, DryRun: *dryRun}
 	if *esptool != "" {
 		spec.Esptool = *esptool
 	} else if cfg.Esptool != "" {
