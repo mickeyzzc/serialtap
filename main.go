@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const Version = "0.2.0"
+const Version = "0.1.0"
 
 func usage() {
 	fmt.Fprintf(os.Stderr, `serialtap v%s — USB 串口持续采集器

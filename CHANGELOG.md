@@ -1,0 +1,32 @@
+# Changelog
+
+## v0.1.0 (2026-09-20)
+
+首个公开发布。
+
+### 核心功能
+
+- 热插拔自动采集：轮询发现 USB 串口（by-path 物理口身份，重枚举/同型号适配器不串台），
+  每设备一个采集协程，插上即采、拔走即停
+- 双通道日志：`serial-YYYYMMDD.log` 全量（毫秒级逐行时间戳）+
+  `events-YYYYMMDD.log` 事件流（签名命中 + 采集器生命周期），按日 + 按大小轮转，
+  保留期自动清理
+- 错误签名引擎：ESP-IDF 常见故障行内置（`rst:0x`、`E (`、lwIP `accept (n)`、
+  Guru Meditation、WDT、Backtrace 等），`signatures_extra` 正则扩展
+- 刷写安全门：`pause`/`resume` 暂停清单，USB 刷机前让出串口
+- 离线分析：`analyze` 签名汇总（计数/首末时间/样本）、
+  `decode-backtrace` addr2line 解码（自动发现 ESP-IDF 工具链，`elf_map` 按设备名配）
+- 零丢失：跨块行拼装，端口关闭时残余半行以 `…partial` 标记落盘
+
+### 设计纪律
+
+- **open-once-and-hold**：open/close 串口都会给 CDC 设备一拍复位脉冲
+  （含 ESP32-S3 原生 USB-JTAG，`rst:0x15` 实测），采集器每设备只 open 一次并持有
+- **静默看门狗默认关**：只对保证有周期日志的设备显式开启，避免安静设备被复位循环
+
+### 质量
+
+- 测试覆盖率 87.3%，`-race` 干净；假端口注入驱动采集器全链路离线测试
+- CI：golangci-lint + 测试（80% 覆盖门禁）+ 构建
+- 实机验证：CH340 / CH343 / ESP32-S3 原生 USB-JTAG 三类适配器，
+  systemd 用户级服务长期运行

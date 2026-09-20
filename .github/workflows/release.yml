@@ -1,0 +1,29 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build binaries
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags '-s -w' -o dist/serialtap-linux-amd64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags '-s -w' -o dist/serialtap-linux-arm64 .
+          cd dist && sha256sum serialtap-linux-* > sha256sums.txt
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/serialtap-linux-amd64 dist/serialtap-linux-arm64 dist/sha256sums.txt \
+            --title "serialtap ${GITHUB_REF_NAME}" \
+            --generate-notes

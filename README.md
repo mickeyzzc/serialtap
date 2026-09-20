@@ -30,6 +30,8 @@ USB serial device (CH340/CH343/CP210x/FTDI/native USB-CDC…).
 ## 快速开始
 
 ```bash
+# 方式一： Releases 页下载预编译二进制（linux-amd64/arm64，tag 触发构建）
+# 方式二： 源码构建
 git clone https://github.com/mickeyzzc/serialtap && cd serialtap
 make build                 # 或: go build .
 ./serialtap list           # 看当前设备: tty / 名字 / VID:PID / by-id / 物理口
