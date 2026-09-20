@@ -1,7 +1,10 @@
-package main
+// Package pause 实现刷写暂停清单：USB 刷机前让出串口的安全门。
+package pause
 
 import (
 	"fmt"
+
+	"github.com/mickeyzzc/serialtap/internal/device"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -23,7 +26,7 @@ func PauseFilePath(root string) string { return filepath.Join(root, "PAUSED") }
 func NewPauseState() *PauseState { return &PauseState{} }
 
 // Matches: 该设备当前是否被暂停。
-func (p *PauseState) Matches(dev DeviceInfo) bool {
+func (p *PauseState) Matches(dev device.DeviceInfo) bool {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	if len(p.pats) == 0 {
@@ -128,4 +131,31 @@ func PauseCLI(root string, pause bool, patterns []string) error {
 		fmt.Println("  " + ln)
 	}
 	return nil
+}
+
+// ReplaceWith: 用另一状态热替换当前模式表（守护进程 PAUSED 重载用）。
+func (p *PauseState) ReplaceWith(other *PauseState) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	other.mu.RLock()
+	p.pats = other.pats
+	other.mu.RUnlock()
+}
+
+// Len: 当前暂停模式条数。
+func (p *PauseState) Len() int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return len(p.pats)
+}
+
+// Clear: 清空模式表；返回是否有变化（用于日志）。
+func (p *PauseState) Clear() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.pats) == 0 {
+		return false
+	}
+	p.pats = nil
+	return true
 }

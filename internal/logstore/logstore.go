@@ -1,4 +1,5 @@
-package main
+// Package logstore 管理设备双通道日志：写入、按日/大小轮转、保留期清理。
+package logstore
 
 import (
 	"fmt"
@@ -11,28 +12,8 @@ import (
 
 const tsFormat = "2006-01-02 15:04:05.000"
 
-func stamp(t time.Time) string { return t.Format(tsFormat) }
-
-// SanitizeName: 设备目录名只留安全字符。
-func SanitizeName(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
-			b.WriteRune(r)
-		default:
-			b.WriteRune('-')
-		}
-	}
-	out := strings.Trim(b.String(), "-")
-	if out == "" {
-		out = "dev"
-	}
-	if len(out) > 64 {
-		out = out[:64]
-	}
-	return out
-}
+// Stamp: 事件行统一的时间戳格式。
+func Stamp(t time.Time) string { return t.Format(tsFormat) }
 
 // DeviceWriter: 单设备双文件写入器。
 // <root>/<name>/serial-YYYYMMDD.log  全量日志（每行带毫秒时间戳）
@@ -52,7 +33,7 @@ type DeviceWriter struct {
 }
 
 func NewDeviceWriter(root, name string, maxMB int) (*DeviceWriter, error) {
-	name = SanitizeName(name)
+	// 契约：name 需为目录安全名（由 device.SanitizeName 统一生成）
 	dir := filepath.Join(root, name)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
@@ -121,7 +102,7 @@ func (w *DeviceWriter) WriteLine(line string) error {
 		w.serialF = nf
 		w.serialSize = 0
 	}
-	n, err := fmt.Fprintf(w.serialF, "[%s] %s\n", stamp(now), line)
+	n, err := fmt.Fprintf(w.serialF, "[%s] %s\n", Stamp(now), line)
 	w.serialSize += int64(n)
 	return err
 }
@@ -134,7 +115,7 @@ func (w *DeviceWriter) WriteEvent(line string) error {
 	if err := w.ensureDayLocked(now); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintf(w.eventsF, "[%s] %s\n", stamp(now), line)
+	_, err := fmt.Fprintf(w.eventsF, "[%s] %s\n", Stamp(now), line)
 	return err
 }
 

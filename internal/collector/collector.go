@@ -1,4 +1,6 @@
-package main
+// Package collector 实现单设备采集器：open-once-and-hold 纪律、
+// DTR/RTS 释放、读错误弃 fd、可选静默看门狗、暂停响应。
+package collector
 
 import (
 	"bytes"
@@ -8,11 +10,17 @@ import (
 	"time"
 
 	serial "go.bug.st/serial"
+
+	"github.com/mickeyzzc/serialtap/internal/config"
+	"github.com/mickeyzzc/serialtap/internal/device"
+	"github.com/mickeyzzc/serialtap/internal/logstore"
+	"github.com/mickeyzzc/serialtap/internal/pause"
+	"github.com/mickeyzzc/serialtap/internal/signature"
 )
 
-// serialPort: 采集器所需的最小串口面。生产实现包装 go.bug.st/serial，
+// Port: 采集器所需的最小串口面。生产实现包装 go.bug.st/serial，
 // 测试注入假端口（假端口驱动采集器全链路离线测试）。
-type serialPort interface {
+type Port interface {
 	Read(p []byte) (int, error)
 	Close() error
 	SetDTR(v bool) error
@@ -20,12 +28,13 @@ type serialPort interface {
 	SetReadTimeout(d time.Duration) error
 }
 
-type openPortFunc func(tty string, baud int) (serialPort, error)
+// OpenPortFunc: 打开一个串口。OpenPort 是包级 seam，测试整体替换。
+type OpenPortFunc func(tty string, baud int) (Port, error)
 
-// portOpener: 包级打开器，测试可整体替换。
-var portOpener openPortFunc = defaultOpenPort
+// OpenPort: 包级串口打开器（测试 seam）。
+var OpenPort OpenPortFunc = defaultOpenPort
 
-func defaultOpenPort(tty string, baud int) (serialPort, error) {
+func defaultOpenPort(tty string, baud int) (Port, error) {
 	return serial.Open(tty, &serial.Mode{BaudRate: baud}) // 其余零值 = 库默认 8N1
 }
 
@@ -46,26 +55,36 @@ func defaultOpenPort(tty string, baud int) (serialPort, error) {
 //     看门狗在静默超阈值时强制重开。只对"保证周期性输出日志"的设备开启
 //     （如 30s 心跳），否则合法的安静设备会被复位循环打死。
 type Collector struct {
-	dev    DeviceInfo
-	cfg    Config
-	w      *DeviceWriter
-	sigs   *SignatureEngine
-	pause  *PauseState
+	dev    device.DeviceInfo
+	cfg    config.Config
+	w      *logstore.DeviceWriter
+	sigs   *signature.SignatureEngine
+	pause  *pause.PauseState
 	stdlog func(format string, args ...any)
 
 	stopOnce sync.Once
 	stop     chan struct{}
 }
 
-func NewCollector(dev DeviceInfo, cfg Config, w *DeviceWriter, sigs *SignatureEngine, pause *PauseState, stdlog func(string, ...any)) *Collector {
+func NewCollector(dev device.DeviceInfo, cfg config.Config, w *logstore.DeviceWriter,
+	sigs *signature.SignatureEngine, p *pause.PauseState, stdlog func(string, ...any)) *Collector {
 	if stdlog == nil {
 		stdlog = func(string, ...any) {}
 	}
 	return &Collector{
-		dev: dev, cfg: cfg, w: w, sigs: sigs, pause: pause,
+		dev: dev, cfg: cfg, w: w, sigs: sigs, pause: p,
 		stdlog: stdlog, stop: make(chan struct{}),
 	}
 }
+
+// Tty: 该采集器持有的串口路径。
+func (c *Collector) Tty() string { return c.dev.Tty }
+
+// DeviceName: 设备名（即日志目录名）。
+func (c *Collector) DeviceName() string { return c.dev.Name }
+
+// pauseState: 暴露暂停状态给同包测试（热替换用）。
+func (c *Collector) pauseState() *pause.PauseState { return c.pause }
 
 func (c *Collector) Stop() {
 	c.stopOnce.Do(func() { close(c.stop) })
@@ -140,7 +159,7 @@ const (
 )
 
 func (c *Collector) collectOnce() (collectExit, error) {
-	port, err := portOpener(c.dev.Tty, c.cfg.Baud)
+	port, err := OpenPort(c.dev.Tty, c.cfg.Baud)
 	if err != nil {
 		return reasonOpenFailed, err
 	}
@@ -187,7 +206,7 @@ func (c *Collector) collectOnce() (collectExit, error) {
 		lastRX = time.Now()
 		for _, line := range asm.feed(buf[:n]) {
 			_ = c.w.WriteLine(line)
-			if sig, ok := c.sigs.Match(line); ok {
+			if sig, ok := c.matchSig(line); ok {
 				_ = c.w.WriteEvent(fmt.Sprintf("[%s] %s", sig, truncate(line, 200)))
 			}
 		}
@@ -195,6 +214,14 @@ func (c *Collector) collectOnce() (collectExit, error) {
 }
 
 // flushTail: 端口关闭时把残余半行落盘（零丢失承诺 —— 半行以 …partial 标记）。
+// matchSig: nil 引擎视为不匹配（防御；生产路径恒有引擎）。
+func (c *Collector) matchSig(line string) (string, bool) {
+	if c.sigs == nil {
+		return "", false
+	}
+	return c.sigs.Match(line)
+}
+
 func (c *Collector) flushTail(asm *lineAssembler) {
 	if t := asm.flush(); t != "" {
 		_ = c.w.WriteLine("…partial " + t)
@@ -228,13 +255,6 @@ func (c *Collector) waitUnpause() bool {
 	}
 }
 
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
-}
-
 // lineAssembler: 跨读取块的行拼装（残余半行保留在内部）。
 type lineAssembler struct {
 	tail []byte
@@ -266,4 +286,11 @@ func (a *lineAssembler) flush() string {
 	s := string(a.tail)
 	a.tail = a.tail[:0]
 	return s
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }

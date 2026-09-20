@@ -1,4 +1,5 @@
-package main
+// Package signature 实现错误签名引擎：命中签名的事件行进 events 流。
+package signature
 
 import (
 	"fmt"
@@ -43,9 +44,9 @@ type SignatureEngine struct {
 	sigs []compiledSig
 }
 
-// NewSignatureEngine: 默认签名 + 配置追加（追加项名字 extra-N）。
+// New: 默认签名 + 配置追加（追加项名字 extra-N）。
 // 单条正则编译失败只跳过该条（不让守护进程死在一条坏正则上）。
-func NewSignatureEngine(extra []string) *SignatureEngine {
+func New(extra []string) *SignatureEngine {
 	e := &SignatureEngine{}
 	for _, d := range defaultSigs {
 		if re, err := compileSig(d.pattern, d.insens); err == nil {

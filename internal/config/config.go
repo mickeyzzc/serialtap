@@ -1,5 +1,6 @@
-package main
+package config
 
+// Package config 定义 serialtap 的运行配置与加载。
 import (
 	"encoding/json"
 	"os"

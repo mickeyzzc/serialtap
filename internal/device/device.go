@@ -1,7 +1,10 @@
-package main
+// Package device 负责 USB 串口设备的发现与稳定身份（by-path 为 key）。
+package device
 
 import (
 	"os"
+
+	"github.com/mickeyzzc/serialtap/internal/config"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -26,7 +29,7 @@ type DeviceInfo struct {
 // 内置命名规则（by-id 正则 → 名）。配置 Names 优先，未命中再走这里。
 // 注意 Espressif 原生 USB-JTAG 的 by-id 含 MAC（如 ..._XX:XX:XX:XX:XX:XX-if00），
 // seeed 与 n16r8 同为 ESP32-S3 无法从芯片区分 —— 要精确到板子请在配置里按 MAC 序列号细分。
-var builtinNameRules = []NameRule{
+var builtinNameRules = []config.NameRule{
 	{Match: `USB_Serial-if00`, Name: "ch340"},           // 1a86:7523 — ai-thinker 板
 	{Match: `USB_Single_Serial`, Name: "ch343"},         // 1a86:7522/55d3 — luatos 板
 	{Match: `Espressif_USB_JTAG`, Name: "esp32s3-jtag"}, // 原生 USB-JTAG — seeed/n16r8
@@ -74,7 +77,7 @@ func sysfsIDAt(base, tty string) (vid, pid string) {
 	return "", ""
 }
 
-func applyNameRules(rules []NameRule, byID string) string {
+func applyNameRules(rules []config.NameRule, byID string) string {
 	for _, r := range rules {
 		if r.Match == "" || r.Name == "" {
 			continue
@@ -90,7 +93,7 @@ func applyNameRules(rules []NameRule, byID string) string {
 
 // Enumerate: 当前所有 USB 串口（带身份）。只有存在 /dev/serial/by-path 条目的口才算
 // USB 串口 —— 这会滤掉主板上的 ttyS*。exclude 任一命中（tty/key/by-id/name）即忽略。
-func Enumerate(exclude []*regexp.Regexp, names []NameRule) ([]DeviceInfo, error) {
+func Enumerate(exclude []*regexp.Regexp, names []config.NameRule) ([]DeviceInfo, error) {
 	ports, err := serial.GetPortsList()
 	if err != nil {
 		return nil, err
@@ -103,7 +106,7 @@ func Enumerate(exclude []*regexp.Regexp, names []NameRule) ([]DeviceInfo, error)
 
 // buildDevices: Enumerate 的可测核心（端口清单/索引/ID 查询全部注入）。
 func buildDevices(ports []string, byID, byPath map[string]string,
-	id func(string) (string, string), exclude []*regexp.Regexp, names []NameRule) []DeviceInfo {
+	id func(string) (string, string), exclude []*regexp.Regexp, names []config.NameRule) []DeviceInfo {
 	var out []DeviceInfo
 	for _, p := range ports {
 		tty := filepath.Base(p)
@@ -161,4 +164,26 @@ func CompilePatterns(pats []string) (compiled []*regexp.Regexp, bad []string) {
 		compiled = append(compiled, re)
 	}
 	return compiled, bad
+}
+
+// SanitizeName: 设备名 → 目录安全名（设备名的唯一规范化入口，
+// logstore/日志目录与显示名共用）。
+func SanitizeName(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		out = "dev"
+	}
+	if len(out) > 64 {
+		out = out[:64]
+	}
+	return out
 }

@@ -119,7 +119,23 @@ make lint      # golangci-lint（配置见 .golangci.yml）
 make fmt       # gofmt
 ```
 
-- TDD 开发，单测 + 假端口注入驱动采集器全链路离线测试 + socat PTY 端到端
+代码结构（`internal/` 分包，依赖单向、边界清晰）：
+
+```
+main.go                    # 薄入口（仅 os.Exit(cli.Run(...))）
+internal/cli/              # 子命令分发与 flag 解析（编排层）
+internal/config/           # 配置定义与加载
+internal/device/           # 设备发现与稳定身份（by-path key / by-id 命名 / sysfs）
+internal/collector/        # 单设备采集器（open-once-and-hold、可注入 Port seam）
+internal/logstore/         # 双通道日志写入 / 轮转 / 保留期清理
+internal/signature/        # 错误签名引擎
+internal/pause/            # 刷写暂停清单
+internal/daemon/           # 热插拔守护循环（枚举 diff + 起停采集器）
+internal/analyze/          # 离线分析（签名汇总 + addr2line 解码）
+internal/testutil/         # 跨包测试助手（假串口等）
+```
+
+- TDD 开发，假端口注入驱动采集器全链路离线测试 + socat PTY 端到端
 - 依赖已 `go mod vendor`：`go.bug.st/serial`（arduino-cli 同款串口库，纯 Go）
 - Go 1.27+
 

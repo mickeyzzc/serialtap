@@ -1,4 +1,5 @@
-package main
+// Package analyze 提供离线分析：签名汇总与 Backtrace addr2line 解码。
+package analyze
 
 import (
 	"bufio"
@@ -10,13 +11,16 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/mickeyzzc/serialtap/internal/config"
+	"github.com/mickeyzzc/serialtap/internal/signature"
 )
 
 // analyzeLogs: 离线扫描日志，按签名汇总（计数 / 首末时间 / 样本行）。
 // 首末时间跨文件按时间序取 min/max（时间戳定宽 ISO 格式，字典序=时间序），
 // 与文件传入顺序无关。
-func analyzeLogs(w io.Writer, paths []string, showLines bool) error {
-	eng := NewSignatureEngine(nil)
+func Logs(w io.Writer, paths []string, showLines bool) error {
+	eng := signature.New(nil)
 	tsRe := regexp.MustCompile(`^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\]`)
 
 	type stat struct {
@@ -88,11 +92,6 @@ func analyzeLogs(w io.Writer, paths []string, showLines bool) error {
 	return nil
 }
 
-// cmdAnalyze: analyzeLogs 的 CLI 包装。
-func cmdAnalyze(paths []string, showLines bool) error {
-	return analyzeLogs(os.Stdout, paths, showLines)
-}
-
 var (
 	addrPairRe = regexp.MustCompile(`(0x[0-9a-fA-F]+):0x[0-9a-fA-F]+`) // Backtrace 帧的 addr:sp 对
 	pcMarkRe   = regexp.MustCompile(`\|<-(0x[0-9a-fA-F]+)`)            // |<-PC 标记
@@ -112,7 +111,7 @@ func backtraceAddrs(line string) []string {
 
 // cmdDecodeBacktrace: 从日志提取 Backtrace 地址帧，用 addr2line 翻译成 源文件:行号。
 // elf 省略时按日志路径 <root>/<name>/… 从配置 elf_map[name] 取。
-func cmdDecodeBacktrace(logPath, elf, addr2lineBin string, cfg Config) error {
+func DecodeBacktrace(logPath, elf, addr2lineBin string, cfg config.Config) error {
 	if elf == "" {
 		elf = elfFromLogPath(logPath, cfg)
 	}
@@ -168,7 +167,7 @@ func cmdDecodeBacktrace(logPath, elf, addr2lineBin string, cfg Config) error {
 	return nil
 }
 
-func elfFromLogPath(logPath string, cfg Config) string {
+func elfFromLogPath(logPath string, cfg config.Config) string {
 	parts := strings.Split(filepath.ToSlash(logPath), "/")
 	if len(parts) < 2 {
 		return ""
@@ -217,4 +216,11 @@ func findAddr2line(explicit string) (string, error) {
 		return "", fmt.Errorf("找不到 addr2line（请 source ESP-IDF 环境或 --addr2line 指定）")
 	}
 	return hits[len(hits)-1], nil
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
