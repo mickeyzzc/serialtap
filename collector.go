@@ -100,7 +100,7 @@ func (c *Collector) Run() {
 			continue
 		}
 
-		reason := c.collectOnce()
+		reason, openErr := c.collectOnce()
 
 		select {
 		case <-c.stop:
@@ -112,8 +112,9 @@ func (c *Collector) Run() {
 		case reasonPaused:
 			// 外层循环处理等待
 		case reasonOpenFailed:
-			// 设备可能已拔走（watcher 会 Stop 我们）；指数退避防止刷屏
-			c.event("open failed — retry in %s", backoff)
+			// 设备可能已拔走（watcher 会 Stop 我们）；也可能被别的进程占用
+			// （EBUSY）——错误详情必须进事件流，否则排查全靠猜。指数退避防刷屏。
+			c.event("open failed: %v — retry in %s", openErr, backoff)
 			if !c.sleep(backoff) {
 				return
 			}
@@ -138,10 +139,10 @@ const (
 	reasonSilent     collectExit = "silent-watchdog"
 )
 
-func (c *Collector) collectOnce() collectExit {
+func (c *Collector) collectOnce() (collectExit, error) {
 	port, err := portOpener(c.dev.Tty, c.cfg.Baud)
 	if err != nil {
-		return reasonOpenFailed
+		return reasonOpenFailed, err
 	}
 	// 见文件头注释第 2 条：open 后立即释放 DTR/RTS
 	_ = port.SetDTR(false)
@@ -161,25 +162,25 @@ func (c *Collector) collectOnce() collectExit {
 			// USB 重新枚举（拔出）在此抛错 —— 不能恋战死 fd
 			c.event("read error: %v", err)
 			c.flushTail(&asm)
-			return reasonReadError
+			return reasonReadError, nil
 		}
 		select {
 		case <-c.stop:
 			c.flushTail(&asm)
-			return reasonStopped
+			return reasonStopped, nil
 		default:
 		}
 		if c.pause.Matches(c.dev) {
 			c.event("paused — closing port")
 			c.flushTail(&asm)
-			return reasonPaused
+			return reasonPaused, nil
 		}
 		if n == 0 {
 			if c.cfg.SilentReopenS > 0 &&
 				time.Since(lastRX) > time.Duration(c.cfg.SilentReopenS)*time.Second {
 				c.event("silent >%ds — forcing reopen", c.cfg.SilentReopenS)
 				c.flushTail(&asm)
-				return reasonSilent
+				return reasonSilent, nil
 			}
 			continue
 		}

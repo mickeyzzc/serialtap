@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -301,5 +302,30 @@ func TestCollectorPauseResume(t *testing.T) {
 		s := readLogFile(t, evPath)
 		return strings.Contains(s, "unpaused") && strings.Count(s, "serial opened") >= 2
 	}, "解除暂停后未重开")
+	c.Stop()
+}
+
+// —— open 失败：错误详情必须进事件流（EBUSY 排查靠它）——
+func TestCollectorOpenFailureLogsError(t *testing.T) {
+	root := t.TempDir()
+	old := portOpener
+	portOpener = func(tty string, baud int) (serialPort, error) {
+		return nil, os.NewSyscallError("open", syscall.EBUSY)
+	}
+	t.Cleanup(func() { portOpener = old })
+
+	cfg := DefaultConfig()
+	cfg.Root = root
+	cfg.ReopenMinS = 1
+	cfg.ReopenMaxS = 1
+	w, _ := NewDeviceWriter(root, "busydev", 64)
+	c := NewCollector(DeviceInfo{Tty: "/dev/fake", Key: "k", Name: "busydev"}, cfg, w,
+		NewSignatureEngine(nil), NewPauseState(), func(string, ...any) {})
+	go c.Run()
+	day := time.Now().Format("20060102")
+	waitFor(t, 5*time.Second, func() bool {
+		ev := readLogFile(t, filepath.Join(root, "busydev", "events-"+day+".log"))
+		return strings.Contains(ev, "open failed:") && strings.Contains(ev, "busy")
+	}, "open 错误详情未进事件流")
 	c.Stop()
 }
