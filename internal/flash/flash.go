@@ -64,16 +64,57 @@ func ResolveEsptool(explicit string) (string, error) {
 			root = filepath.Join(home, ".espressif")
 		}
 	}
-	if root != "" {
-		if p, ok := globLast(esptoolEnvGlobs(root)); ok {
-			return p, nil
+	roots := []string{root}
+	roots = append(roots, eimRoots()...) // eim 安装管理器可把工具根搬到别处（实测 C:\Espressif）
+	var allGlobs []string
+	for _, r := range roots {
+		if r != "" {
+			allGlobs = append(allGlobs, esptoolEnvGlobs(r)...)
 		}
+	}
+	if p, ok := globLast(allGlobs); ok {
+		return p, nil
 	}
 	if p, ok := globLast(esptoolUserGlobs()); ok {
 		return p, nil
 	}
 	return "", fmt.Errorf("找不到 esptool（PATH、espressif python_env、pip --user 目录均无；" +
 		"请 source ESP-IDF 环境或 --esptool 指定）")
+}
+
+// eimRoots: ESP-IDF 安装管理器（eim）的 eim_config.toml 会把工具根搬离
+// ~/.espressif（如 tool_install_folder_name = 'C:\Espressif\tools'，python_env
+// 在 tools 同级）。轻量扫描该单行（单引号 TOML 字符串），失败即跳过 —— 不引 TOML 依赖。
+// espressifDir 为 .espressif 目录（生产取 ~/.espressif，测试可注入）。
+func eimRootsAt(espressifDir string) []string {
+	data, err := os.ReadFile(filepath.Join(espressifDir, "eim_config.toml"))
+	if err != nil {
+		return nil
+	}
+	for _, ln := range strings.Split(string(data), "\n") {
+		ln = strings.TrimSpace(ln)
+		if !strings.HasPrefix(ln, "tool_install_folder_name") {
+			continue
+		}
+		q1 := strings.IndexByte(ln, '\'')
+		q2 := strings.LastIndexByte(ln, '\'')
+		if q1 < 0 || q2 <= q1 {
+			return nil
+		}
+		if dir := strings.TrimSpace(ln[q1+1 : q2]); dir != "" {
+			return []string{filepath.Dir(dir), dir}
+		}
+		return nil
+	}
+	return nil
+}
+
+func eimRoots() []string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	return eimRootsAt(filepath.Join(home, ".espressif"))
 }
 
 // globLast: 执行一组 glob，全部命中排序后取最后一个（无命中 false）。

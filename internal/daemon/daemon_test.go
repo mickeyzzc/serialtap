@@ -297,8 +297,10 @@ func TestFlashRejectsConcurrentOps(t *testing.T) {
 		done <- d.Flash("fakeA", flash.Spec{Esptool: tool,
 			Bins: []flash.BinSpec{{Path: bin, Offset: "0x0"}}}, func(string) {})
 	}()
-	// 等第一个 flash 真正拿到锁
-	time.Sleep(200 * time.Millisecond)
+	// 确定性等到第一个 flash 持锁进入 esptool 阶段（盲睡在忙机器上会 flaky）
+	testutil.WaitFor(t, 5*time.Second, func() bool {
+		return d.Status()[0].State == "flashing"
+	}, "首个 flash 未进入 flashing 状态")
 
 	if _, err := d.Release("fakeA", time.Hour, false); err == nil {
 		t.Fatal("flash 进行中 release 应报错")

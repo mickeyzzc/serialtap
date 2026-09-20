@@ -251,3 +251,24 @@ func TestRunTimeoutKillsEsptool(t *testing.T) {
 		t.Fatalf("超时未及时返回: %s", elapsed)
 	}
 }
+
+// eim 布局：tool_install_folder_name 指向别处（如 C:\Espressif\tools），
+// python_env 在 tools 同级 —— 解析该行并返回候选根
+func TestEimRootsAt(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "eim_config.toml"),
+		[]byte("path = 'C:\\Users\\x\\.espressif'\ntool_install_folder_name = 'C:\\Espressif\\tools'\n"+
+			"python_env_folder_name = \"python\"\n"), 0o644)
+	got := eimRootsAt(dir)
+	if len(got) == 0 || got[0] != filepath.Dir(`C:\Espressif\tools`) {
+		t.Fatalf("eim 根解析错误: %v", got)
+	}
+	if r := eimRootsAt(filepath.Join(dir, "nope")); r != nil {
+		t.Fatal("无配置文件应返回 nil")
+	}
+	// 无 tool_install_folder_name 行 → nil
+	os.WriteFile(filepath.Join(dir, "eim_config.toml"), []byte("a = 'b'\n"), 0o644)
+	if r := eimRootsAt(dir); r != nil {
+		t.Fatal("无目标行应返回 nil")
+	}
+}

@@ -180,3 +180,27 @@ func TestPauseFallsBackToFileWhenNoDaemon(t *testing.T) {
 		t.Fatalf("resume 文件回退失败: %d", code)
 	}
 }
+
+// 服务端 ok:false 必须反映为非零退出码（此前 release/status/pause 只打
+// stderr 却退出 0，脚本化会误判成功）
+func TestCtlServerErrorPropagatesExitCode(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "t.sock")
+	srv, err := ctl.Listen(sock)
+	if err != nil {
+		t.Skipf("本平台无法监听 unix socket: %v", err)
+	}
+	t.Cleanup(srv.Close)
+	go srv.Serve(func(req ctl.Request, respond func(ctl.Response)) {
+		respond(ctl.Response{OK: false, Error: "boom"})
+	})
+	for _, args := range [][]string{
+		{"status", "--sock", sock},
+		{"release", "x", "--sock", sock},
+		{"pause", "--sock", sock},
+		{"resume", "--sock", sock},
+	} {
+		if rc := Run(args); rc != 1 {
+			t.Fatalf("Run(%v) = %d, want 1", args, rc)
+		}
+	}
+}

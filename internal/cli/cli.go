@@ -389,9 +389,11 @@ func cmdStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
 	sock := fs.String("sock", "", "控制 socket 路径（默认自动）")
 	parseFlags(fs, args)
-	return ctlSend(*sock, ctl.Request{Cmd: "status"}, func(r ctl.Response) bool {
+	var respErr string
+	err := ctlSend(*sock, ctl.Request{Cmd: "status"}, func(r ctl.Response) bool {
 		if !r.OK {
-			return errOut(r.Error)
+			respErr = r.Error // 统一由 Run 的错误出口打印
+			return true
 		}
 		if len(r.Devices) == 0 {
 			fmt.Println("（无采集设备）")
@@ -403,11 +405,10 @@ func cmdStatus(args []string) error {
 		}
 		return true
 	})
-}
-
-func errOut(msg string) bool {
-	fmt.Fprintln(os.Stderr, "错误:", msg)
-	return true
+	if respErr != "" {
+		return fmt.Errorf("%s", respErr)
+	}
+	return err
 }
 
 func cmdRelease(args []string) error {
@@ -427,9 +428,11 @@ func cmdRelease(args []string) error {
 		req.ForMs = d.Milliseconds()
 		req.UntilIdle = false
 	}
-	return ctlSend(*sock, req, func(r ctl.Response) bool {
+	var respErr string
+	err := ctlSend(*sock, req, func(r ctl.Response) bool {
 		if !r.OK {
-			return errOut(r.Error)
+			respErr = r.Error // 统一由 Run 的错误出口打印
+			return true
 		}
 		if req.ForMs > 0 {
 			fmt.Printf("已让出端口（%s 限时 %s 后自动回采）—— 其他工具现在可用该口\n", pos[0], *forDur)
@@ -438,6 +441,10 @@ func cmdRelease(args []string) error {
 		}
 		return true
 	})
+	if respErr != "" {
+		return fmt.Errorf("%s", respErr)
+	}
+	return err
 }
 
 func cmdFlash(args []string) error {
@@ -486,7 +493,6 @@ func cmdFlash(args []string) error {
 			return false
 		case "flash-done":
 			if !r.OK {
-				fmt.Fprintf(os.Stderr, "刷写失败: %s\n", r.Error)
 				flashErr = fmt.Errorf("刷写失败: %s", r.Error)
 			} else {
 				fmt.Println("✓ 刷写完成，已恢复采集")
@@ -494,7 +500,8 @@ func cmdFlash(args []string) error {
 			return true
 		default:
 			if !r.OK {
-				return errOut(r.Error)
+				flashErr = fmt.Errorf("%s", r.Error)
+				return true
 			}
 			return false
 		}
@@ -505,7 +512,9 @@ func cmdFlash(args []string) error {
 	return flashErr
 }
 
-// pause/resume：守护进程在 → socket（立即生效且走同一文件语义）；不在 → 直接改文件
+// pause/resume：守护进程在 → socket（立即生效且走同一文件语义）；不在 → 直接改文件。
+// 服务端拒绝（ok:false，如"刷写进行中"）必须原样报错退出 —— 不能回退文件直改
+// （守护明明活着），也不能谎报成功。
 func cmdPauseSocket(args []string, pauseMode bool) error {
 	fs := flag.NewFlagSet("pause/resume", flag.ExitOnError)
 	sock := fs.String("sock", "", "控制 socket 路径")
@@ -519,8 +528,18 @@ func cmdPauseSocket(args []string, pauseMode bool) error {
 	if pauseMode {
 		cmd = "pause"
 	}
-	err := ctlSend(*sock, ctl.Request{Cmd: cmd, Pattern: pattern}, func(r ctl.Response) bool { return true })
+	var respErr string
+	err := ctlSend(*sock, ctl.Request{Cmd: cmd, Pattern: pattern},
+		func(r ctl.Response) bool {
+			if !r.OK && r.Error != "" {
+				respErr = r.Error
+			}
+			return true
+		})
 	if err == nil {
+		if respErr != "" {
+			return fmt.Errorf("%s", respErr)
+		}
 		if pauseMode {
 			fmt.Println("已暂停（守护进程已生效）")
 		} else {
@@ -528,6 +547,6 @@ func cmdPauseSocket(args []string, pauseMode bool) error {
 		}
 		return nil
 	}
-	// 守护不在 → 文件直改（历史行为）
+	// 守护不在（连接失败）→ 文件直改（历史行为）
 	return cmdPauseCLI(args, pauseMode)
 }

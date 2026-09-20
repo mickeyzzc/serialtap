@@ -5,7 +5,8 @@
 ### 代理刷固件强化
 
 - **esptool 自动发现**：PATH → `~/.espressif/python_env` glob（尊重 `IDF_TOOLS_PATH`，
-  多命中取最新）→ Windows pip --user 目录 —— 未 source ESP-IDF 环境也能刷
+  多命中取最新）→ **eim 安装管理器布局**（解析 `eim_config.toml` 的工具根，实测
+  `C:\Espressif\python_env`）→ Windows pip --user 目录 —— 未 source ESP-IDF 环境也能刷
 - **并发互斥**：`flash`/`release`/`resume` 三者互斥，进行中立即报错（fail-fast）——
   修复两个 flash 或 flash+release 同时到达时双双让口、两个 esptool 抢同一口的竞态；
   resume 在刷写中途抢回口也被拒绝
@@ -14,6 +15,9 @@
   并自动回采，挂死进程不再永远持有串口
 - **`flash --dry-run`**：守护进程侧解析并回显每台匹配设备将执行的 esptool 命令，
   不动端口 —— 多设备正则刷写前预演
+- **ctl 错误退出码**：`status`/`release`/`pause`/`resume` 收到服务端 ok:false 时
+  退出码改为非零（此前只打 stderr 却退出 0，脚本化会误判成功）；`pause`/`resume`
+  被服务端拒绝时不再回退文件直改模式、不再谎报成功
 - events 审计：每次刷写记录完整 esptool 命令行（flash plan）
 - 文档：远程刷写（SSH 隧道转发 ctl socket）用法
 
