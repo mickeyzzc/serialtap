@@ -1,0 +1,14 @@
+[Unit]
+Description=serialtap — USB 串口持续采集器（MiBee Cam 家族调试）
+Documentation=file://%h/Projects/esp-cam/serialtap/README.md
+
+[Service]
+# 用户级 systemd 服务（systemctl --user）。开机自启需:
+#   loginctl enable-linger $USER
+ExecStart=%h/.local/bin/serialtap run --config %h/.config/serialtap/config.json
+Restart=on-failure
+RestartSec=3
+WorkingDirectory=%h
+
+[Install]
+WantedBy=default.target

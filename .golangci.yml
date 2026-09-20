@@ -1,0 +1,30 @@
+# golangci-lint v2 配置 — https://golangci-lint.run/config/
+version: "2"
+
+formatters:
+  enable:
+    - gofmt
+
+linters:
+  # standard = errcheck + govet + ineffassign + staticcheck + unused
+  default: standard
+  enable:
+    - misspell
+    - unconvert
+    - copyloopvar
+  settings:
+    errcheck:
+      exclude-functions:
+        # CLI 输出路径（stdout/缓冲）—— 写失败无处理意义
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - fmt.Fprint
+        - fmt.Printf
+        - fmt.Println
+        - fmt.Print
+  exclusions:
+    rules:
+      # 测试里的宽松项
+      - path: _test\.go
+        linters:
+          - errcheck

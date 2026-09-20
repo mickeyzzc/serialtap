@@ -1,0 +1,19 @@
+{
+  "root": "/home/YOU/serialtap-logs",
+  "baud": 115200,
+  "poll_interval_ms": 1000,
+  "silent_reopen_s": 0,
+  "reopen_min_s": 5,
+  "reopen_max_s": 60,
+  "rotate_max_mb": 64,
+  "retention_days": 14,
+  "exclude": [],
+  "names": [
+    { "match": "Espressif_USB_JTAG_serial_debug_unit_XX:XX:XX:XX:XX:XX", "name": "board-a" },
+    { "match": "USB_Single_Serial_XXXXXXXXXXXX", "name": "board-b" }
+  ],
+  "signatures_extra": ["NO-SOI"],
+  "elf_map": {
+    "board-a": "/path/to/your/firmware/build/app.elf"
+  }
+}
