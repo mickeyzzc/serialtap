@@ -68,7 +68,7 @@ Windows 上是 `serialtap.exe list`（设备形如 `COM3`）、单口采集 `ser
 | `list` | 列出当前设备与身份 |
 | `pause [RE]` / `resume [RE]` | 暂停/恢复采集（省略 = 全部） |
 | `release RE [--for 5m]` | **临时让出串口**给外部工具：默认端口空闲 3 秒自动回采，或限时自动回采 |
-| `flash RE <bin>[@0x10000]...` | **代理刷固件**：让口 → esptool → 自动回采，进度流式回传；`--args-file build/flasher_args.json` 一键刷 IDF 全套。RE 为正则，多设备会**逐台刷**，精确刷一台用锚定（如 `^board$`） |
+| `flash RE <bin>[@0x10000]...` | **代理刷固件**：让口 → esptool → 自动回采，进度流式回传；`--args-file build/flasher_args.json` 一键刷 IDF 全套；`--dry-run` 预演将执行的命令。RE 为正则，多设备会**逐台刷**，精确刷一台用锚定（如 `^board$`）。远程刷写见[控制协议 · SSH 隧道](docs/ctl-protocol.md#远程使用ssh-隧道) |
 | `status` | 守护进程与设备实时状态（collecting/paused/suspended/flashing） |
 | `analyze LOG...` | 离线签名扫描：计数 / 首末时间 / 样本行汇总表 |
 | `decode-backtrace LOG` | `Backtrace:` 地址帧 addr2line 解码 |

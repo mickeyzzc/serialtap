@@ -22,8 +22,9 @@ serialtap 的全部可配置项。配置文件是 JSON,默认路径 `~/.config/s
 | `signatures_extra` | []string | `[]` | 追加事件签名正则,签名名依次为 `extra-0`、`extra-1`… |
 | `elf_map` | map | `{}` | 设备名 → 固件 `.elf` 路径,`decode-backtrace` 按日志目录名自动选取 |
 | `control_socket` | string | `""` | 控制 unix socket 路径;空 = 平台默认(见下)。`run --sock` 可临时覆盖 |
-| `esptool_cmd` | string | `""` | 代理刷固件的 esptool 命令;空 = PATH 自动发现 `esptool`/`esptool.py`。`flash --esptool` 可临时覆盖 |
+| `esptool_cmd` | string | `""` | 代理刷固件的 esptool 命令;空 = 自动发现(PATH → `~/.espressif/python_env` glob → Windows pip 目录,`IDF_TOOLS_PATH` 可重定位)。`flash --esptool` 可临时覆盖 |
 | `flash_baud` | int | `0` | 代理刷波特率;`0` = esptool 默认。`flash --baud` 可临时覆盖 |
+| `flash_timeout_s` | int | `600` | 单台设备刷写超时(秒):超时强制杀掉 esptool 并自动回采,防挂死进程永远持有串口。**显式写 `0` = 不限时**(该字段不做零值回填) |
 
 ### 关于 `silent_reopen_s` 的警告
 

@@ -33,9 +33,16 @@
 |---|---|---|
 | `bins` | [{path, offset}] | 待刷镜像列表,offset 为十六进制字符串如 `"0x10000"` |
 | `args_file` | string | ESP-IDF `build/flasher_args.json` 路径;与 `bins` 同时给时以它为准 |
-| `esptool` | string | esptool 命令;空 = PATH 自动发现 |
+| `esptool` | string | esptool 命令;空 = 自动发现(PATH > `~/.espressif/python_env` glob > Windows pip 目录) |
 | `baud` | int | 刷写波特率;0 = esptool 默认 |
 | `chip` | string | 芯片类型如 `esp32s3`;省略 = 自动(args_file 提供时会从中取 `--chip`) |
+| `dry_run` | bool | 只预演:守护进程侧解析并回显将执行的 esptool 命令,不动端口、不执行、不改状态 |
+
+**并发语义**:`flash` / `release` / `resume` 三者互斥 —— 一个 `flash` 进行中时,
+并发的 `flash`/`release`/`resume` 立即返回错误(fail-fast,不排队),防止两个
+esptool 抢同一口或 resume 在刷写中途抢回口。`flash` 开始时会撤销匹配设备的
+pending release。单台刷写超时由配置 `flash_timeout_s` 兜底(默认 600s,超时杀
+esptool 进程并回采)。
 
 ## 响应(Response)
 
@@ -138,6 +145,29 @@ sock.connect(f"{__import__('os').environ['XDG_RUNTIME_DIR']}/serialtap.sock")
 sock.sendall(b'{"cmd":"status"}\n')
 print(json.loads(sock.recv(65536)))   # {"ok": true, "devices": [...]}
 ```
+
+## 远程使用(SSH 隧道)
+
+板子接在工位机/树莓派上常驻采集、从笔记本远程刷写的场景:ctl 是 unix socket,
+用 SSH 把远端 socket 转发到本地即可,零额外代码:
+
+```bash
+# 笔记本上(Linux/macOS):把远端 socket 映到本地路径
+ssh -nN -L /tmp/serialtap-remote.sock:/run/user/1000/serialtap.sock user@bench &
+
+serialtap status --sock /tmp/serialtap-remote.sock
+serialtap flash '^board-a$' --args-file build/flasher_args.json --sock /tmp/serialtap-remote.sock
+```
+
+注意事项:
+
+- **镜像与 args 文件路径在守护进程一侧(远端机器)解析** —— 先把产物放到远端
+  (或用远端可访问的构建目录),再发 flash 请求
+- 远端 socket 路径用 `serialtap status` 在远端确认(`$XDG_RUNTIME_DIR/serialtap.sock`
+  或 `/tmp/serialtap-<uid>.sock`)
+- Windows 客户端的 OpenSSH 对 unix socket 本地转发支持不完整;可用 WSL 里的 ssh,
+  或远端暴露 TCP 端口经 `socat TCP-LISTEN:7332,fork UNIX-CONNECT:...` 中转
+  (仅限可信网络,无认证)
 
 ## socket 防抢占
 

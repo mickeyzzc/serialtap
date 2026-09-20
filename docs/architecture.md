@@ -187,19 +187,28 @@ mtime 早于 `retention_days` 的文件;`retention_days <= 0` 永久保留。
 楔进 ROM 下载模式**。对每个匹配设备(正则,多设备逐台刷):
 
 ```
+opMu.TryLock            与 Release/ResumeAll 互斥(fail-fast,不排队)
+撤销 pending release    防限时到期在 esptool 工作中途抢回口
+flash.Plan              解析 Spec → 完整 esptool argv,进 events 审计
 Suspend(10s)            等端口真正关闭
 SetFlashing(true)       状态展示 → flashing
-flash.Run(esptool...)   执行 esptool,stdout/stderr 按行流式回传(\r 与 \n 都算行界,
+flash.Run(esptool...)   执行 esptool(flash_timeout_s 超时兜底,挂死即杀),
+                        stdout/stderr 按行流式回传(\r 与 \n 都算行界,
                         esptool 进度条用 \r 刷新;两路扫描协程经互斥锁串行化防交错)
 SetFlashing(false)
 Resume()                自动回采
 ```
 
+`--dry-run`(Spec.DryRun)只走 Plan 分支:守护进程侧解析并回显将执行的命令,
+不动端口、不执行、不改状态 —— 用于多设备正则刷写前预演"会刷哪几台、命令是什么"。
+
 esptool 命令行组装:`esptool --port <tty> [--chip <c>] [--baud <n>] write_flash
 <offset> <bin>...`。`--args-file` 指向 ESP-IDF `build/flasher_args.json` 时:
 `flash_files` 的 offset→路径按 offset 升序展开(相对路径基于 args 文件所在目录),
 `extra_esptool_args` 只取 string 值(如 `--chip`);布尔/数字值(stub/trace)走默认。
-esptool 本体发现顺序:显式指定 > PATH 里的 `esptool` / `esptool.py`。
+esptool 本体发现顺序:显式指定 > PATH 里的 `esptool`/`esptool.py` >
+`~/.espressif/python_env/*/bin|Scripts/esptool(.exe)` glob(尊重 `IDF_TOOLS_PATH`,
+多命中取排序最后一个)> Windows 的 pip --user 目录。
 
 ## 控制通道(ctl)
 

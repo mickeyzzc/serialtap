@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### 代理刷固件强化
+
+- **esptool 自动发现**：PATH → `~/.espressif/python_env` glob（尊重 `IDF_TOOLS_PATH`，
+  多命中取最新）→ Windows pip --user 目录 —— 未 source ESP-IDF 环境也能刷
+- **并发互斥**：`flash`/`release`/`resume` 三者互斥，进行中立即报错（fail-fast）——
+  修复两个 flash 或 flash+release 同时到达时双双让口、两个 esptool 抢同一口的竞态；
+  resume 在刷写中途抢回口也被拒绝
+- **撤销 pending release**：刷写开始时撤销匹配设备的限时 release，防止到期中途抢口
+- **刷写超时兜底**：`flash_timeout_s`（默认 600s，显式 0 关闭）超时杀 esptool 进程
+  并自动回采，挂死进程不再永远持有串口
+- **`flash --dry-run`**：守护进程侧解析并回显每台匹配设备将执行的 esptool 命令，
+  不动端口 —— 多设备正则刷写前预演
+- events 审计：每次刷写记录完整 esptool 命令行（flash plan）
+- 文档：远程刷写（SSH 隧道转发 ctl socket）用法
+
 ### 跨平台：Windows / macOS 支持
 
 - **设备发现**：Windows 走注册表（`SERIALCOMM` 活口清单 +
