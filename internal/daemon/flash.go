@@ -48,10 +48,16 @@ func (d *daemon) matches(pattern string) ([]string, []*collector.Collector) {
 
 // Release: 让出匹配设备的串口给外部工具。forDur>0 限时自动回采；
 // untilIdle=true 时端口连续空闲 idleQuietS 秒后自动回采。
+// 空闲检测依赖 /proc（Linux）或 lsof（macOS）—— Windows 两者皆无，
+// 显式拒绝而非静默误判（恒"无人占用"会导致 3s 后抢回口、打断外部工具）。
 func (d *daemon) Release(pattern string, forDur time.Duration, untilIdle bool) (int, error) {
 	keys, cs := d.matches(pattern)
 	if len(cs) == 0 {
 		return 0, fmt.Errorf("没有匹配 %q 的采集设备", pattern)
+	}
+	if untilIdle && forDur <= 0 && !device.IdleDetectSupported() {
+		return 0, fmt.Errorf("此平台不支持空闲自动回采（Windows 无 /proc/lsof 占用检测）；" +
+			"请用 --for <时长> 限时回采，或让口后 serialtap resume 手动回采")
 	}
 	spec := releaseSpec{untilIdle: untilIdle}
 	if forDur > 0 {

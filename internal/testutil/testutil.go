@@ -1,8 +1,12 @@
-// Package testutil 提供跨包测试助手（假串口、等待与读文件）。
+// Package testutil 提供跨包测试助手（假串口、假外部命令、等待与读文件）。
 package testutil
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -94,3 +98,66 @@ func (e *ErrPort) Close() error                         { return nil }
 func (e *ErrPort) SetDTR(bool) error                    { return nil }
 func (e *ErrPort) SetRTS(bool) error                    { return nil }
 func (e *ErrPort) SetReadTimeout(d time.Duration) error { return nil }
+
+// —— 假外部命令（esptool / addr2line 替身）——
+// shell 脚本假件在 Windows 不可执行，统一编译成真二进制；进程内只编译一次。
+// 行为由环境变量驱动（exec.Command 自动继承）：FAKE_EXIT=退出码；
+// FAKE_OUT=要打印的内容（字面输出，可含 \r/\n）。
+
+var (
+	fakeOnce sync.Once
+	fakeBin  string
+	fakeErr  error
+)
+
+// FakeTool: 返回假外部命令的可执行文件路径。测试里用 t.Setenv 配 FAKE_EXIT/FAKE_OUT。
+func FakeTool(tb testing.TB) string {
+	fakeOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "serialtap-fake-")
+		if err != nil {
+			fakeErr = err
+			return
+		}
+		src := filepath.Join(dir, "main.go")
+		if err := os.WriteFile(src, []byte(fakeToolSrc), 0o644); err != nil {
+			fakeErr = err
+			return
+		}
+		exe := filepath.Join(dir, "fakecmd")
+		if runtime.GOOS == "windows" {
+			exe += ".exe"
+		}
+		out, err := exec.Command("go", "build", "-o", exe, src).CombinedOutput()
+		if err != nil {
+			fakeErr = fmt.Errorf("go build 假命令失败: %w: %s", err, out)
+			return
+		}
+		fakeBin = exe
+	})
+	if fakeErr != nil {
+		tb.Fatalf("FakeTool 不可用: %v", fakeErr)
+	}
+	return fakeBin
+}
+
+const fakeToolSrc = "package main\n" +
+	"import (\n" +
+	"\t\"fmt\"\n" +
+	"\t\"os\"\n" +
+	"\t\"strings\"\n" +
+	")\n" +
+	"func main() {\n" +
+	"\tcode := 0\n" +
+	"\tif v := os.Getenv(\"FAKE_EXIT\"); v != \"\" {\n" +
+	"\t\tif _, err := fmt.Sscanf(v, \"%d\", &code); err != nil {\n" +
+	"\t\t\tcode = 1\n" +
+	"\t\t}\n" +
+	"\t}\n" +
+	"\tif out := os.Getenv(\"FAKE_OUT\"); out != \"\" {\n" +
+	"\t\tfmt.Print(out)\n" +
+	"\t\tif !strings.HasSuffix(out, \"\\n\") {\n" +
+	"\t\t\tfmt.Println()\n" +
+	"\t\t}\n" +
+	"\t}\n" +
+	"\tos.Exit(code)\n" +
+	"}\n"

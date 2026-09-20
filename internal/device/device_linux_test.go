@@ -133,17 +133,7 @@ func TestEnumerateRealNoError(t *testing.T) {
 	}
 }
 
-func TestSanitizeName(t *testing.T) {
-	if got := SanitizeName("usb-1a86_USB Serial/我们"); got != SanitizeName(got) || len(got) == 0 {
-		t.Fatalf(" sanitize 不幂等或为空: %q", got)
-	}
-	if SanitizeName("...") == "" {
-		t.Fatal("不应返回空名")
-	}
-	if SanitizeName("a/b\\c*d") != "a-b-c-d" {
-		t.Fatalf("非法字符未替换: %q", SanitizeName("a/b\\c*d"))
-	}
-}
+// （TestSanitizeName 已上移到跨平台的 device_test.go）
 
 // PortHolders: 用假 /proc 树验证 fd 符号链接扫描（含"不报自己"语义）
 func TestPortHoldersAtFakeProc(t *testing.T) {

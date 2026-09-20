@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### 跨平台：Windows / macOS 支持
+
+- **设备发现**：Windows 走注册表（`SERIALCOMM` 活口清单 +
+  `Enum\USB` 树的 VID/PID/实例 ID），macOS 走 `cu.*` 设备名；
+  稳定身份语义与 Linux by-path 一致（同型号不撞车、换口即换身份）
+- **内置 VID:PID 命名规则**（ch340/ch343/esp32s3-jtag）三平台通用，
+  by-id 规则未命中时套用
+- **控制通道**：三平台统一 unix socket（Windows 10 1803+ AF_UNIX）；
+  Windows 默认路径 `%LOCALAPPDATA%\serialtap\serialtap.sock`（父目录自动创建）
+- **release 空闲自动回采**：Linux（/proc）与 macOS（lsof）支持；
+  Windows 显式拒绝并提示改用 `--for` 限时回采（试开端口会给设备复位脉冲，不做）
+- **测试全面跨平台**：假外部命令改为编译型（shell 脚本在 Windows 不可执行）；
+  修复 5 个包的 Windows 失败用例；CI 增加三平台测试矩阵
+- `flash` 刷写失败现在返回非零退出码（此前只打 stderr，脚本化会误判成功）
+- Release 产物扩展到 linux/darwin/windows × amd64/arm64
+
 ## v0.1.0 (2026-09-20)
 
 首个公开发布。

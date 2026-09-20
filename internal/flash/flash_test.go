@@ -5,15 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-)
 
-func writeFakeEsptool(t *testing.T, script string) string {
-	t.Helper()
-	dir := t.TempDir()
-	p := filepath.Join(dir, "fake-esptool")
-	os.WriteFile(p, []byte(script), 0o755)
-	return p
-}
+	"github.com/mickeyzzc/serialtap/internal/testutil"
+)
 
 func TestBuildArgsManualBins(t *testing.T) {
 	dir := t.TempDir()
@@ -86,8 +80,10 @@ func TestParseFlasherArgs(t *testing.T) {
 }
 
 func TestResolveEsptool(t *testing.T) {
-	fake := writeFakeEsptool(t, "#!/bin/sh\nexit 0\n")
-	if p, err := ResolveEsptool(fake); err != nil || !strings.HasSuffix(p, "fake-esptool") {
+	fake := testutil.FakeTool(t)
+	t.Setenv("FAKE_EXIT", "0")
+	t.Setenv("FAKE_OUT", "")
+	if p, err := ResolveEsptool(fake); err != nil || p != fake {
 		t.Fatalf("显式指定失败: %q %v", p, err)
 	}
 	if _, err := ResolveEsptool("/nonexistent/e"); err == nil {
@@ -96,15 +92,19 @@ func TestResolveEsptool(t *testing.T) {
 }
 
 func TestRunStreamsOutputAndExitCode(t *testing.T) {
-	fake := writeFakeEsptool(t, `#!/bin/sh
-echo "esptool@1 chip is ESP32-S3"
-printf 'Writing at 0x0000... (25 %%)\r'
-printf 'Writing at 0x1000... (50 %%)\r'
-echo "Hash of data verified."
-exit 0
-`)
+	fake := testutil.FakeTool(t)
+	// 镜像文件要真实存在（BuildArgs 会 Stat；/dev/null 在 Windows 没有）
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "x.bin")
+	os.WriteFile(bin, []byte("x"), 0o644)
+
+	t.Setenv("FAKE_EXIT", "0")
+	t.Setenv("FAKE_OUT", "esptool@1 chip is ESP32-S3\n"+
+		"Writing at 0x0000... (25 %)\r"+
+		"Writing at 0x1000... (50 %)\r"+
+		"Hash of data verified.\n")
 	var lines []string
-	if err := Run(fake, "/dev/ttyFAKE0", Spec{Bins: []BinSpec{{Path: "/dev/null", Offset: "0x0"}}},
+	if err := Run(fake, "/dev/ttyFAKE0", Spec{Bins: []BinSpec{{Path: bin, Offset: "0x0"}}},
 		func(l string) { lines = append(lines, l) }); err != nil {
 		t.Fatal(err)
 	}
@@ -115,8 +115,9 @@ exit 0
 		}
 	}
 
-	fail := writeFakeEsptool(t, "#!/bin/sh\necho boom\nexit 2\n")
-	err := Run(fail, "/dev/ttyFAKE0", Spec{Bins: []BinSpec{{Path: "/dev/null", Offset: "0x0"}}},
+	t.Setenv("FAKE_EXIT", "2")
+	t.Setenv("FAKE_OUT", "boom\n")
+	err := Run(fake, "/dev/ttyFAKE0", Spec{Bins: []BinSpec{{Path: bin, Offset: "0x0"}}},
 		func(string) {})
 	if err == nil || !strings.Contains(err.Error(), "2") {
 		t.Fatalf("非零退出码应报错: %v", err)

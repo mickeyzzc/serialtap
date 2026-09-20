@@ -475,7 +475,10 @@ func cmdFlash(args []string) error {
 		}
 		spec.Bins = append(spec.Bins, bin)
 	}
-	return ctlSend(*sock, ctl.Request{Cmd: "flash", Pattern: pos[0], Spec: spec}, func(r ctl.Response) bool {
+	// flash-done 带 ok=false 时 ctlSend 本身不报错（协议层正常），
+	// 退出码要反映刷写失败 —— 脚本化调用依赖它
+	var flashErr error
+	err = ctlSend(*sock, ctl.Request{Cmd: "flash", Pattern: pos[0], Spec: spec}, func(r ctl.Response) bool {
 		switch r.Event {
 		case "flash-log":
 			fmt.Println(r.Line)
@@ -483,6 +486,7 @@ func cmdFlash(args []string) error {
 		case "flash-done":
 			if !r.OK {
 				fmt.Fprintf(os.Stderr, "刷写失败: %s\n", r.Error)
+				flashErr = fmt.Errorf("刷写失败: %s", r.Error)
 			} else {
 				fmt.Println("✓ 刷写完成，已恢复采集")
 			}
@@ -494,6 +498,10 @@ func cmdFlash(args []string) error {
 			return false
 		}
 	})
+	if err != nil {
+		return err
+	}
+	return flashErr
 }
 
 // pause/resume：守护进程在 → socket（立即生效且走同一文件语义）；不在 → 直接改文件

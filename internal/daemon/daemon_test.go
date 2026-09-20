@@ -36,6 +36,7 @@ func TestLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(d.Shutdown) // 失败路径也要收尾（Windows 上打开的文件不可删除）
 	d.Tick()
 	if d.Collectors() != 2 {
 		t.Fatalf("应起 2 个采集器: %d", d.Collectors())
@@ -95,6 +96,9 @@ func newTestDaemon(t *testing.T, root string, devs ...device.DeviceInfo) (*daemo
 }
 
 func TestReleaseUntilIdleAutoResumes(t *testing.T) {
+	if !device.IdleDetectSupported() {
+		t.Skip("此平台无端口占用检测（Windows：无 /proc/lsof），until_idle 由 Release 显式拒绝，见下")
+	}
 	root := t.TempDir()
 	old := collector.OpenPort
 	collector.OpenPort = func(tty string, baud int) (collector.Port, error) {
@@ -106,6 +110,7 @@ func TestReleaseUntilIdleAutoResumes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(d.Shutdown)
 	d.Tick()
 	testutil.WaitFor(t, 3*time.Second, func() bool { return d.Collectors() == 1 }, "采集器未起")
 
@@ -131,7 +136,36 @@ func TestReleaseUntilIdleAutoResumes(t *testing.T) {
 	if !resumed {
 		t.Fatal("until_idle 未自动回采")
 	}
-	d.Shutdown()
+}
+
+// Windows 等无占用检测的平台：until_idle 的 release 必须显式报错（而非静默误判
+// "无人占用"导致 3s 后抢回口）
+func TestReleaseUntilIdleRejectedOnUnsupportedPlatform(t *testing.T) {
+	if device.IdleDetectSupported() {
+		t.Skip("此平台支持空闲检测，跳过拒绝用例")
+	}
+	root := t.TempDir()
+	old := collector.OpenPort
+	collector.OpenPort = func(tty string, baud int) (collector.Port, error) {
+		return &testutil.FakePort{}, nil
+	}
+	t.Cleanup(func() { collector.OpenPort = old })
+
+	d, err := newTestDaemon(t, root, device.DeviceInfo{Tty: "/dev/ttyFAKE", Key: "kA", Name: "fakeA"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(d.Shutdown)
+	d.Tick()
+	testutil.WaitFor(t, 3*time.Second, func() bool { return d.Collectors() == 1 }, "采集器未起")
+
+	if _, err := d.Release("fakeA", 0, true); err == nil {
+		t.Fatal("不支持空闲检测的平台 until_idle 应报错")
+	}
+	// 限时回采不受影响
+	if _, err := d.Release("fakeA", time.Second, false); err != nil {
+		t.Fatalf("限时 release 不应受影响: %v", err)
+	}
 }
 
 func TestReleaseTimedAutoResumes(t *testing.T) {
@@ -165,8 +199,9 @@ func TestReleaseTimedAutoResumes(t *testing.T) {
 
 func TestFlashOrchestrationWithFakeEsptool(t *testing.T) {
 	root := t.TempDir()
-	a2l := filepath.Join(root, "fake-esptool")
-	os.WriteFile(a2l, []byte("#!/bin/sh\necho \"fake flashing $*\"\nexit 0\n"), 0o755)
+	a2l := testutil.FakeTool(t)
+	t.Setenv("FAKE_EXIT", "0")
+	t.Setenv("FAKE_OUT", "fake flashing\n")
 
 	old := collector.OpenPort
 	collector.OpenPort = func(tty string, baud int) (collector.Port, error) {
@@ -178,6 +213,8 @@ func TestFlashOrchestrationWithFakeEsptool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Windows 上文件被打开时无法删除：失败路径也要收掉采集协程，TempDir 清理才不炸
+	t.Cleanup(d.Shutdown)
 	d.Tick()
 
 	var lines []string
@@ -200,7 +237,6 @@ func TestFlashOrchestrationWithFakeEsptool(t *testing.T) {
 	if err := d.Flash("nope", flash.Spec{}, func(string) {}); err == nil {
 		t.Fatal("无匹配设备应报错")
 	}
-	d.Shutdown()
 }
 
 // —— resume 无参必须清空整个 PAUSED（与无参 pause 对称）——

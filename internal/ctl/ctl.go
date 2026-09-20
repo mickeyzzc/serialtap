@@ -52,13 +52,7 @@ type Server struct {
 	stopCh chan struct{}
 }
 
-// DefaultSocketPath: XDG_RUNTIME_DIR/serialtap.sock，回退 /tmp/serialtap-$UID.sock。
-func DefaultSocketPath() string {
-	if x := os.Getenv("XDG_RUNTIME_DIR"); x != "" {
-		return filepath.Join(x, "serialtap.sock")
-	}
-	return fmt.Sprintf("/tmp/serialtap-%d.sock", os.Getuid())
-}
+// DefaultSocketPath: 平台相关（socketpath_unix.go / socketpath_windows.go）。
 
 // Listen: 建立监听（socket 权限 0600，同用户专用）。
 // socket 已被活着的实例持有 → 拒绝（防止第二实例偷走控制通道）；
@@ -71,10 +65,15 @@ func Listen(path string) (*Server, error) {
 		}
 		_ = os.Remove(path) // 死 socket
 	}
+	// Windows 默认路径在 %LOCALAPPDATA%\serialtap 下，父目录可能不存在
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, fmt.Errorf("控制 socket 目录创建失败: %w", err)
+	}
 	ln, err := net.Listen("unix", path)
 	if err != nil {
 		return nil, fmt.Errorf("控制 socket 监听失败: %w", err)
 	}
+	// Windows 的 AF_UNIX 无文件权限语义，Chmod 仅在类 Unix 上有实际效果
 	if err := os.Chmod(path, 0o600); err != nil {
 		_ = ln.Close()
 		return nil, err
