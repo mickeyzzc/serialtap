@@ -49,16 +49,19 @@ func regDeleteTree(path string) {
 	_ = registry.DeleteKey(registry.CURRENT_USER, path)
 }
 
-// 假的 USB Enum 树：CH340（无序列号 → 位置实例）、ESP32-S3（MAC 实例）、
-// 一个畸形键、一个非 COM 的 PortName —— 后两者必须被忽略。
+// 假的 USB Enum 树：CH340（无序列号 → 位置实例）、ESP32 复合设备
+// （串口挂 &MI_00 接口子键、父键唯一实例 = MAC 序列号）、一个畸形键、
+// 一个非 COM 的 PortName —— 后两者必须被忽略。
 func buildFakeEnumTree(t *testing.T) string {
 	t.Helper()
 	root := testEnumRoot + `\` + filepath.Base(t.TempDir())
 	mustCreateKey(t, root+`\USB\VID_1A86&PID_7523\5&deadbeef&0&2\Device Parameters`)
 	mustSetString(t, root+`\USB\VID_1A86&PID_7523\5&deadbeef&0&2\Device Parameters`, "PortName", "COM77")
 
-	mustCreateKey(t, root+`\USB\VID_303A&PID_1001\48:27:E2:AA:BB:CC\Device Parameters`)
-	mustSetString(t, root+`\USB\VID_303A&PID_1001\48:27:E2:AA:BB:CC\Device Parameters`, "PortName", "COM88")
+	// ESP32 原生 USB（复合）：父键（设备级，含 MAC 序列号）+ 接口子键（真正持串口）
+	mustCreateKey(t, root+`\USB\VID_303A&PID_1001\B4:3A:45:58:C5:34\Device Parameters`)
+	mustCreateKey(t, root+`\USB\VID_303A&PID_1001&MI_00\7&af7bb08&2&0000\Device Parameters`)
+	mustSetString(t, root+`\USB\VID_303A&PID_1001&MI_00\7&af7bb08&2&0000\Device Parameters`, "PortName", "COM88")
 
 	// 非 COM 的 PortName（某些杂项设备）→ 忽略
 	mustCreateKey(t, root+`\USB\VID_1A86&PID_7523\9&ffff&0&9\Device Parameters`)
@@ -82,8 +85,12 @@ func TestUSBSerialMetaAt(t *testing.T) {
 		t.Fatalf("COM77 元数据错误: %+v", m77)
 	}
 	m88, ok := meta["COM88"]
-	if !ok || m88.vid != "303a" || m88.pid != "1001" || m88.instance != "48:27:E2:AA:BB:CC" {
+	// 复合设备：父键唯一实例（MAC）作身份，by-id 用设备级 PNP 路径
+	if !ok || m88.vid != "303a" || m88.pid != "1001" || m88.instance != "B4:3A:45:58:C5:34" {
 		t.Fatalf("COM88 元数据错误: %+v", m88)
+	}
+	if m88.pnp != `USB\VID_303A&PID_1001\B4:3A:45:58:C5:34` {
+		t.Fatalf("复合设备 by-id 应为父级 PNP 路径: %q", m88.pnp)
 	}
 	if _, bad := meta["COM66"]; bad {
 		t.Fatal("畸形 VID:PID 键不应入表")
@@ -97,8 +104,10 @@ func TestUSBSerialMetaAt(t *testing.T) {
 // 非 USB 串口（无元数据）被过滤。
 func TestDevicesFromMeta(t *testing.T) {
 	meta := map[string]usbMeta{
-		"COM77": {vid: "1a86", pid: "7523", instance: "5&deadbeef&0&2"},
-		"COM88": {vid: "303a", pid: "1001", instance: "48:27:E2:AA:BB:CC"},
+		"COM77": {vid: "1a86", pid: "7523", instance: "5&deadbeef&0&2",
+			pnp: `USB\VID_1A86&PID_7523\5&deadbeef&0&2`},
+		"COM88": {vid: "303a", pid: "1001", instance: "B4:3A:45:58:C5:34",
+			pnp: `USB\VID_303A&PID_1001\B4:3A:45:58:C5:34`},
 	}
 	devs := devicesFromMeta([]string{"COM77", "COM88", "COM99"}, meta, nil, nil)
 	if len(devs) != 2 {
@@ -111,7 +120,7 @@ func TestDevicesFromMeta(t *testing.T) {
 				t.Fatalf("COM77 身份错误: %+v", d)
 			}
 		case "COM88":
-			if d.Key != "48:27:E2:AA:BB:CC" || d.Name != "esp32s3-jtag" || !strings.HasPrefix(d.ByID, `USB\VID_303A&PID_1001\`) {
+			if d.Key != "B4:3A:45:58:C5:34" || d.Name != "esp32s3-jtag" || !strings.HasPrefix(d.ByID, `USB\VID_303A&PID_1001\`) {
 				t.Fatalf("COM88 身份错误: %+v", d)
 			}
 		}
