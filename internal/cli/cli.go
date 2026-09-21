@@ -39,6 +39,8 @@ func usage() {
       [--elf F] [--addr2line BIN] [--config F]
   serialtap pause [RE]...                暂停采集（省略=全部）
   serialtap resume [RE]...               恢复采集（省略=全部）
+  serialtap tray                         Windows 托盘常驻：状态/按设备暂停恢复/开日志
+      [--config F] [--root DIR] [--sock PATH] [--poll-ms N]
   serialtap release RE [--for 5m]        临时让出串口给外部工具（默认空闲 3s 自动回采）
   serialtap flash RE <bin>[@0x10000]...  代理刷固件：让口 → esptool → 自动回采
       [--args-file F] [--esptool CMD] [--baud N] [--chip C] [--dry-run]
@@ -110,6 +112,8 @@ func Run(args []string) int {
 		err = cmdPauseSocket(args[1:], true)
 	case "resume":
 		err = cmdPauseSocket(args[1:], false)
+	case "tray":
+		err = cmdTray(args[1:])
 	case "version":
 		fmt.Println("serialtap " + Version)
 	default:

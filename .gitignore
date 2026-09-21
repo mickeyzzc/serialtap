@@ -1,3 +1,4 @@
 serialtap
 logs/
 *.log
+.demo-logs/

@@ -46,6 +46,19 @@ Linux 的 by-id 是 `usb-Espressif_USB_JTAG_...`，Windows 是 `USB\VID_303A&PID
 实例路径，macOS 是 `usbmodem2101` 一类设备名 —— 用 `serialtap list` 看实际值再写正则。
 内置 VID:PID 规则（ch340/ch343/esp32s3-jtag）三平台通用。
 
+## Windows 托盘
+
+`serialtap tray` 在系统托盘常驻，与守护进程只经控制 socket 通信（互不绑架，托盘退出不影响采集）：
+
+- **每台设备一个菜单项，勾选框即"接入开关"** —— 勾选 = 采集中，点击即暂停/恢复该设备
+- 设备子菜单：**查看串口日志**（系统默认编辑器打开最新全量日志）、**打开日志目录**
+- 全部暂停 / 全部恢复；守护进程未运行时菜单可一键启动（后台无窗口）
+- 悬停提示实时设备数；图标变灰 = 守护进程未连接
+
+```powershell
+serialtap tray --root <日志根> --sock <控制socket>   # 与 run 的参数保持一致即可
+```
+
 ## 快速开始
 
 ```bash
@@ -70,6 +83,7 @@ Windows 上是 `serialtap.exe list`（设备形如 `COM3`）、单口采集 `ser
 | `release RE [--for 5m]` | **临时让出串口**给外部工具：默认端口空闲 3 秒自动回采，或限时自动回采 |
 | `flash RE <bin>[@0x10000]...` | **代理刷固件**：让口 → esptool → 自动回采，进度流式回传；`--args-file build/flasher_args.json` 一键刷 IDF 全套；`--dry-run` 预演将执行的命令。RE 为正则，多设备会**逐台刷**，精确刷一台用锚定（如 `^board$`）。远程刷写见[控制协议 · SSH 隧道](docs/ctl-protocol.md#远程使用ssh-隧道) |
 | `status` | 守护进程与设备实时状态（collecting/paused/suspended/flashing） |
+| `tray`（Windows） | 托盘常驻：接入状态、按设备暂停/恢复、打开日志，见下节 |
 | `analyze LOG...` | 离线签名扫描：计数 / 首末时间 / 样本行汇总表 |
 | `decode-backtrace LOG` | `Backtrace:` 地址帧 addr2line 解码 |
 
