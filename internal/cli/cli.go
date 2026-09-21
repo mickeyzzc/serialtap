@@ -21,6 +21,7 @@ import (
 	"github.com/mickeyzzc/serialtap/internal/logstore"
 	"github.com/mickeyzzc/serialtap/internal/pause"
 	"github.com/mickeyzzc/serialtap/internal/signature"
+	"github.com/mickeyzzc/serialtap/internal/web"
 )
 
 const Version = "0.1.0"
@@ -41,6 +42,8 @@ func usage() {
   serialtap resume [RE]...               恢复采集（省略=全部）
   serialtap tray                         Windows 托盘常驻：状态/按设备暂停恢复/开日志
       [--config F] [--root DIR] [--sock PATH] [--poll-ms N]
+  serialtap proxy RE [--stop]            透明 USB 代理：为匹配设备开 TCP 端点透传串口
+                                         （对业务程序等同直连；期间采集照常，可配 proxy_tap_exclude）
   serialtap release RE [--for 5m]        临时让出串口给外部工具（默认空闲 3s 自动回采）
   serialtap flash RE <bin>[@0x10000]...  代理刷固件：让口 → esptool → 自动回采
       [--args-file F] [--esptool CMD] [--baud N] [--chip C] [--dry-run]
@@ -104,6 +107,8 @@ func Run(args []string) int {
 		err = cmdDecodeCLI(args[1:])
 	case "status":
 		err = cmdStatus(args[1:])
+	case "proxy":
+		err = cmdProxy(args[1:])
 	case "release":
 		err = cmdRelease(args[1:])
 	case "flash":
@@ -152,11 +157,15 @@ func cmdRun(args []string) error {
 	var exclude multiFlag
 	fs.Var(&exclude, "exclude", "忽略设备正则（可多次）")
 	sockFlag := fs.String("sock", "", "控制 socket 路径（默认自动；被占用时启动会被拒绝）")
+	webFlag := fs.String("web", "", "Web 观测面板地址（默认 127.0.0.1:8801；off = 关闭）")
 	parseFlags(fs, args)
 
 	cfg, err := loadCfgMerged(*cfgPath, *root, *baud)
 	if err != nil {
 		return err
+	}
+	if *webFlag != "" {
+		cfg.WebAddr = *webFlag
 	}
 	if *pollMs > 0 {
 		cfg.PollMs = *pollMs
@@ -194,7 +203,7 @@ func cmdRun(args []string) error {
 		return err
 	}
 	defer ctlSrv.Close()
-	go ctlSrv.Serve(func(req ctl.Request, respond func(ctl.Response)) {
+	handler := func(req ctl.Request, respond func(ctl.Response)) {
 		switch req.Cmd {
 		case "status":
 			respond(ctl.Response{OK: true, Devices: d.Status()})
@@ -215,6 +224,22 @@ func cmdRun(args []string) error {
 				return
 			}
 			respond(ctl.Response{OK: true})
+		case "proxy":
+			if req.Action == "stop" {
+				n, err := d.ProxyStop(req.Pattern)
+				if err != nil {
+					respond(ctl.Response{OK: false, Error: err.Error()})
+					return
+				}
+				respond(ctl.Response{OK: true, Line: fmt.Sprintf("%d", n)})
+				return
+			}
+			ep, err := d.ProxyStart(req.Pattern)
+			if err != nil {
+				respond(ctl.Response{OK: false, Error: err.Error()})
+				return
+			}
+			respond(ctl.Response{OK: true, Endpoint: ep})
 		case "release":
 			forDur := time.Duration(req.ForMs) * time.Millisecond
 			n, err := d.Release(req.Pattern, forDur, req.UntilIdle)
@@ -235,8 +260,23 @@ func cmdRun(args []string) error {
 		default:
 			respond(ctl.Response{OK: false, Error: "unknown cmd: " + req.Cmd})
 		}
-	})
+	}
+	go ctlSrv.Serve(handler)
 	stdoutLog("[ctl] 控制通道: %s", sockPath)
+
+	// Web 观测面板：状态/实时日志/事件只读展示 + 暂停/恢复/代理操作。
+	// 操作经 commander 桥到上面同一条 ctl 处理路径 —— 面板不引入第二套控制逻辑。
+	webCmd := func(req ctl.Request) (ctl.Response, error) {
+		switch req.Cmd {
+		case "status", "pause", "resume", "proxy":
+			var resp ctl.Response
+			handler(req, func(r ctl.Response) { resp = r })
+			return resp, nil
+		}
+		return ctl.Response{}, fmt.Errorf("面板不支持该命令（走 CLI）: %s", req.Cmd)
+	}
+	webSrv := web.Start(cfg.WebAddr, cfg.Root, d.Status, webCmd, stdoutLog)
+	defer webSrv.Close()
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
@@ -403,9 +443,44 @@ func cmdStatus(args []string) error {
 			fmt.Println("（无采集设备）")
 			return true
 		}
-		fmt.Printf("%-16s %-14s %-10s %s\n", "NAME", "TTY", "STATE", "KEY")
+		fmt.Printf("%-16s %-14s %-10s %-24s %s\n", "NAME", "TTY", "STATE", "PROXY", "KEY")
 		for _, d := range r.Devices {
-			fmt.Printf("%-16s %-14s %-10s %s\n", d.Name, d.Tty, d.State, d.Key)
+			px := "-"
+			if d.Proxy != "" {
+				px = d.Proxy
+			}
+			fmt.Printf("%-16s %-14s %-10s %-24s %s\n", d.Name, d.Tty, d.State, px, d.Key)
+		}
+		return true
+	})
+	if respErr != "" {
+		return fmt.Errorf("%s", respErr)
+	}
+	return err
+}
+
+func cmdProxy(args []string) error {
+	fs := flag.NewFlagSet("proxy", flag.ExitOnError)
+	sock := fs.String("sock", "", "控制 socket 路径")
+	stop := fs.Bool("stop", false, "停止透传（默认开启）")
+	pos := parseFlags(fs, args)
+	if len(pos) != 1 {
+		return fmt.Errorf("proxy 需要一个设备匹配正则，如 proxy luatos")
+	}
+	req := ctl.Request{Cmd: "proxy", Pattern: pos[0]}
+	if *stop {
+		req.Action = "stop"
+	}
+	var respErr string
+	err := ctlSend(*sock, req, func(r ctl.Response) bool {
+		if !r.OK {
+			respErr = r.Error
+			return true
+		}
+		if req.Action == "stop" {
+			fmt.Printf("已停止透传（%s）\n", pos[0])
+		} else {
+			fmt.Printf("透传端点: %s\n设备 %s 的串口现在可经该 TCP 端点直接读写（采集照常）\n", r.Endpoint, pos[0])
 		}
 		return true
 	})

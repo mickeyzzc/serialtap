@@ -1,12 +1,16 @@
 // Package collector 实现单设备采集器：open-once-and-hold 纪律、
-// DTR/RTS 释放、读错误弃 fd、可选静默看门狗、暂停响应。
+// DTR/RTS 释放、读错误弃 fd、可选静默看门狗、暂停响应，
+// 以及透明代理桥（业务程序经 serialtap 读写板子串口，见 proxy.go）。
 package collector
 
 import (
 	"bytes"
 	"fmt"
+	"net"
+	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	serial "go.bug.st/serial"
@@ -20,8 +24,10 @@ import (
 
 // Port: 采集器所需的最小串口面。生产实现包装 go.bug.st/serial，
 // 测试注入假端口（假端口驱动采集器全链路离线测试）。
+// Read 与 Write 并发安全（全双工桥接的前提：串口句柄两个方向独立）。
 type Port interface {
 	Read(p []byte) (int, error)
+	Write(p []byte) (int, error)
 	Close() error
 	SetDTR(v bool) error
 	SetRTS(v bool) error
@@ -66,6 +72,12 @@ type Collector struct {
 	stopOnce sync.Once
 	stop     chan struct{}
 	sr       SuspendResume // 程序化让出/收回（release 与代理刷固件）
+
+	// 透传桥状态（见 proxy.go）
+	proxyMu    sync.Mutex     // 保护 proxyConn
+	proxyConn  net.Conn       // 当前代理客户端（单客户端，nil = 无会话）
+	portWriter atomic.Value   // func([]byte) error —— 端口写入口
+	tapExcl    *regexp.Regexp // 透传期间不落盘的行（proxy_tap_exclude）
 }
 
 func NewCollector(dev device.DeviceInfo, cfg config.Config, w *logstore.DeviceWriter,
@@ -76,6 +88,7 @@ func NewCollector(dev device.DeviceInfo, cfg config.Config, w *logstore.DeviceWr
 	return &Collector{
 		dev: dev, cfg: cfg, w: w, sigs: sigs, pause: p,
 		stdlog: stdlog, stop: make(chan struct{}),
+		tapExcl: compileTapExclude(cfg.ProxyTapExclude, stdlog),
 	}
 }
 
@@ -176,6 +189,9 @@ func (c *Collector) collectOnce() (collectExit, error) {
 	}
 	c.sr.portOpen.Store(true)
 	defer c.sr.portOpen.Store(false)
+	// 透传桥的写入口：端口存续期间登记，关闭即撤销（见 proxy.go）
+	c.setPortWriter(port)
+	defer c.setPortWriter(nil)
 	// 见文件头注释第 2 条：open 后立即释放 DTR/RTS
 	_ = port.SetDTR(false)
 	_ = port.SetRTS(false)
@@ -217,7 +233,15 @@ func (c *Collector) collectOnce() (collectExit, error) {
 			continue
 		}
 		lastRX = time.Now()
+		c.proxyOut(buf[:n]) // 透传：原始字节镜像给代理客户端（无客户端时零开销）
 		for _, line := range asm.feed(buf[:n]) {
+			if c.proxyTapDrop(line) {
+				// 透传期间的指定行不落全量日志（如高频遥测），签名照常
+				if sig, ok := c.matchSig(line); ok {
+					_ = c.w.WriteEvent(fmt.Sprintf("[%s] %s", sig, truncate(line, 200)))
+				}
+				continue
+			}
 			_ = c.w.WriteLine(line)
 			if sig, ok := c.matchSig(line); ok {
 				_ = c.w.WriteEvent(fmt.Sprintf("[%s] %s", sig, truncate(line, 200)))

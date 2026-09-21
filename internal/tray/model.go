@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -62,29 +63,47 @@ func SnapshotHash(devs []ctl.DevState, daemonOK bool) string {
 	return b.String()
 }
 
-// LatestSerialLog: root/<name>/ 下最新的全量日志。文件名含定宽日期，
-// 字典序即时间序；当日基础文件（无轮转后缀）在同日中排序最大，
-// 因此"取字典序最大的 serial-*.log"即最新。
+// LatestSerialLog: root/<name>/ 下最新的全量日志。文件名 serial-YYYYMMDD[.NNN].log：
+// 同日内数字后缀越大越新（写满基础文件后写入 .001/.002…）。字典序在此不可靠
+// （".001" < ".log"，'0'<'l'），必须按 (日期, 后缀数字) 语义比较。
 func LatestSerialLog(root, name string) string {
 	dir := filepath.Join(root, name)
 	ents, err := os.ReadDir(dir)
 	if err != nil {
 		return ""
 	}
-	best := ""
+	best, bestDay, bestSfx := "", "", -1
 	for _, e := range ents {
 		n := e.Name()
 		if e.IsDir() || !strings.HasPrefix(n, "serial-") || !strings.HasSuffix(n, ".log") {
 			continue
 		}
-		if n > best {
-			best = n
+		day, sfx, ok := serialLogSortKey(n)
+		if !ok {
+			continue
+		}
+		if day > bestDay || (day == bestDay && sfx > bestSfx) {
+			best, bestDay, bestSfx = n, day, sfx
 		}
 	}
 	if best == "" {
 		return ""
 	}
 	return filepath.Join(dir, best)
+}
+
+// serialLogSortKey: serial-YYYYMMDD[.NNN].log → (day, suffix)；基础文件 suffix=0。
+func serialLogSortKey(name string) (string, int, bool) {
+	n := strings.TrimPrefix(name, "serial-")
+	n = strings.TrimSuffix(n, ".log")
+	if i := strings.IndexByte(n, '.'); i >= 0 {
+		sfx, err := strconv.Atoi(n[i+1:])
+		if err != nil || sfx < 0 {
+			return "", 0, false
+		}
+		return n[:i], sfx, true
+	}
+	return n, 0, true
 }
 
 // QueryStatus: 带 3s 超时的 status 查询 —— 守护进程挂死时托盘不能被拖死，

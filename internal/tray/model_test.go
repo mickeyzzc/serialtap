@@ -63,8 +63,9 @@ func TestLatestSerialLog(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// 当日基础文件（无轮转后缀）字典序最大 → 最新
-	want := filepath.Join(dev, "serial-20260921.log")
+	// 轮转后同日内后缀越大越新：.001 是基础文件写满后正在写的文件
+	// （字典序会错判：".001" < ".log"）
+	want := filepath.Join(dev, "serial-20260921.001.log")
 	if got := LatestSerialLog(dir, "board"); got != want {
 		t.Fatalf("LatestSerialLog = %q, want %q", got, want)
 	}

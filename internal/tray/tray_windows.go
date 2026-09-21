@@ -42,6 +42,20 @@ func OpenPath(path string) error {
 	return nil
 }
 
+// openURL: 用默认浏览器打开 URL（与 OpenPath 分开 —— 后者对路径做 Abs，
+// 会把 http:// 前缀搞坏）。
+func openURL(url string) error {
+	verb, _ := windows.UTF16PtrFromString("open")
+	p, _ := windows.UTF16PtrFromString(url)
+	h, _, _ := shellExecuteW.Call(0,
+		uintptr(unsafe.Pointer(verb)), uintptr(unsafe.Pointer(p)),
+		0, 0, 1) // SW_SHOWNORMAL
+	if h <= 32 {
+		return fmt.Errorf("ShellExecute(%q) 失败码 %d", url, h)
+	}
+	return nil
+}
+
 // StartDaemon: 启动一个后台守护进程（serialtap run，无窗口）。
 func StartDaemon(sockPath, root string) error {
 	exe, err := os.Executable()
@@ -75,13 +89,13 @@ func (t *trayUI) debugf(format string, args ...any) {
 }
 
 // Run: 进入托盘主循环（阻塞至"退出"）。root 统一转为绝对路径
-// （打开日志走 ShellExecute，相对路径不可靠）。
-func Run(sockPath, root string, poll time.Duration) error {
+// （打开日志走 ShellExecute，相对路径不可靠）。webURL 空 = 不显示面板菜单项。
+func Run(sockPath, root, webURL string, poll time.Duration) error {
 	if abs, err := filepath.Abs(root); err == nil {
 		root = abs
 	}
 	t := &trayUI{
-		sockPath: sockPath, root: root, poll: poll,
+		sockPath: sockPath, root: root, webURL: webURL, poll: poll,
 		states: map[string]string{}, devUIs: map[string]*devUI{},
 	}
 	systray.Run(t.onReady, func() {})
@@ -89,8 +103,8 @@ func Run(sockPath, root string, poll time.Duration) error {
 }
 
 type trayUI struct {
-	sockPath, root string
-	poll           time.Duration
+	sockPath, root, webURL string
+	poll                   time.Duration
 
 	mu       sync.Mutex // 保护 states/lastHash/devUIs 与菜单更新
 	states   map[string]string
@@ -136,6 +150,17 @@ func (t *trayUI) onReady() {
 					act()
 				}
 				go t.refreshSoon()
+			}
+		}()
+	}
+	if t.webURL != "" {
+		webItem := systray.AddMenuItem("打开 Web 面板", t.webURL)
+		go func() {
+			for range webItem.ClickedCh {
+				t.debugf("click: 打开 Web 面板 %s", t.webURL)
+				if err := openURL(t.webURL); err != nil {
+					t.debugf("open web: %v", err)
+				}
 			}
 		}()
 	}

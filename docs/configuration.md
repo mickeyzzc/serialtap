@@ -25,6 +25,8 @@ serialtap 的全部可配置项。配置文件是 JSON,默认路径 `~/.config/s
 | `esptool_cmd` | string | `""` | 代理刷固件的 esptool 命令;空 = 自动发现(PATH → `~/.espressif/python_env` glob → Windows pip 目录,`IDF_TOOLS_PATH` 可重定位)。`flash --esptool` 可临时覆盖 |
 | `flash_baud` | int | `0` | 代理刷波特率;`0` = esptool 默认。`flash --baud` 可临时覆盖 |
 | `flash_timeout_s` | int | `600` | 单台设备刷写超时(秒):超时强制杀掉 esptool 并自动回采,防挂死进程永远持有串口。**显式写 `0` = 不限时**(该字段不做零值回填) |
+| `proxy_tap_exclude` | string | `""` | 透传代理会话期间**不落全量日志**的行正则。空 = 全部落盘(tap 模式零丢失);感知类高频遥测建议 `"^#S1 "`(签名匹配不受影响,事件仍记录)。正则仅作用于有活跃代理客户端时 |
+| `web_addr` | string | `"127.0.0.1:8801"` | Web 观测面板监听地址(见 README「Web 观测面板」)。仅本机回环;`"off"` 关闭。`run --web` / `tray --web` 可临时覆盖 |
 
 ### 关于 `silent_reopen_s` 的警告
 

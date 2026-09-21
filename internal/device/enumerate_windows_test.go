@@ -59,7 +59,7 @@ func buildFakeEnumTree(t *testing.T) string {
 	mustSetString(t, root+`\USB\VID_1A86&PID_7523\5&deadbeef&0&2\Device Parameters`, "PortName", "COM77")
 
 	// ESP32 原生 USB（复合）：父键（设备级，含 MAC 序列号）+ 接口子键（真正持串口）
-	mustCreateKey(t, root+`\USB\VID_303A&PID_1001\B4:3A:45:58:C5:34\Device Parameters`)
+	mustCreateKey(t, root+`\USB\VID_303A&PID_1001\AA:BB:CC:DD:EE:FF\Device Parameters`)
 	mustCreateKey(t, root+`\USB\VID_303A&PID_1001&MI_00\7&af7bb08&2&0000\Device Parameters`)
 	mustSetString(t, root+`\USB\VID_303A&PID_1001&MI_00\7&af7bb08&2&0000\Device Parameters`, "PortName", "COM88")
 
@@ -86,10 +86,10 @@ func TestUSBSerialMetaAt(t *testing.T) {
 	}
 	m88, ok := meta["COM88"]
 	// 复合设备：父键唯一实例（MAC）作身份，by-id 用设备级 PNP 路径
-	if !ok || m88.vid != "303a" || m88.pid != "1001" || m88.instance != "B4:3A:45:58:C5:34" {
+	if !ok || m88.vid != "303a" || m88.pid != "1001" || m88.instance != "AA:BB:CC:DD:EE:FF" {
 		t.Fatalf("COM88 元数据错误: %+v", m88)
 	}
-	if m88.pnp != `USB\VID_303A&PID_1001\B4:3A:45:58:C5:34` {
+	if m88.pnp != `USB\VID_303A&PID_1001\AA:BB:CC:DD:EE:FF` {
 		t.Fatalf("复合设备 by-id 应为父级 PNP 路径: %q", m88.pnp)
 	}
 	if _, bad := meta["COM66"]; bad {
@@ -106,8 +106,8 @@ func TestDevicesFromMeta(t *testing.T) {
 	meta := map[string]usbMeta{
 		"COM77": {vid: "1a86", pid: "7523", instance: "5&deadbeef&0&2",
 			pnp: `USB\VID_1A86&PID_7523\5&deadbeef&0&2`},
-		"COM88": {vid: "303a", pid: "1001", instance: "B4:3A:45:58:C5:34",
-			pnp: `USB\VID_303A&PID_1001\B4:3A:45:58:C5:34`},
+		"COM88": {vid: "303a", pid: "1001", instance: "AA:BB:CC:DD:EE:FF",
+			pnp: `USB\VID_303A&PID_1001\AA:BB:CC:DD:EE:FF`},
 	}
 	devs := devicesFromMeta([]string{"COM77", "COM88", "COM99"}, meta, nil, nil)
 	if len(devs) != 2 {
@@ -120,7 +120,7 @@ func TestDevicesFromMeta(t *testing.T) {
 				t.Fatalf("COM77 身份错误: %+v", d)
 			}
 		case "COM88":
-			if d.Key != "B4:3A:45:58:C5:34" || d.Name != "esp32s3-jtag" || !strings.HasPrefix(d.ByID, `USB\VID_303A&PID_1001\`) {
+			if d.Key != "AA:BB:CC:DD:EE:FF" || d.Name != "esp32s3-jtag" || !strings.HasPrefix(d.ByID, `USB\VID_303A&PID_1001\`) {
 				t.Fatalf("COM88 身份错误: %+v", d)
 			}
 		}

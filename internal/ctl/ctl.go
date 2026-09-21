@@ -17,11 +17,12 @@ import (
 
 // Request: 客户端请求（一行 JSON）。
 type Request struct {
-	Cmd       string     `json:"cmd"`                  // status | pause | resume | release | flash
+	Cmd       string     `json:"cmd"`                  // status | pause | resume | release | flash | proxy
 	Pattern   string     `json:"pattern,omitempty"`    // 设备匹配正则（tty/name/key/by-id 任一）
 	ForMs     int64      `json:"for_ms,omitempty"`     // release: 限时自动回采
 	UntilIdle bool       `json:"until_idle,omitempty"` // release: 端口空闲后自动回采
 	Spec      flash.Spec `json:"spec,omitempty"`       // flash: 刷写参数
+	Action    string     `json:"action,omitempty"`     // proxy: start | stop
 }
 
 // DevState: status 返回的设备状态。
@@ -29,17 +30,20 @@ type DevState struct {
 	Name  string `json:"name"`
 	Tty   string `json:"tty"`
 	Key   string `json:"key"`
-	State string `json:"state"` // collecting | paused | suspended | flashing
+	State string `json:"state"`                      // collecting | paused | suspended | flashing
+	Proxy string `json:"proxy,omitempty"`            // 透传会话客户端地址（空 = 无会话）
+	ProxyEndpoint string `json:"proxy_endpoint,omitempty"` // 透传监听端点（空 = 未开端点；注意与 Proxy 客户端地址区分）
 }
 
 // Response: 服务端响应（一行 JSON；flash 会流式多行）。
 type Response struct {
-	OK      bool       `json:"ok"`
-	Error   string     `json:"error,omitempty"`
-	Event   string     `json:"event,omitempty"` // flash-log | flash-done
-	Line    string     `json:"line,omitempty"`
-	Code    int        `json:"code,omitempty"`
-	Devices []DevState `json:"devices,omitempty"`
+	OK       bool       `json:"ok"`
+	Error    string     `json:"error,omitempty"`
+	Event    string     `json:"event,omitempty"`           // flash-log | flash-done
+	Line     string     `json:"line,omitempty"`
+	Code     int        `json:"code,omitempty"`
+	Devices  []DevState `json:"devices,omitempty"`
+	Endpoint string     `json:"endpoint,omitempty"` // proxy start: 透传 TCP 端点
 }
 
 // Handler: 请求处理。respond 可多次调用（flash 流式输出），最后一次带总结性状态。

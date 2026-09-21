@@ -18,11 +18,12 @@
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `cmd` | string | `status` \| `pause` \| `resume` \| `release` \| `flash` |
+| `cmd` | string | `status` \| `pause` \| `resume` \| `release` \| `flash` \| `proxy` |
 | `pattern` | string | 设备匹配正则,匹配 tty / 设备名 / key(by-path)/ by-id 任一。除 `status` 外的命令都要 |
 | `for_ms` | int | 仅 `release`:限时自动回采的毫秒数 |
 | `until_idle` | bool | 仅 `release`:端口空闲后自动回采 |
 | `spec` | object | 仅 `flash`:刷写参数,见下 |
+| `action` | string | 仅 `proxy`:`start` \| `stop`(默认 start) |
 
 `pattern` 是**未锚定**正则(`ch340` 会匹配所有名字含 ch340 的设备);
 要精确匹配一台请锚定,如 `^board-a$`。

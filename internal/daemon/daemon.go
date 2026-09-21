@@ -3,6 +3,7 @@ package daemon
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"regexp"
 	"sync"
@@ -30,6 +31,8 @@ type daemon struct {
 	wg         sync.WaitGroup // 采集器 Run 协程追踪（shutdown 等待，防泄漏）
 	mu         sync.Mutex     // 保护 releases
 	releases   map[string]releaseSpec
+	proxyMu    sync.Mutex              // 保护 proxies
+	proxies    map[string]net.Listener // 设备 key → 透传监听（见 proxy.go）
 	// opMu 串行化 Flash/Release/ResumeAll（TryLock fail-fast，见 flash.go）
 	opMu sync.Mutex
 }
@@ -57,6 +60,7 @@ func New(cfg config.Config, excl []*regexp.Regexp,
 		pauseMTime: mtime,
 		collectors: map[string]*collector.Collector{},
 		namesUsed:  map[string]bool{},
+		proxies:    map[string]net.Listener{},
 		enum:       enum,
 		logf:       logf,
 	}, nil
@@ -129,6 +133,7 @@ func (d *daemon) reloadPause() {
 
 // Shutdown: 停止全部采集器并等待退出（不留泄漏 goroutine）。
 func (d *daemon) Shutdown() {
+	d.proxyCloseAll()
 	for _, c := range d.collectors {
 		c.Stop()
 	}

@@ -171,18 +171,67 @@ func (d *daemon) tickReleases() {
 // Status: 全部设备当前状态。
 func (d *daemon) Status() []ctl.DevState {
 	out := make([]ctl.DevState, 0, len(d.collectors))
-	for _, c := range d.collectors {
+	for k, c := range d.collectors {
 		state := c.State()
 		if state == "collecting" && d.pause.Matches(devInfoOf(c)) {
 			state = "paused"
 		}
-		out = append(out, ctl.DevState{Name: c.DeviceName(), Tty: c.Tty(), Key: c.Key(), State: state})
+		out = append(out, ctl.DevState{
+			Name: c.DeviceName(), Tty: c.Tty(), Key: c.Key(), State: state,
+			Proxy: c.ProxyAddr(), ProxyEndpoint: d.proxyEndpointOf(k),
+		})
 	}
 	return out
 }
 
 func devInfoOf(c *collector.Collector) device.DeviceInfo {
 	return device.DeviceInfo{Name: c.DeviceName(), Tty: c.Tty(), Key: c.Key(), ByID: c.ByID()}
+}
+
+// flashMilestone: esptool 输出行 → 事件流里程碑（节流）。全量输出仍流式
+// 给 ctl 客户端。两类判定：
+//   - 前缀组（每镜像一条，全部记录）：Chip is / Wrote / Hash verified /
+//     Hard resetting 等 —— 用前缀而非子串，防止 "Wrote ... (N compressed)"
+//     被更早的 Compressed 关键词吞掉；
+//   - 重试组（只记一次）：Connecting / error / Failed。
+func flashMilestone(line string, seen map[string]bool) (string, bool) {
+	clean := strings.TrimSpace(strings.ReplaceAll(line, "\r", " "))
+	if clean == "" {
+		return "", false
+	}
+	for _, p := range []string{
+		"Chip is", "Running esptool", "Wrote ", "Hash of data verified",
+		"Compressed ", "Leaving...", "Hard resetting", "A fatal error",
+	} {
+		if strings.HasPrefix(clean, p) {
+			return clean, true
+		}
+	}
+	lower := strings.ToLower(clean)
+	for _, kw := range []string{"Connecting", "error", "Failed"} {
+		if strings.Contains(lower, strings.ToLower(kw)) {
+			if seen[kw] {
+				return "", false
+			}
+			seen[kw] = true
+			return clean, true
+		}
+	}
+	// "Writing at 0x... (N %)" 只记整十进度
+	if i := strings.Index(clean, " ("); i >= 0 {
+		if j := strings.Index(clean, "%)"); j > i {
+			var pct int
+			if _, err := fmt.Sscanf(clean[i+2:j], "%d", &pct); err == nil && pct%10 == 0 {
+				key := fmt.Sprintf("pct%d", pct)
+				if seen[key] {
+					return "", false
+				}
+				seen[key] = true
+				return clean, true
+			}
+		}
+	}
+	return "", false
 }
 
 // Flash: 代理刷固件 —— 让口 → 调 esptool（输出流式回调）→ 回采。
@@ -231,8 +280,12 @@ func (d *daemon) Flash(pattern string, spec flash.Spec, out func(line string)) e
 			return fmt.Errorf("%s: 端口让出超时", c.DeviceName())
 		}
 		c.SetFlashing(true)
+		seen := map[string]bool{}
 		err := flash.Run(spec.Esptool, c.Tty(), spec, timeout, func(line string) {
 			out(line)
+			if kw, ok := flashMilestone(line, seen); ok {
+				c.LogEvent("flash: %s", kw)
+			}
 		})
 		c.SetFlashing(false)
 		c.LogEvent("proxy flash finished (err=%v)", err)

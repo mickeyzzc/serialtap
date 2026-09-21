@@ -24,6 +24,10 @@ works with any USB serial device (CH340/CH343/CP210x/FTDI/native USB-CDC…).
 - **刷写安全门**：`pause`/`resume` 暂停清单、`release` 临时让口（空闲自动回采）、
   `flash` 代理刷固件（守护进程经 unix socket 控制通道编排：让口 → esptool → 回采，
   防止 esptool 与常驻采集器抢口把 ESP32 楔进 ROM 下载模式）
+- **透明 USB 代理**：`proxy` 为设备开一个 127.0.0.1 TCP 端点，业务程序
+  （如 [wifipulse](../wifipulse) 感知引擎）经它直接读写板子串口 ——
+  对程序等同直连；端口不重开（无复位脉冲），采集照常（tap 模式双向日志），
+  可用 `proxy_tap_exclude` 剔除高频遥测行；单客户端语义，设备拔出/守护退出自动收口
 - **零丢失**：跨读取块行拼装，端口关闭时的残余半行以 `…partial` 标记落盘
 - **纯 Go 静态二进制**：无 CGO、无 libudev 依赖，vendor 已含全部依赖，
   离线可构建，交叉编译即拷即用
@@ -53,11 +57,29 @@ Linux 的 by-id 是 `usb-Espressif_USB_JTAG_...`，Windows 是 `USB\VID_303A&PID
 - **每台设备一个菜单项，勾选框即"接入开关"** —— 勾选 = 采集中，点击即暂停/恢复该设备
 - 设备子菜单：**查看串口日志**（系统默认编辑器打开最新全量日志）、**打开日志目录**
 - 全部暂停 / 全部恢复；守护进程未运行时菜单可一键启动（后台无窗口）
+- **打开 Web 面板**（一键进观测面板，见下节）
 - 悬停提示实时设备数；图标变灰 = 守护进程未连接
 
 ```powershell
 serialtap tray --root <日志根> --sock <控制socket>   # 与 run 的参数保持一致即可
 ```
+
+## Web 观测面板
+
+`serialtap run` 内置观测面板（默认 **http://127.0.0.1:8801/**，`--web off` 关闭），
+守护进程经手的一切可视化查看：
+
+- **设备卡**：接入状态（collecting/paused/suspended/flashing）、代理会话徽标、
+  实时写入速率（由日志大小差分）、全量/事件日志体积与留存总量
+- **实时日志**：全量 / 事件流双 tab，SSE 尾随（700ms 增量推送，自动跟随
+  日轮转与大小轮转），自动滚动可暂停、可清屏
+- **最近事件**：签名命中（复位 banner、Guru Meditation、WDT…）+ 采集器
+  生命周期 + 代理刷机记录，跨设备分组，命中行高亮
+- **操作**：按设备暂停/恢复、代理开/停 —— 经与 ctl socket **同一条处理路径**
+  转发执行（面板不引入第二套控制逻辑；flash/release 等长操作仍走 CLI）
+
+面板是只读展示 + 既有 ctl 操作的转发，**不做任何业务逻辑**（serialtap 定位
+不变）；仅监听本机回环，与 ctl socket 同信任域。
 
 ## 快速开始
 
@@ -166,6 +188,15 @@ loginctl enable-linger $USER               # 开机自启（不登录也跑）
   （登录时启动，工作目录任意）。COM 口无需权限配置
 
 ## 故障排查
+
+- **代理刷写报"端口忙"**：多半是另一个 serialtap 实例（比如旧检出目录里
+  起的 demo 守护）占着口。`Get-CimInstance Win32_Process -Filter "name='serialtap.exe'" | select ProcessId,CommandLine`
+  找到后结束它；本守护的采集器会按退避自动接管。
+- **代理端点连上但收不到设备数据**：TCP Dial 在 accept/挂接完成前就返回，
+  设备→客户端方向在挂接前的字节不镜像（客户端→设备方向有内核缓冲不受影响）。
+  应用层先握手（如 wifipulse 的 sense_start/ack）即可规避。
+
+## 故障排查（原有条目）
 
 | 症状 | 处置 |
 |---|---|

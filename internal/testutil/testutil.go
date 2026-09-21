@@ -15,12 +15,13 @@ import (
 // FakePort: 假串口，满足 collector.Port。预置数据块按序吐出，
 // 读尽后返回 0 字节（模拟读超时）。
 type FakePort struct {
-	Mu     sync.Mutex
-	Chunks [][]byte
-	Closed bool
-	DTR    bool
-	RTS    bool
-	OnRead func()
+	Mu      sync.Mutex
+	Chunks  [][]byte
+	Written [][]byte // Write 收到的字节块（透传桥测试断言用）
+	Closed  bool
+	DTR     bool
+	RTS     bool
+	OnRead  func()
 }
 
 func (f *FakePort) Read(p []byte) (int, error) {
@@ -42,6 +43,18 @@ func (f *FakePort) Read(p []byte) (int, error) {
 		f.OnRead()
 	}
 	return 0, nil // 模拟读超时（0 字节无错误）
+}
+
+func (f *FakePort) Write(p []byte) (int, error) {
+	f.Mu.Lock()
+	defer f.Mu.Unlock()
+	if f.Closed {
+		return 0, os.ErrClosed
+	}
+	b := make([]byte, len(p))
+	copy(b, p)
+	f.Written = append(f.Written, b)
+	return len(p), nil
 }
 
 func (f *FakePort) Close() error {
@@ -94,6 +107,7 @@ func ReadFile(t *testing.T, path string) string {
 type ErrPort struct{}
 
 func (e *ErrPort) Read([]byte) (int, error)             { return 0, os.ErrClosed }
+func (e *ErrPort) Write(p []byte) (int, error)          { return 0, os.ErrClosed }
 func (e *ErrPort) Close() error                         { return nil }
 func (e *ErrPort) SetDTR(bool) error                    { return nil }
 func (e *ErrPort) SetRTS(bool) error                    { return nil }
