@@ -20,16 +20,26 @@ import (
 var shellExecuteW = windows.NewLazySystemDLL("shell32.dll").NewProc("ShellExecuteW")
 
 // OpenPath: 用系统默认方式打开文件/目录（日志 → 默认编辑器；目录 → 资源管理器）。
-func OpenPath(path string) {
+// 统一转绝对路径 —— ShellExecuteW 对相对路径经常按 SE_ERR_PNF(3) 静默失败
+// （实测托盘进程 cwd 不稳定，相对路径不可靠）；返回值 ≤32 即失败。
+func OpenPath(path string) error {
 	if path == "" {
-		return
+		return fmt.Errorf("路径为空")
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return err
 	}
 	verb, _ := windows.UTF16PtrFromString("open")
-	p, _ := windows.UTF16PtrFromString(path)
-	dir, _ := windows.UTF16PtrFromString(filepath.Dir(path))
-	_, _, _ = shellExecuteW.Call(0,
+	p, _ := windows.UTF16PtrFromString(abs)
+	dir, _ := windows.UTF16PtrFromString(filepath.Dir(abs))
+	h, _, _ := shellExecuteW.Call(0,
 		uintptr(unsafe.Pointer(verb)), uintptr(unsafe.Pointer(p)),
 		0, uintptr(unsafe.Pointer(dir)), 1) // SW_SHOWNORMAL
+	if h <= 32 {
+		return fmt.Errorf("ShellExecute(%q) 失败码 %d", abs, h)
+	}
+	return nil
 }
 
 // StartDaemon: 启动一个后台守护进程（serialtap run，无窗口）。
@@ -64,8 +74,12 @@ func (t *trayUI) debugf(format string, args ...any) {
 	fmt.Fprintf(f, "[%s] %s\n", time.Now().Format("15:04:05.000"), fmt.Sprintf(format, args...))
 }
 
-// Run: 进入托盘主循环（阻塞至"退出"）。
+// Run: 进入托盘主循环（阻塞至"退出"）。root 统一转为绝对路径
+// （打开日志走 ShellExecute，相对路径不可靠）。
 func Run(sockPath, root string, poll time.Duration) error {
+	if abs, err := filepath.Abs(root); err == nil {
+		root = abs
+	}
 	t := &trayUI{
 		sockPath: sockPath, root: root, poll: poll,
 		states: map[string]string{}, devUIs: map[string]*devUI{},
@@ -239,13 +253,17 @@ func (t *trayUI) refreshOnce() {
 			go func() {
 				for range logItem.ClickedCh {
 					t.debugf("click: 查看串口日志 %s → %s", name, ui.logPath)
-					OpenPath(ui.logPath)
+					if err := OpenPath(ui.logPath); err != nil {
+						t.debugf("open: %v", err)
+					}
 				}
 			}()
 			go func() {
 				for range dirItem.ClickedCh {
 					t.debugf("click: 打开日志目录 %s", name)
-					OpenPath(filepath.Join(t.root, name))
+					if err := OpenPath(filepath.Join(t.root, name)); err != nil {
+						t.debugf("open: %v", err)
+					}
 				}
 			}()
 			go t.watchToggle(ui, name)
