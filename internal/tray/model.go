@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -42,6 +43,14 @@ func DeviceTitle(d ctl.DevState) string {
 
 // Collecting: checkbox 勾选态（勾选 = 正在采集）。
 func Collecting(s string) bool { return s == "collecting" }
+
+// SortedDevices: 按名字排序。daemon.Status() 遍历 map,多设备时每次顺序可能
+// 不同 —— 菜单展示与变更检测都需要稳定序。
+func SortedDevices(devs []ctl.DevState) []ctl.DevState {
+	out := append([]ctl.DevState(nil), devs...)
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
 
 // SnapshotHash: 菜单重建的变更检测（状态无变化时不重建菜单）。
 func SnapshotHash(devs []ctl.DevState, daemonOK bool) string {

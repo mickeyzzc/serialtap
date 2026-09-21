@@ -45,9 +45,31 @@ func StartDaemon(sockPath, root string) error {
 	return cmd.Start()
 }
 
+// debugf: 设 SERIALTAP_TRAY_DEBUG=1 时把点击/动作事件追加到 <root>/tray-debug.log
+// （托盘无控制台，排查"点了没反应"类问题全靠它）。
+var debugMu sync.Mutex
+
+func (t *trayUI) debugf(format string, args ...any) {
+	if os.Getenv("SERIALTAP_TRAY_DEBUG") == "" {
+		return
+	}
+	debugMu.Lock()
+	defer debugMu.Unlock()
+	f, err := os.OpenFile(filepath.Join(t.root, "tray-debug.log"),
+		os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "[%s] %s\n", time.Now().Format("15:04:05.000"), fmt.Sprintf(format, args...))
+}
+
 // Run: 进入托盘主循环（阻塞至"退出"）。
 func Run(sockPath, root string, poll time.Duration) error {
-	t := &trayUI{sockPath: sockPath, root: root, poll: poll, states: map[string]string{}}
+	t := &trayUI{
+		sockPath: sockPath, root: root, poll: poll,
+		states: map[string]string{}, devUIs: map[string]*devUI{},
+	}
 	systray.Run(t.onReady, func() {})
 	return nil
 }
@@ -56,55 +78,101 @@ type trayUI struct {
 	sockPath, root string
 	poll           time.Duration
 
-	mu      sync.Mutex // 保护 states/lastHash 与菜单重建
-	states  map[string]string
+	mu       sync.Mutex // 保护 states/lastHash/devUIs 与菜单更新
+	states   map[string]string
 	lastHash string
 
 	header      *systray.MenuItem
 	startDaemon *systray.MenuItem
-	devItems    []*systray.MenuItem
+	devUIs      map[string]*devUI
+}
+
+// devUI: 一台设备的菜单项簇（按设备名长期复用，状态变化只改标题/勾选，
+// 不重建 —— 重建会换掉 ClickedCh 对应的菜单项，goroutine 也会泄漏）。
+type devUI struct {
+	item    *systray.MenuItem
+	hidden  bool
+	logPath string // 缓存最新日志路径，子菜单点击时直接用
 }
 
 func (t *trayUI) onReady() {
 	systray.SetIcon(buildIcon(false))
-	systray.SetTitle("")
 
 	t.header = systray.AddMenuItem("serialtap", "serialtap")
 	t.header.Disable()
 	systray.AddSeparator()
-	for _, s := range []struct{ title, tip string; ch func() }{
-		{"全部暂停", "暂停所有设备的采集", func() { _ = SendPause(t.sockPath, "") }},
-		{"全部恢复", "恢复所有设备的采集", func() { _ = SendResume(t.sockPath, "") }},
+	for _, s := range []struct {
+		title, tip string
+		act        func()
+	}{
+		// 全部暂停逐台发锚定 pattern（而非空 pattern 的 ".*" 通配）——
+		// 否则设备勾选框的 ^name$ 恢复无法移除 .* 条目，恢复会失效
+		{"全部暂停", "暂停所有设备的采集", t.pauseEach},
+		{"全部恢复", "恢复所有设备的采集", func() { t.send("resume", "") }}, // 空 = 清空 PAUSED
 		{"刷新状态", "立即刷新设备状态", nil},
 	} {
 		it := systray.AddMenuItem(s.title, s.tip)
-		item, act := it, s.ch
+		item, act := it, s.act
+		// 处理体不允许慢：ClickedCh 无缓冲且分发端 select/default，
+		// 接收方必须立刻回到 channel 等下一击（刷新走异步）
 		go func() {
 			for range item.ClickedCh {
+				t.debugf("click: %s", s.title)
 				if act != nil {
 					act()
 				}
-				t.refreshSoon()
+				go t.refreshSoon()
 			}
 		}()
 	}
 	t.startDaemon = systray.AddMenuItem("启动守护进程", "后台运行 serialtap run")
 	go func() {
 		for range t.startDaemon.ClickedCh {
-			_ = StartDaemon(t.sockPath, t.root)
-			t.refreshSoon()
+			t.debugf("click: 启动守护进程")
+			if err := StartDaemon(t.sockPath, t.root); err != nil {
+				t.debugf("start daemon: %v", err)
+			}
+			go t.refreshSoon()
 		}
 	}()
 	systray.AddSeparator()
 	quit := systray.AddMenuItem("退出", "退出托盘（不影响守护进程采集）")
 	go func() {
 		for range quit.ClickedCh {
+			t.debugf("click: 退出")
 			systray.Quit()
 		}
 	}()
 	systray.AddSeparator()
 
 	go t.loop()
+}
+
+// send: 发 pause/resume 并记日志（pattern 空 = 全部）。
+func (t *trayUI) send(cmd, pattern string) {
+	t.debugf("send %s pattern=%q …", cmd, pattern)
+	var err error
+	if cmd == "pause" {
+		err = SendPause(t.sockPath, pattern)
+	} else {
+		err = SendResume(t.sockPath, pattern)
+	}
+	if err != nil {
+		t.debugf("send %s: %v", cmd, err)
+	}
+}
+
+// pauseEach: 逐台发锚定暂停（见 onReady 注释）。
+func (t *trayUI) pauseEach() {
+	t.mu.Lock()
+	names := make([]string, 0, len(t.states))
+	for n := range t.states {
+		names = append(names, n)
+	}
+	t.mu.Unlock()
+	for _, n := range names {
+		t.send("pause", PatternFor(n))
+	}
 }
 
 func (t *trayUI) loop() {
@@ -122,10 +190,12 @@ func (t *trayUI) refreshSoon() {
 	t.refreshOnce()
 }
 
-// refreshOnce: 轮询 status，状态有变才重建动态设备区。
-// 设备项是 checkbox：勾选 = 采集中，点击即暂停/恢复（"接入开关"）。
+// refreshOnce: 轮询 status；状态有变才更新菜单。设备项按名字复用：
+// 新设备建项、消失设备隐藏、既有设备只改标题/勾选 —— 菜单对象保持稳定，
+// 点击通道（ClickedCh）始终对应可见的那一项。
 func (t *trayUI) refreshOnce() {
 	devs, ok := QueryStatus(t.sockPath)
+	devs = SortedDevices(devs)
 	h := SnapshotHash(devs, ok)
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -133,63 +203,93 @@ func (t *trayUI) refreshOnce() {
 		return
 	}
 	t.lastHash = h
-	for _, it := range t.devItems {
-		it.Hide()
-	}
-	t.devItems = nil
 	t.states = map[string]string{}
 
 	if !ok {
+		t.debugf("daemon 不可达")
 		systray.SetTooltip("serialtap — 守护进程未运行")
 		systray.SetIcon(buildIcon(true))
 		t.header.SetTitle("serialtap — 守护进程未运行")
 		t.startDaemon.Enable()
+		for _, ui := range t.devUIs {
+			if !ui.hidden {
+				ui.item.Hide()
+				ui.hidden = true
+			}
+		}
 		return
 	}
 	t.startDaemon.Disable()
 	systray.SetIcon(buildIcon(false))
 
 	collecting := 0
+	seen := map[string]bool{}
 	for _, d := range devs {
+		seen[d.Name] = true
 		t.states[d.Name] = d.State
 		if d.State == "collecting" {
 			collecting++
 		}
-		item := systray.AddMenuItemCheckbox(DeviceTitle(d), d.Key, Collecting(d.State))
-		name := d.Name
-		logItem := item.AddSubMenuItem("查看串口日志", "打开最新全量日志")
-		dirItem := item.AddSubMenuItem("打开日志目录", "在资源管理器中打开")
-		go func() {
-			for range logItem.ClickedCh {
-				OpenPath(LatestSerialLog(t.root, name))
+		ui := t.devUIs[d.Name]
+		if ui == nil {
+			ui = &devUI{item: systray.AddMenuItemCheckbox(DeviceTitle(d), d.Key, Collecting(d.State))}
+			logItem := ui.item.AddSubMenuItem("查看串口日志", "打开最新全量日志")
+			dirItem := ui.item.AddSubMenuItem("打开日志目录", "在资源管理器中打开")
+			name := d.Name
+			go func() {
+				for range logItem.ClickedCh {
+					t.debugf("click: 查看串口日志 %s → %s", name, ui.logPath)
+					OpenPath(ui.logPath)
+				}
+			}()
+			go func() {
+				for range dirItem.ClickedCh {
+					t.debugf("click: 打开日志目录 %s", name)
+					OpenPath(filepath.Join(t.root, name))
+				}
+			}()
+			go t.watchToggle(ui, name)
+			t.devUIs[d.Name] = ui
+		} else {
+			// 复用：只更新标题与勾选，不换菜单对象
+			ui.item.SetTitle(DeviceTitle(d))
+			if Collecting(d.State) {
+				ui.item.Check()
+			} else {
+				ui.item.Uncheck()
 			}
-		}()
-		go func() {
-			for range dirItem.ClickedCh {
-				OpenPath(filepath.Join(t.root, name))
+			if ui.hidden {
+				ui.item.Show()
+				ui.hidden = false
 			}
-		}()
-		go t.watchToggle(item, name)
-		t.devItems = append(t.devItems, item)
+		}
+		ui.logPath = LatestSerialLog(t.root, d.Name)
+	}
+	for name, ui := range t.devUIs {
+		if !seen[name] && !ui.hidden {
+			ui.item.Hide()
+			ui.hidden = true
+		}
 	}
 	tip := fmt.Sprintf("serialtap — %d 台设备，%d 台采集中", len(devs), collecting)
 	systray.SetTooltip(tip)
 	t.header.SetTitle(tip)
 }
 
-// watchToggle: checkbox 点击 = 切换该设备接入。以本地缓存的 daemon 状态决定方向，
-// 不依赖 UI 勾选态（systray 的勾选回读与 UI 可见态可能短暂不一致）。
-func (t *trayUI) watchToggle(item *systray.MenuItem, name string) {
-	for range item.ClickedCh {
+// watchToggle: 设备勾选框点击 = 切换该设备接入。以本地缓存的 daemon 状态决定
+// 方向（不读 UI 勾选态 —— 它与真实状态可能短暂不一致）。
+func (t *trayUI) watchToggle(ui *devUI, name string) {
+	for range ui.item.ClickedCh {
 		t.mu.Lock()
 		collecting := t.states[name] == "collecting"
 		t.mu.Unlock()
+		t.debugf("click: 切换 %s（当前 %s）", name, map[bool]string{true: "采集中→暂停", false: "已停→恢复"}[collecting])
 		if collecting {
-			_ = SendPause(t.sockPath, PatternFor(name))
+			t.send("pause", PatternFor(name))
 		} else {
-			_ = SendResume(t.sockPath, PatternFor(name))
+			t.send("resume", PatternFor(name))
 		}
-		t.refreshSoon()
+		go t.refreshSoon()
 	}
 }
 
