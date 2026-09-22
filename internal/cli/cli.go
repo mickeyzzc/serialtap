@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -46,7 +47,8 @@ func usage() {
                                          （对业务程序等同直连；期间采集照常，可配 proxy_tap_exclude）
   serialtap release RE [--for 5m]        临时让出串口给外部工具（默认空闲 3s 自动回采）
   serialtap flash RE <bin>[@0x10000]...  代理刷固件：让口 → esptool → 自动回采
-      [--args-file F] [--esptool CMD] [--baud N] [--chip C] [--dry-run]
+      [--args-file F] [--esptool CMD] [--baud N] [--chip C] [--dry-run] [--all]
+                                         （RE 匹配多台时默认拒绝，防误刷在测设备；批量刷给 --all）
   serialtap status                       查看守护进程与设备实时状态
   serialtap version
 
@@ -234,12 +236,12 @@ func cmdRun(args []string) error {
 				respond(ctl.Response{OK: true, Line: fmt.Sprintf("%d", n)})
 				return
 			}
-			ep, err := d.ProxyStart(req.Pattern)
+			ep, devName, devKey, err := d.ProxyStart(req.Pattern)
 			if err != nil {
 				respond(ctl.Response{OK: false, Error: err.Error()})
 				return
 			}
-			respond(ctl.Response{OK: true, Endpoint: ep})
+			respond(ctl.Response{OK: true, Endpoint: ep, Device: devName, DeviceKey: devKey})
 		case "release":
 			forDur := time.Duration(req.ForMs) * time.Millisecond
 			n, err := d.Release(req.Pattern, forDur, req.UntilIdle)
@@ -249,7 +251,7 @@ func cmdRun(args []string) error {
 			}
 			respond(ctl.Response{OK: true, Line: fmt.Sprintf("%d", n)})
 		case "flash":
-			err := d.Flash(req.Pattern, req.Spec, func(line string) {
+			err := d.Flash(req.Pattern, req.All, req.Spec, func(line string) {
 				respond(ctl.Response{OK: true, Event: "flash-log", Line: line})
 			})
 			if err != nil {
@@ -480,7 +482,11 @@ func cmdProxy(args []string) error {
 		if req.Action == "stop" {
 			fmt.Printf("已停止透传（%s）\n", pos[0])
 		} else {
-			fmt.Printf("透传端点: %s\n设备 %s 的串口现在可经该 TCP 端点直接读写（采集照常）\n", r.Endpoint, pos[0])
+			dev := pos[0]
+			if r.Device != "" {
+				dev = r.Device // 守护侧确认的端点所属设备（多板同名时以它为准）
+			}
+			fmt.Printf("透传端点: %s\n设备 %s 的串口现在可经该 TCP 端点直接读写（采集照常）\n", r.Endpoint, dev)
 		}
 		return true
 	})
@@ -526,6 +532,43 @@ func cmdRelease(args []string) error {
 	return err
 }
 
+// noRetryError 标记不值得重试的失败（如守护进程不可达）。
+type noRetryError struct{ error }
+
+// flashRetry 让 flash 命令在客户端侧按次数重试。动机：Windows 上
+// USB-CDC 设备复位/重枚举后的首次 open / SetCommState 常以
+// ERROR_GEN_FAILURE 瞬时失败（实测 ESP32-S3 USB-Serial-JTAG，
+// 2026-09-22），esptool 不做任何重试 —— 单发 CLI 一撞即退。
+// 每次重试都会让守护进程完整走一遍 让口 → esptool → 回采 编排，
+// 幂等且顺带充当了端口的"预热开合"。
+type flashRetry struct {
+	attempts int           // 总尝试次数（含首次），1 = 不重试
+	wait     time.Duration // 尝试间隔
+	sleep    func(time.Duration)
+	logf     func(string, ...any)
+}
+
+func (r flashRetry) run(op func() error) error {
+	var err error
+	for i := 1; i <= r.attempts; i++ {
+		if i > 1 {
+			r.logf("—— flash 第 %d/%d 次尝试 ——", i, r.attempts)
+		}
+		if err = op(); err == nil {
+			return nil
+		}
+		var nr noRetryError
+		if errors.As(err, &nr) {
+			return nr.error
+		}
+		if i < r.attempts {
+			r.logf("— 尝试失败（%s），%s 后重试", err, r.wait)
+			r.sleep(r.wait)
+		}
+	}
+	return err
+}
+
 func cmdFlash(args []string) error {
 	fs := flag.NewFlagSet("flash", flag.ExitOnError)
 	sock := fs.String("sock", "", "控制 socket 路径")
@@ -535,6 +578,9 @@ func cmdFlash(args []string) error {
 	chip := fs.String("chip", "", "芯片类型（如 esp32s3，省略自动识别）")
 	argsFile := fs.String("args-file", "", "ESP-IDF build/flasher_args.json（与其余 bin 参数二选一）")
 	dryRun := fs.Bool("dry-run", false, "只预演：显示每台匹配设备将执行的 esptool 命令，不动端口")
+	all := fs.Bool("all", false, "模式匹配多台设备时仍逐台刷（默认拒绝——多板同名时防误刷在测设备，精确刷一台请锚定正则）")
+	retries := fs.Int("retries", 3, "失败重试总次数（含首次；Windows CDC 复位后首开常瞬时失败，1=不重试）")
+	retryWait := fs.Duration("retry-wait", 5*time.Second, "重试间隔")
 	pos := parseFlags(fs, args)
 	if len(pos) < 1 || (len(pos) < 2 && *argsFile == "") {
 		return fmt.Errorf("用法: flash <设备正则> <镜像>[@<offset>]... 或 --args-file build/flasher_args.json")
@@ -563,32 +609,45 @@ func cmdFlash(args []string) error {
 		spec.Bins = append(spec.Bins, bin)
 	}
 	// flash-done 带 ok=false 时 ctlSend 本身不报错（协议层正常），
-	// 退出码要反映刷写失败 —— 脚本化调用依赖它
-	var flashErr error
-	err = ctlSend(*sock, ctl.Request{Cmd: "flash", Pattern: pos[0], Spec: spec}, func(r ctl.Response) bool {
-		switch r.Event {
-		case "flash-log":
-			fmt.Println(r.Line)
-			return false
-		case "flash-done":
-			if !r.OK {
-				flashErr = fmt.Errorf("刷写失败: %s", r.Error)
-			} else {
-				fmt.Println("✓ 刷写完成，已恢复采集")
-			}
-			return true
-		default:
-			if !r.OK {
-				flashErr = fmt.Errorf("%s", r.Error)
+	// 退出码要反映刷写失败 —— 脚本化调用依赖它。
+	// 传输层错误（守护进程不可达等）包成 noRetryError：重试无益。
+	runOnce := func() error {
+		var flashErr error
+		err = ctlSend(*sock, ctl.Request{Cmd: "flash", Pattern: pos[0], All: *all, Spec: spec}, func(r ctl.Response) bool {
+			switch r.Event {
+			case "flash-log":
+				fmt.Println(r.Line)
+				return false
+			case "flash-done":
+				if !r.OK {
+					flashErr = fmt.Errorf("刷写失败: %s", r.Error)
+				} else {
+					fmt.Println("✓ 刷写完成，已恢复采集")
+				}
 				return true
+			default:
+				if !r.OK {
+					flashErr = fmt.Errorf("%s", r.Error)
+					return true
+				}
+				return false
 			}
-			return false
+		})
+		if err != nil {
+			return noRetryError{err}
 		}
-	})
-	if err != nil {
-		return err
+		return flashErr
 	}
-	return flashErr
+	attempts := *retries
+	if *dryRun || attempts < 1 {
+		attempts = 1
+	}
+	return flashRetry{
+		attempts: attempts,
+		wait:     *retryWait,
+		sleep:    time.Sleep,
+		logf:     func(f string, a ...any) { fmt.Printf(f+"\n", a...) },
+	}.run(runOnce)
 }
 
 // pause/resume：守护进程在 → socket（立即生效且走同一文件语义）；不在 → 直接改文件。

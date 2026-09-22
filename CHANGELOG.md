@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### flash 失败自动重试（Windows CDC 瞬时失败）
+
+- `serialtap flash` 客户端侧按次数重试（`--retries` 总次数默认 3、
+  `--retry-wait` 间隔默认 5s）。动机：Windows 上 USB-CDC 设备复位/重枚举
+  后的首次 open / SetCommState 常以 ERROR_GEN_FAILURE 瞬时失败（实测
+  ESP32-S3 USB-Serial-JTAG），esptool 自身不重试——单发 CLI 一撞即退。
+  每次重试都完整走一遍 让口 → esptool → 回采 编排（幂等）。守护进程
+  不可达等传输层错误不重试（重试无益，立即失败）
+
+### 多板同芯片并存的确定性（两板联调实战修复）
+
+> 场景：一块在开发（esp32-s3-zero）+ 一块在测试（luatos 感知节点），两只
+> 都是乐鑫原生 USB-JTAG（`303a:1001`）→ 同名 `esp32s3-jtag`，业务程序
+> （wifipulse）随机连到错误的板子上且沉默挂死。四层修复：
+
+- **撞名后缀改为身份派生**：同名设备不再按接入顺序加 `-2`（换插顺序/重启
+  会换主），改加 4 位 base36 散列 token（输入 = key + by-id，Windows 实例
+  路径内嵌 MAC）——同一块板无论第几个接入、跨守护重启后缀一致；
+  散列碰撞退回计数保底。双板并存请锚定后缀名或配置 `names`
+- **全链路确定性排序**：`matches()` / `Status()` 按 key 排序返回——此前
+  直接迭代 map，每次调用顺序随机，`ProxyStart` 返回的"第一个"端点、
+  客户端取的"第一台"设备都在掷骰子；现在多设备处理顺序（flash 逐台序、
+  proxy 端点归属、status 清单）全部确定可复现
+- **`proxy start` 回报端点所属设备**：ctl 响应新增 `device` / `device_key`，
+  客户端（wifipulse）校验"拨的就是选中的那台"，设备清单变化竞态下
+  张冠李戴当场报错
+- **`flash` 多设备门禁**：pattern 匹配多台时**默认拒绝**并列出设备名
+  （要求锚定或显式确认——CLI `--all` / ctl `all: true`）——多板同名时
+  未锚定正则会把在测板拖进刷写序列（让口复位 + 错芯片镜像），实测事故
+
 ### Web 观测面板（`serialtap run` 内置）
 
 - 新增 `internal/web`：默认 **http://127.0.0.1:8801/**（配置 `web_addr`，

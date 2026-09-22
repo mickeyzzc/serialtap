@@ -3,9 +3,11 @@ package daemon
 
 import (
 	"fmt"
+	"hash/fnv"
 	"net"
 	"os"
 	"regexp"
+	"strconv"
 	"sync"
 	"time"
 
@@ -38,6 +40,37 @@ type daemon struct {
 }
 
 func discardLog(string, ...any) {}
+
+// nameToken: 设备稳定身份（key + by-id，Windows 实例路径内嵌 MAC）→ 4 位
+// base36 散列。只用于撞名去重，无展示语义；碰撞概率 ~1/1.7M，
+// 真撞了由 dedupeName 的计数兜底。
+func nameToken(key, byID string) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(key + "\x00" + byID))
+	s := strconv.FormatUint(uint64(h.Sum32()), 36)
+	if len(s) > 4 {
+		s = s[len(s)-4:]
+	}
+	return s
+}
+
+// dedupeName: 基名未被占用直接用；被占用则 <base>-<token>；token 也被占用
+// （同板换口重枚举成不同身份、或散列碰撞）时退回 -2/-3 计数保底。
+func dedupeName(base, key, byID string, used map[string]bool) string {
+	if !used[base] {
+		return base
+	}
+	tok := nameToken(key, byID)
+	for i := 1; ; i++ {
+		n := fmt.Sprintf("%s-%s", base, tok)
+		if i > 1 {
+			n = fmt.Sprintf("%s-%d", n, i)
+		}
+		if !used[n] {
+			return n
+		}
+	}
+}
 
 // New: 构造守护核心。enum/logf 为注入点（生产用默认实现，测试注入假件）。
 func New(cfg config.Config, excl []*regexp.Regexp,
@@ -78,11 +111,13 @@ func (d *daemon) Tick() {
 		if _, ok := d.collectors[inf.Key]; ok {
 			continue
 		}
-		// 重名设备加后缀（同型号适配器 by-id 无序列号时可能撞名）
-		name := inf.Name
-		for i := 2; d.namesUsed[name]; i++ {
-			name = fmt.Sprintf("%s-%d", inf.Name, i)
-		}
+		// 重名设备去重（同型号板 by-id 无序列号时撞名，如两只乐鑫原生
+		// USB-JTAG 都是 303a:1001 → 都叫 esp32s3-jtag）。后缀不按接入顺序
+		// 计数——那在换插顺序/守护重启后会换主；改从设备稳定身份派生
+		// token，同一块板无论第几个接入、跨守护重启后缀都一致。裸基名
+		// 先到先得：双板并存请锚定后缀名，或用配置 names 按 by-id
+		// 序列号/MAC 给板子唯一命名。
+		name := dedupeName(inf.Name, inf.Key, inf.ByID, d.namesUsed)
 		d.namesUsed[name] = true
 		inf.Name = name
 		w, err := logstore.NewDeviceWriter(d.cfg.Root, name, d.cfg.RotateMB)

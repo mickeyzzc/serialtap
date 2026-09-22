@@ -3,6 +3,7 @@ package daemon
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -23,7 +24,10 @@ type releaseSpec struct {
 
 const idleQuietS = 3 // until_idle 的连续空闲确认秒数
 
-// matches: 按正则匹配采集器（tty/name/key/by-id 任一）。
+// matches: 按正则匹配采集器（tty/name/key/by-id 任一），按 key 排序返回。
+// map 迭代顺序每次调用都随机——排序后 flash/release/proxy 的多设备处理
+// 顺序（含 ProxyStart 返回"第一个"端点、wifipulse 取"第一台"设备）才是
+// 确定的、可复现的，多板同芯片时不靠运气。
 func (d *daemon) matches(pattern string) ([]string, []*collector.Collector) {
 	re, err := regexp.Compile(pattern)
 	if err != nil {
@@ -40,6 +44,7 @@ func (d *daemon) matches(pattern string) ([]string, []*collector.Collector) {
 			}
 		}
 	}
+	sort.Strings(keys)
 	out := make([]*collector.Collector, 0, len(keys))
 	for _, k := range keys {
 		out = append(out, cs[k])
@@ -168,10 +173,17 @@ func (d *daemon) tickReleases() {
 	}
 }
 
-// Status: 全部设备当前状态。
+// Status: 全部设备当前状态（按 key 排序——客户端按确定顺序拿到清单，
+// "取第一台"类的消费方才不会每次调用换目标）。
 func (d *daemon) Status() []ctl.DevState {
-	out := make([]ctl.DevState, 0, len(d.collectors))
-	for k, c := range d.collectors {
+	keys := make([]string, 0, len(d.collectors))
+	for k := range d.collectors {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]ctl.DevState, 0, len(keys))
+	for _, k := range keys {
+		c := d.collectors[k]
 		state := c.State()
 		if state == "collecting" && d.pause.Matches(devInfoOf(c)) {
 			state = "paused"
@@ -235,12 +247,23 @@ func flashMilestone(line string, seen map[string]bool) (string, bool) {
 }
 
 // Flash: 代理刷固件 —— 让口 → 调 esptool（输出流式回调）→ 回采。
-// 匹配多个设备时逐个刷。与 Release/ResumeAll 互斥（TryLock fail-fast）；
-// 刷写前撤销匹配设备的 pending release，防止限时到期在 esptool 工作中途抢回口。
-func (d *daemon) Flash(pattern string, spec flash.Spec, out func(line string)) error {
+// 匹配多个设备时逐个刷，但**默认拒绝**（all=false）——多板同芯片时
+// 未锚定的正则会把在测的板也拖进刷写序列（让口复位 + 错芯片镜像），
+// 实测事故来源；确要批量刷传 all=true（CLI --all）。与 Release/ResumeAll
+// 互斥（TryLock fail-fast）；刷写前撤销匹配设备的 pending release，
+// 防止限时到期在 esptool 工作中途抢回口。
+func (d *daemon) Flash(pattern string, all bool, spec flash.Spec, out func(line string)) error {
 	keys, cs := d.matches(pattern)
 	if len(cs) == 0 {
 		return fmt.Errorf("没有匹配 %q 的采集设备", pattern)
+	}
+	if len(cs) > 1 && !all {
+		names := make([]string, len(cs))
+		for i, c := range cs {
+			names[i] = c.DeviceName()
+		}
+		return fmt.Errorf("模式 %q 匹配 %d 台设备（%s）—— 批量刷写需显式确认（CLI --all / ctl 请求 all:true）；精确刷一台请锚定（如 ^%s$）",
+			pattern, len(cs), strings.Join(names, ", "), cs[0].DeviceName())
 	}
 	if !d.opMu.TryLock() {
 		return fmt.Errorf("另一个 flash/release 操作进行中，请稍后再试")

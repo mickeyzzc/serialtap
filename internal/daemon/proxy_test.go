@@ -52,9 +52,12 @@ func injectDev(t *testing.T, fp *testutil.FakePort, data string) {
 func TestProxyEndToEnd(t *testing.T) {
 	d, fp, root := proxyHarness(t, "")
 
-	ep, err := d.ProxyStart("proxdev")
+	ep, devName, devKey, err := d.ProxyStart("proxdev")
 	if err != nil {
 		t.Fatalf("ProxyStart: %v", err)
+	}
+	if devName != "proxdev" || devKey != "keyP" {
+		t.Fatalf("ProxyStart 应回报端点所属设备: name=%q key=%q", devName, devKey)
 	}
 	conn, err := net.Dial("tcp", ep)
 	if err != nil {
@@ -130,7 +133,7 @@ func TestProxyEndToEnd(t *testing.T) {
 func TestProxyTapExclude(t *testing.T) {
 	d, fp, root := proxyHarness(t, `^#S1 `)
 
-	if _, err := d.ProxyStart("proxdev"); err != nil {
+	if _, _, _, err := d.ProxyStart("proxdev"); err != nil {
 		t.Fatalf("ProxyStart: %v", err)
 	}
 	conn, err := net.DialTimeout("tcp", mustFirstEndpoint(t, d), 2*time.Second)
@@ -153,7 +156,7 @@ func TestProxyTapExclude(t *testing.T) {
 	}
 
 	// 幂等：重复 ProxyStart 返回同一端点
-	if ep2, err := d.ProxyStart("proxdev"); err != nil || ep2 == "" {
+	if ep2, n2, _, err := d.ProxyStart("proxdev"); err != nil || ep2 == "" || n2 != "proxdev" {
 		t.Fatalf("重复 ProxyStart 应成功: %v", err)
 	}
 }
@@ -173,7 +176,7 @@ func waitProxyAttached(t *testing.T, d *daemon) {
 
 func mustFirstEndpoint(t *testing.T, d *daemon) string {
 	t.Helper()
-	ep, err := d.ProxyStart("proxdev")
+	ep, _, _, err := d.ProxyStart("proxdev")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +185,7 @@ func mustFirstEndpoint(t *testing.T, d *daemon) string {
 
 func TestProxyStartNoMatch(t *testing.T) {
 	d, _, _ := proxyHarness(t, "")
-	if _, err := d.ProxyStart("nosuchdev"); err == nil {
+	if _, _, _, err := d.ProxyStart("nosuchdev"); err == nil {
 		t.Fatal("无匹配设备应报错")
 	}
 	_ = fmt.Sprint(d.Collectors())

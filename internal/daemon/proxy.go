@@ -11,18 +11,21 @@ import (
 )
 
 // ProxyStart: 为匹配设备各开一个本地 TCP 监听（已开的复用，幂等），
-// 返回第一个端点。多设备匹配时全部开通，端点以 status 为准。
-func (d *daemon) ProxyStart(pattern string) (string, error) {
+// 返回第一个端点（key 序第一台）及其所属设备 name/key。多设备匹配时
+// 全部开通，端点以 status 为准；回报设备身份供客户端校验"拨的就是
+// 选中的那台"——多板同名场景下这是防连错板的关键一环。
+func (d *daemon) ProxyStart(pattern string) (string, string, string, error) {
 	keys, cs := d.matches(pattern)
 	if len(cs) == 0 {
-		return "", fmt.Errorf("没有匹配 %q 的采集设备", pattern)
+		return "", "", "", fmt.Errorf("没有匹配 %q 的采集设备", pattern)
 	}
 	d.proxyMu.Lock()
 	defer d.proxyMu.Unlock()
-	first := ""
+	first, devName, devKey := "", "", ""
 	for i := range keys { // 已有监听的匹配设备：复用端点
 		if ln, ok := d.proxies[keys[i]]; ok && first == "" {
 			first = ln.Addr().String()
+			devName, devKey = cs[i].DeviceName(), keys[i]
 		}
 	}
 	for i := range keys {
@@ -38,15 +41,16 @@ func (d *daemon) ProxyStart(pattern string) (string, error) {
 		d.proxies[key] = ln
 		if first == "" {
 			first = ln.Addr().String()
+			devName, devKey = cs[i].DeviceName(), key
 		}
 		go d.acceptLoop(ln, cs[i])
 		cs[i].LogEvent("proxy endpoint open: %s", ln.Addr().String())
 		d.logf("[proxy] %s 透传端点 %s", cs[i].DeviceName(), ln.Addr().String())
 	}
 	if first == "" {
-		return "", fmt.Errorf("代理监听创建失败（详见守护日志）")
+		return "", "", "", fmt.Errorf("代理监听创建失败（详见守护日志）")
 	}
-	return first, nil
+	return first, devName, devKey, nil
 }
 
 // ProxyStop: 关闭匹配设备的监听并摘除活跃代理会话。返回关停数。

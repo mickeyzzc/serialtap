@@ -103,7 +103,7 @@ Windows 上是 `serialtap.exe list`（设备形如 `COM3`）、单口采集 `ser
 | `list` | 列出当前设备与身份 |
 | `pause [RE]` / `resume [RE]` | 暂停/恢复采集（省略 = 全部） |
 | `release RE [--for 5m]` | **临时让出串口**给外部工具：默认端口空闲 3 秒自动回采，或限时自动回采 |
-| `flash RE <bin>[@0x10000]...` | **代理刷固件**：让口 → esptool → 自动回采，进度流式回传；`--args-file build/flasher_args.json` 一键刷 IDF 全套；`--dry-run` 预演将执行的命令。RE 为正则，多设备会**逐台刷**，精确刷一台用锚定（如 `^board$`）。远程刷写见[控制协议 · SSH 隧道](docs/ctl-protocol.md#远程使用ssh-隧道) |
+| `flash RE <bin>[@0x10000]...` | **代理刷固件**：让口 → esptool → 自动回采，进度流式回传；失败自动重试（`--retries`，默认 3 次 × `--retry-wait` 5s——Windows 上 USB-CDC 设备复位后首次 open/SetCommState 常瞬时失败，esptool 自身不重试）；`--args-file build/flasher_args.json` 一键刷 IDF 全套；`--dry-run` 预演将执行的命令。RE 为正则，**匹配多台时默认拒绝**（防误刷在测设备——多板同芯片时未锚定正则会把别的板拖进刷写序列，列出匹配设备并要求锚定），确要逐台刷给 `--all`，精确刷一台用锚定（如 `^board$`）。远程刷写见[控制协议 · SSH 隧道](docs/ctl-protocol.md#远程使用ssh-隧道) |
 | `status` | 守护进程与设备实时状态（collecting/paused/suspended/flashing） |
 | `tray`（Windows） | 托盘常驻：接入状态、按设备暂停/恢复、打开日志，见下节 |
 | `analyze LOG...` | 离线签名扫描：计数 / 首末时间 / 样本行汇总表 |
@@ -146,8 +146,12 @@ USB-JTAG 口（USB_SERIAL_JTAG 外设在硅内实现了与 CH340 一致的自动
 ## 设备命名
 
 优先级：配置 `names`（by-id 正则）→ 内置规则（`ch340` / `ch343` / `esp32s3-jtag`）
-→ by-id 基名 → tty 名。同名设备自动加 `-2` 后缀。用 by-id 里的序列号/MAC
-可在配置里精确区分同芯片的不同板子（见 `config.example.json`）。
+→ by-id 基名 → tty 名。同名设备（如两只乐鑫原生 USB-JTAG 都是
+`303a:1001` → 都叫 `esp32s3-jtag`）自动加**身份派生后缀** `-<token>`：
+token 是设备稳定身份（key/by-id，Windows 实例路径内嵌 MAC）的 4 位散列，
+同一块板无论第几个接入、跨守护重启后缀都一致；裸基名先到先得。
+**双板并存时请锚定后缀名**（如 `^esp32s3-jtag-1x2y$`），或用 by-id 里的
+序列号/MAC 在配置 `names` 里给板子起语义名（见 `config.example.json`）。
 
 配置文件默认路径 `~/.config/serialtap/config.json`（不存在则全默认值），
 所有字段见 `config.example.json` 与 `config.go`。
@@ -205,7 +209,7 @@ loginctl enable-linger $USER               # 开机自启（不登录也跑）
 | `flash`/`release`/`status` 连不上守护进程 | `serialtap run` 未运行，或 socket 路径不对（解析规则见[控制协议](docs/ctl-protocol.md)；Windows 默认在 `%LOCALAPPDATA%\serialtap\`） |
 | Windows 上 `release` 报"不支持空闲自动回采" | 预期行为：Windows 无 /proc/lsof 占用检测。用 `release RE --for 5m` 限时回采，或刷完后 `resume` |
 | 正则匹配不到设备 | 各平台的 tty/key/by-id 形态不同（见"平台支持"节），先 `serialtap list` 看实际字段值 |
-| 设备目录出现 `-2` 后缀 | 同名设备撞车（同型号适配器 by-id 无序列号）。用配置 `names` 按 by-id 里的序列号/MAC 细分命名 |
+| 设备名带 `-xxxx` 散列后缀 | 同名设备撞车（同型号板 by-id 无序列号，如两只原生 USB-JTAG）。后缀从设备稳定身份派生、跨重启不变——双板并存请锚定后缀名，或用配置 `names` 按 by-id 序列号/MAC 细分命名 |
 | `pause` 后一直不采集 | `cat <root>/PAUSED` 看清单内容；`serialtap resume`（无参）清空全部 |
 | 板子反复重启 | 检查是否开了 `silent_reopen_s` 看门狗 —— 合法安静的设备会被它复位循环，保持默认 `0` |
 | `analyze` 看不到自定义签名 | 已知限制：离线扫描只统计内置签名表，`signatures_extra` 仅影响在线事件流 |

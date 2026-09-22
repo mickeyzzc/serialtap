@@ -59,11 +59,11 @@ func TestLifecycle(t *testing.T) {
 		t.Fatalf("设备移除后应剩 1 个: %d", d.Collectors())
 	}
 
-	// 重名设备 → -2 后缀
+	// 重名设备 → 身份 token 后缀（同 key/by-id 的板无论何时接入后缀一致）
 	devs = append(devs, device.DeviceInfo{Tty: "/dev/fakeA2", Key: "keyA2", Name: "fakeA"})
 	d.Tick()
-	if n := d.Name("keyA2"); n != "fakeA-2" {
-		t.Fatalf("重名后缀错误: %q", n)
+	if want := "fakeA-" + nameToken("keyA2", ""); d.Name("keyA2") != want {
+		t.Fatalf("重名后缀错误: %q（期望 %q）", d.Name("keyA2"), want)
 	}
 
 	// 暂停清单热重载
@@ -220,7 +220,7 @@ func TestFlashOrchestrationWithFakeEsptool(t *testing.T) {
 	var lines []string
 	bin := filepath.Join(root, "app.bin")
 	os.WriteFile(bin, []byte("x"), 0o644)
-	err = d.Flash("fakeA", flash.Spec{
+	err = d.Flash("fakeA", false, flash.Spec{
 		Esptool: a2l, Bins: []flash.BinSpec{{Path: bin, Offset: "0x0"}},
 	}, func(l string) { lines = append(lines, l) })
 	if err != nil {
@@ -234,7 +234,7 @@ func TestFlashOrchestrationWithFakeEsptool(t *testing.T) {
 		t.Fatalf("刷完未回采: %+v", d.Status())
 	}
 	// 无匹配设备
-	if err := d.Flash("nope", flash.Spec{}, func(string) {}); err == nil {
+	if err := d.Flash("nope", false, flash.Spec{}, func(string) {}); err == nil {
 		t.Fatal("无匹配设备应报错")
 	}
 }
@@ -294,7 +294,7 @@ func TestFlashRejectsConcurrentOps(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- d.Flash("fakeA", flash.Spec{Esptool: tool,
+		done <- d.Flash("fakeA", false, flash.Spec{Esptool: tool,
 			Bins: []flash.BinSpec{{Path: bin, Offset: "0x0"}}}, func(string) {})
 	}()
 	// 确定性等到第一个 flash 持锁进入 esptool 阶段（盲睡在忙机器上会 flaky）
@@ -344,7 +344,7 @@ func TestFlashRevokesPendingTimedRelease(t *testing.T) {
 	if _, err := d.Release("fakeA", time.Hour, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.Flash("fakeA", flash.Spec{Esptool: tool,
+	if err := d.Flash("fakeA", false, flash.Spec{Esptool: tool,
 		Bins: []flash.BinSpec{{Path: bin, Offset: "0x0"}}}, func(string) {}); err != nil {
 		t.Fatal(err)
 	}
@@ -383,7 +383,7 @@ func TestFlashDryRun(t *testing.T) {
 	os.WriteFile(bin, []byte("x"), 0o644)
 
 	var lines []string
-	err = d.Flash("fakeA", flash.Spec{Esptool: tool, DryRun: true,
+	err = d.Flash("fakeA", false, flash.Spec{Esptool: tool, DryRun: true,
 		Bins: []flash.BinSpec{{Path: bin, Offset: "0x0"}}}, func(l string) { lines = append(lines, l) })
 	if err != nil {
 		t.Fatal(err)
@@ -397,5 +397,116 @@ func TestFlashDryRun(t *testing.T) {
 	}
 	if st := d.Status()[0].State; st != "collecting" {
 		t.Fatalf("dry-run 不应改变状态: %s", st)
+	}
+}
+
+// —— 多板同芯片（两只 303a:1001 同名）场景的确定性 ——
+// 背景：wifipulse 经 status 取"第一台" + ProxyStart 返回"第一个"端点，
+// map 迭代随机时两层各掷骰子，业务程序会随机连到错误的板子上。
+
+// 撞名 token 后缀跨守护重启稳定：同一块板（同 key/by-id）无论何时撞名，
+// 拿到的后缀一致 —— 不随接入顺序/重启漂移。
+func TestDuplicateNameTokenStableAcrossRestart(t *testing.T) {
+	old := collector.OpenPort
+	collector.OpenPort = func(tty string, baud int) (collector.Port, error) {
+		return &testutil.FakePort{}, nil
+	}
+	t.Cleanup(func() { collector.OpenPort = old })
+
+	devs := []device.DeviceInfo{
+		{Tty: "/dev/a", Key: "keyA", Name: "dup", ByID: "idA"},
+		{Tty: "/dev/b", Key: "keyB", Name: "dup", ByID: "idB"},
+	}
+	want := "dup-" + nameToken("keyB", "idB")
+
+	d1, err := newTestDaemon(t, t.TempDir(), devs...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d1.Tick()
+	if n := d1.Name("keyB"); n != want {
+		t.Fatalf("首次后缀错误: %q（期望 %q）", n, want)
+	}
+	d1.Shutdown()
+
+	// 全新守护（模拟重启）：同一对板再撞名，后缀不变
+	d2, err := newTestDaemon(t, t.TempDir(), devs...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(d2.Shutdown)
+	d2.Tick()
+	if n := d2.Name("keyB"); n != want {
+		t.Fatalf("重启后后缀漂移: %q（期望 %q）", n, want)
+	}
+}
+
+// status 与 matches 按稳定 key 序返回：逆序注入也要正序出来，
+// "取第一台/第一个端点"的消费方才不会每次调用换目标。
+func TestStatusAndMatchesSortedByKey(t *testing.T) {
+	old := collector.OpenPort
+	collector.OpenPort = func(tty string, baud int) (collector.Port, error) {
+		return &testutil.FakePort{}, nil
+	}
+	t.Cleanup(func() { collector.OpenPort = old })
+
+	// 注入顺序与 key 序相反（假 enum 不经 buildDevices 排序）
+	d, err := newTestDaemon(t, t.TempDir(),
+		device.DeviceInfo{Tty: "/dev/z", Key: "kz", Name: "dz"},
+		device.DeviceInfo{Tty: "/dev/a", Key: "ka", Name: "da"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(d.Shutdown)
+	d.Tick()
+
+	st := d.Status()
+	if len(st) != 2 || st[0].Key != "ka" || st[1].Key != "kz" {
+		t.Fatalf("status 应按 key 排序: %+v", st)
+	}
+	keys, cs := d.matches("d")
+	if len(cs) != 2 || keys[0] != "ka" || keys[1] != "kz" {
+		t.Fatalf("matches 应按 key 排序: %v", keys)
+	}
+}
+
+// flash 多设备匹配默认拒绝（列出设备名并提示锚定/--all），all=true 才逐台刷
+func TestFlashMultiDeviceGate(t *testing.T) {
+	root := t.TempDir()
+	tool := testutil.FakeTool(t)
+	t.Setenv("FAKE_EXIT", "0")
+	t.Setenv("FAKE_OUT", "flashing\n")
+
+	old := collector.OpenPort
+	collector.OpenPort = func(tty string, baud int) (collector.Port, error) {
+		return &testutil.FakePort{}, nil
+	}
+	t.Cleanup(func() { collector.OpenPort = old })
+
+	d, err := newTestDaemon(t, root,
+		device.DeviceInfo{Tty: "/dev/a", Key: "ka", Name: "sense"},
+		device.DeviceInfo{Tty: "/dev/b", Key: "kb", Name: "sense-dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(d.Shutdown)
+	d.Tick()
+	bin := filepath.Join(root, "app.bin")
+	os.WriteFile(bin, []byte("x"), 0o644)
+	spec := flash.Spec{Esptool: tool, Bins: []flash.BinSpec{{Path: bin, Offset: "0x0"}}}
+
+	// 未锚定 + 未确认 → 拒绝并列出两台
+	err = d.Flash("sense", false, spec, func(string) {})
+	if err == nil || !strings.Contains(err.Error(), "2 台") ||
+		!strings.Contains(err.Error(), "sense-dev") || !strings.Contains(err.Error(), "--all") {
+		t.Fatalf("多台未确认应拒绝并列出设备: %v", err)
+	}
+	// 锚定单台 → 正常刷
+	if err := d.Flash("^sense$", false, spec, func(string) {}); err != nil {
+		t.Fatalf("锚定单台应可刷: %v", err)
+	}
+	// 显式 all → 逐台刷
+	if err := d.Flash("sense", true, spec, func(string) {}); err != nil {
+		t.Fatalf("all=true 应逐台刷: %v", err)
 	}
 }

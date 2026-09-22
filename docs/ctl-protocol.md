@@ -24,6 +24,7 @@
 | `until_idle` | bool | 仅 `release`:端口空闲后自动回采 |
 | `spec` | object | 仅 `flash`:刷写参数,见下 |
 | `action` | string | 仅 `proxy`:`start` \| `stop`(默认 start) |
+| `all` | bool | 仅 `flash`:模式匹配**多台设备**时仍逐台刷。默认拒绝多台(防误刷在测设备——多板同芯片时未锚定正则会把别的板拖进刷写序列) |
 
 `pattern` 是**未锚定**正则(`ch340` 会匹配所有名字含 ch340 的设备);
 要精确匹配一台请锚定,如 `^board-a$`。
@@ -45,6 +46,12 @@ esptool 抢同一口或 resume 在刷写中途抢回口。`flash` 开始时会�
 pending release。单台刷写超时由配置 `flash_timeout_s` 兜底(默认 600s,超时杀
 esptool 进程并回采)。
 
+**多设备语义**:`pattern` 匹配多台时,`flash` **默认拒绝**并返回错误列出
+全部匹配设备名——多板同芯片(如两只乐鑫原生 USB-JTAG 同名)时,未锚定的
+正则会把在测的板也拖进刷写序列(让口复位 + 错芯片镜像)。确要批量刷在
+请求带 `all: true`(CLI 为 `--all`),此时恢复逐台刷、中途失败即停止
+(已刷完的保持完成状态,失败设备之后的不再刷)。
+
 ## 响应(Response)
 
 | 字段 | 类型 | 说明 |
@@ -53,7 +60,10 @@ esptool 进程并回采)。
 | `error` | string | 失败原因 |
 | `event` | string | `flash-log` \| `flash-done`(仅 flash 流式响应) |
 | `line` | string | flash-log 的输出行;release 成功时为让出口数 |
-| `devices` | [{name, tty, key, state}] | 仅 status:`state` ∈ `collecting` \| `paused` \| `suspended` \| `flashing` |
+| `devices` | [{name, tty, key, state}] | 仅 status:`state` ∈ `collecting` \| `paused` \| `suspended` \| `flashing`;**按 key 排序**——"取第一台"类的消费方拿到的是确定结果 |
+| `endpoint` | string | 仅 proxy start:透传 TCP 端点 |
+| `device` | string | 仅 proxy start:返回端点所属设备名(客户端校验"拨的就是选中的那台") |
+| `device_key` | string | 仅 proxy start:返回端点所属设备 key |
 | `code` | int | 保留字段,当前恒未设置 |
 
 ## 各命令语义
