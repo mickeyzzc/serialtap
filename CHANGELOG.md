@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### 全新 Logo（Wave·Tap：方波 · 在线分接）
+
+- 设计定稿 **Wave·Tap**：UART 方波横贯 + 低电平中点向下的抽头——串口
+  电平的通用符号 × serialtap 的"在线分接"本职；深底圆角方应用图标，
+  teal 抽头与面板主题色同族。6 个设计方向的变体存档于 `assets/logo/variants/`，
+  展示页 `assets/logo/showcase.html`
+- **Web 面板**：favicon（SVG data URI）+ 头部 logo 全部换新
+- **托盘**：从程序化像素字 ICO 换成 `go:embed` 的多尺寸真 ICO
+  （16/24/32/48/64/256），断连灰版同步替换；`assets/logo/gen.py`
+  一键再生成（svglib + Pillow，纯 Python 工具链）并自动拷贝到 internal/tray
+- **安装包/快捷方式**：直接引用 `assets/logo/icon.ico`（exe 资源图标
+  可后续用 rsrc/goversioninfo 编入 .syso，暂未接）
+
+### 软断开重连：串口层 `reopen` + USB 层 `reset`
+
+> 分层自愈：设备在总线上时，不动手拔插就能从端口/驱动僵死里恢复。
+> （设备整个消失在总线上仍无解——只能物理重插。）
+
+- 新增 `serialtap reopen <正则> [--all]`（ctl `reopen`）：**串口层软断开重连**
+  —— 采集器立即关口并**跳过退避**重开（自动重开路径是 5s 起步指数退避）。
+  不改变所有权与暂停语义（与 `release` 不同）；会打断进行中的透传会话
+  （客户端重连即可）。close/open 各带一拍复位脉冲——对 CH340/乐鑫原生
+  USB 口等于顺带软重启板子（open-once 纪律的显式手动例外）
+- 新增 `serialtap reset <正则> [--all]`（ctl `reset`，仅 Windows）：**USB 层
+  软拔插**——让口 → `pnputil /restart-device <实例路径>`（禁用+启用设备
+  节点，只动串口接口节点，JTAG 兄弟接口不受影响）→ 用自身枚举器确认重枚举
+  → 回采。实测陷阱两条已吸收：pnputil **需管理员**（非提权守护自动弹 UAC
+  提权重试，可取消）；失败时**退出码仍为 0**（成败只认输出标记 + 枚举复核）
+- `reopen`/`reset` 与 flash 共用多设备门禁（未锚定匹配多台默认拒绝、列出
+  设备名、`--all` 显式确认）——门禁从 flash 抽出为 `gateMulti` 共用
+- ctl 协议新增 `reopen`/`reset` 命令（复用 `pattern`/`all` 字段），完整语义
+  见 docs/ctl-protocol.md
+
 ### flash 失败自动重试（Windows CDC 瞬时失败）
 
 - `serialtap flash` 客户端侧按次数重试（`--retries` 总次数默认 3、
@@ -15,7 +48,7 @@
 
 > 场景：一块在开发（esp32-s3-zero）+ 一块在测试（luatos 感知节点），两只
 > 都是乐鑫原生 USB-JTAG（`303a:1001`）→ 同名 `esp32s3-jtag`，业务程序
-> （wifipulse）随机连到错误的板子上且沉默挂死。四层修复：
+> （homepulse）随机连到错误的板子上且沉默挂死。四层修复：
 
 - **撞名后缀改为身份派生**：同名设备不再按接入顺序加 `-2`（换插顺序/重启
   会换主），改加 4 位 base36 散列 token（输入 = key + by-id，Windows 实例
@@ -26,7 +59,7 @@
   客户端取的"第一台"设备都在掷骰子；现在多设备处理顺序（flash 逐台序、
   proxy 端点归属、status 清单）全部确定可复现
 - **`proxy start` 回报端点所属设备**：ctl 响应新增 `device` / `device_key`，
-  客户端（wifipulse）校验"拨的就是选中的那台"，设备清单变化竞态下
+  客户端（homepulse）校验"拨的就是选中的那台"，设备清单变化竞态下
   张冠李戴当场报错
 - **`flash` 多设备门禁**：pattern 匹配多台时**默认拒绝**并列出设备名
   （要求锚定或显式确认——CLI `--all` / ctl `all: true`）——多板同名时
@@ -47,13 +80,18 @@
   `serial-20260921.001.log` 排在 `serial-20260921.log` 之前（`.0` < `.l`），
   导致托盘「查看串口日志」在大小轮转后打开旧基础文件；改为按
   （日期, 数字后缀）语义比较（tray.LatestSerialLog 与面板 latestFile 同源修复）
+- **修复（多设备切换不可用）**：设备卡每秒全量重建 DOM，进行中的点击落在
+  已被替换的节点上被静默吞掉；且可点目标只有设备名小字/「查看日志」按钮，
+  多板并存时难以切换查看。改为结构签名比对（无变化只就地更新数字，不重建
+  DOM），整卡可点（操作按钮阻止冒泡），日志区新增**设备下拉**（与卡片
+  双向同步），选中的设备拔出后自动回落到首台
 
 ### 透明 USB 代理（`serialtap proxy`）
 
-> 以下实战问题在 ESP32-C3 真机联调（wifipulse 感知管线）中发现并修复/验证。
+> 以下实战问题在 ESP32-C3 真机联调（homepulse 感知管线）中发现并修复/验证。
 
 - 新增 `proxy <设备正则>` 子命令：为匹配设备开一个 127.0.0.1 TCP 端点，
-  业务程序（如 [wifipulse](../wifipulse) 感知引擎）经它直接读写板子串口 ——
+  业务程序（如 [homepulse](../homepulse) 感知引擎）经它直接读写板子串口 ——
   对程序等同直连 USB；`proxy <正则> --stop` 关闭
 - 端口**不重开**：透传桥内嵌在采集器读循环（open-once 纪律保持，
   无复位脉冲）；设备→客户端字节镜像 + 客户端→设备写入全双工并发

@@ -4,19 +4,21 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>serialtap · 观测面板</title>
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect x="2" y="2" width="96" height="96" rx="22" fill="%230F172A"/><path d="M14 32 H28 V52 H42 V32 H56 V52 H70 V32 H86" fill="none" stroke="%23E2E8F0" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><path d="M49 52 V76" fill="none" stroke="%232DD4BF" stroke-width="8" stroke-linecap="round"/><circle cx="49" cy="82" r="6.5" fill="%232DD4BF"/></svg>'>
 <style>
 :root{--bg:#0d1117;--card:#161b22;--border:#30363d;--fg:#e6edf3;--dim:#8b949e;
 --green:#3fb950;--amber:#d29922;--blue:#58a6ff;--red:#f85149;--teal:#39d2c0}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 "Segoe UI",system-ui,sans-serif}
-header{display:flex;align-items:baseline;gap:14px;padding:14px 20px;border-bottom:1px solid var(--border)}
+header{display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid var(--border)}
+header .logo{flex:none;display:block}
 header h1{font-size:17px;margin:0}
 #toast{margin-left:auto;font-size:12px;color:var(--teal);opacity:0;transition:opacity .3s}
 #toast.show{opacity:1}
 header .dim{color:var(--dim);font-size:12px}
 main{padding:16px 20px;max-width:1500px;margin:0 auto}
 #cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px;margin-bottom:16px}
-.card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px 14px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px 14px;cursor:pointer}
 .card.sel{border-color:var(--blue)}
 .card .top{display:flex;align-items:center;gap:8px}
 .card .name{font-weight:600;font-size:15px;cursor:pointer}
@@ -56,6 +58,7 @@ select{background:#21262d;color:var(--fg);border:1px solid var(--border);border-
 </head>
 <body>
 <header>
+  <svg class="logo" width="26" height="26" viewBox="0 0 100 100" aria-hidden="true"><rect x="2" y="2" width="96" height="96" rx="22" fill="#0F172A"/><path d="M14 32 H28 V52 H42 V32 H56 V52 H70 V32 H86" fill="none" stroke="#E2E8F0" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><path d="M49 52 V76" fill="none" stroke="#2DD4BF" stroke-width="8" stroke-linecap="round"/><circle cx="49" cy="82" r="6.5" fill="#2DD4BF"/></svg>
   <h1>serialtap · 观测面板</h1>
   <span class="dim" id="root">—</span>
   <span class="dim" id="conn"></span>
@@ -67,6 +70,7 @@ select{background:#21262d;color:var(--fg);border:1px solid var(--border);border-
     <div class="panel">
       <div class="hd">
         <span class="t">实时日志</span>
+        <select id="devSel" title="选择要查看的设备/串口"></select>
         <span class="tabs">
           <span class="tab on" data-kind="serial" id="tabSerial">全量</span>
           <span class="tab" data-kind="events" id="tabEvents">事件流</span>
@@ -91,6 +95,7 @@ const fmtKB = n => n >= 1048576 ? (n/1048576).toFixed(1)+" MB" : (n/1024).toFixe
 
 let status = {devices:[]}, prevSize = {}, rate = {};
 let selDev = null, selKind = "serial", es = null, logBuf = "";
+let cardSig = ""; // 卡片结构签名：不变则只就地更新数字，绝不重建 DOM —— 每秒全量重建会把进行中的点击吞掉
 const LOG_CAP = 256 * 1024;
 
 function pollStatus(){
@@ -103,20 +108,34 @@ function pollStatus(){
       rate[d.name] = r === undefined ? 0 : r;
       prevSize[d.name] = d.serial_size;
     }
-    // 单设备（或尚未选中）时自动选中首台，日志区不空屏
-    if (!selDev && s.devices.length) selectDev(s.devices[0].name);
+    // 尚未选中或选中的设备已拔出 → 自动选首台，日志区不空屏
+    if (s.devices.length && (!selDev || !s.devices.some(d=>d.name === selDev))) selectDev(s.devices[0].name);
     else renderCards();
   }).catch(()=>{ $("conn").textContent = "○ 守护进程不可达"; });
 }
 setInterval(pollStatus, 1000); pollStatus();
 
+// devSig: 卡片结构签名（影响 DOM 结构/按钮文案的字段）。易变的速率/大小
+// 不参与签名 —— 就地更新，不触发重建。
+function devSig(){
+  return JSON.stringify(status.devices.map(d=>[d.name,d.tty,d.key,d.state,d.proxy,d.proxy_endpoint]));
+}
+
 function renderCards(){
   const c = $("cards");
-  if (!status.devices.length){ c.innerHTML = '<div id="nodata">暂无设备接入</div>'; return; }
+  if (!status.devices.length){
+    if (c.innerHTML.indexOf("nodata") < 0) c.innerHTML = '<div id="nodata">暂无设备接入</div>';
+    cardSig = ""; syncDevSel();
+    return;
+  }
+  const sig = devSig();
+  if (sig === cardSig){ updateVolatile(); return; }
+  cardSig = sig;
   c.innerHTML = "";
   for (const d of status.devices){
     const el = document.createElement("div");
     el.className = "card" + (d.name === selDev ? " sel" : "");
+    el.dataset.dev = d.name;
     el.innerHTML = `
       <div class="top">
         <span class="name">${esc(d.name)}</span>
@@ -125,9 +144,9 @@ function renderCards(){
       </div>
       <div class="tty">${esc(d.tty)} · key=${esc(d.key)}</div>
       <div class="meta">
-        <span>写入 <b>${(rate[d.name]||0)} B/s</b></span>
-        <span>全量 <b>${fmtKB(d.serial_size)}</b></span>
-        <span>事件 <b>${fmtKB(d.events_size)}</b></span>
+        <span>写入 <b class="v-rate"></b></span>
+        <span>全量 <b class="v-ssz"></b></span>
+        <span>事件 <b class="v-esz"></b></span>
         ${d.proxy_endpoint ? `<span>端点 <b>${esc(d.proxy_endpoint)}</b></span>` : ""}
       </div>
       <div class="acts">
@@ -135,15 +154,38 @@ function renderCards(){
         <button data-a="proxy">${d.proxy ? "停代理" : "开代理"}</button>
         <button data-a="view">查看日志</button>
       </div>`;
-    el.querySelector(".name").onclick = () => selectDev(d.name);
-    el.querySelector('[data-a="view"]').onclick = () => selectDev(d.name);
-    el.querySelector('[data-a="toggle"]').onclick = () => cmd(
-      d.state === "collecting" ? "pause" : "resume", "^" + d.name.replace(/[.*+?^${}()|[\]\\]/g,"\\$&") + "$");
-    el.querySelector('[data-a="proxy"]').onclick = () =>
+    // 整卡可点切换查看（操作按钮阻止冒泡，避免按"暂停"顺带换台）
+    el.onclick = () => selectDev(d.name);
+    el.querySelector(".name").onclick = e => { e.stopPropagation(); selectDev(d.name); };
+    el.querySelector('[data-a="view"]').onclick = e => { e.stopPropagation(); selectDev(d.name); };
+    el.querySelector('[data-a="toggle"]').onclick = e => { e.stopPropagation(); cmd(
+      d.state === "collecting" ? "pause" : "resume", "^" + d.name.replace(/[.*+?^${}()|[\]\\]/g,"\\$&") + "$"); };
+    el.querySelector('[data-a="proxy"]').onclick = e => { e.stopPropagation();
       d.proxy ? cmd("proxy", "^"+d.name.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"$", "stop")
-              : cmd("proxy", d.key);
+              : cmd("proxy", d.key); };
     c.appendChild(el);
   }
+  updateVolatile();
+  syncDevSel();
+}
+
+// updateVolatile: 每秒仅刷新数字（写入速率/日志体积），DOM 节点不动。
+function updateVolatile(){
+  for (const d of status.devices){
+    const card = document.querySelector(`.card[data-dev="${CSS.escape(d.name)}"]`);
+    if (!card) continue;
+    card.querySelector(".v-rate").textContent = (rate[d.name]||0) + " B/s";
+    card.querySelector(".v-ssz").textContent = fmtKB(d.serial_size);
+    card.querySelector(".v-esz").textContent = fmtKB(d.events_size);
+  }
+}
+
+// syncDevSel: 日志区设备下拉与卡片选择双向同步。
+function syncDevSel(){
+  const sel = $("devSel");
+  sel.innerHTML = status.devices
+    .map(d=>`<option value="${esc(d.name)}">${esc(d.name)} · ${esc(d.tty)}</option>`).join("");
+  if (selDev && status.devices.some(d=>d.name === selDev)) sel.value = selDev;
 }
 
 let toastTimer = null;
@@ -172,9 +214,14 @@ function selectDev(name){
   selDev = name;
   for (const t of document.querySelectorAll(".tab"))
     t.classList.toggle("on", t.dataset.kind === selKind);
+  // 选中态就地切换（不重建卡片），下拉同步
+  document.querySelectorAll(".card").forEach(c=>c.classList.toggle("sel", c.dataset.dev === selDev));
+  const ds = $("devSel");
+  if (status.devices.some(d=>d.name === selDev) && ds.value !== selDev) ds.value = selDev;
   openStream();
   renderCards();
 }
+$("devSel").onchange = () => { const v = $("devSel").value; if (v) selectDev(v); };
 for (const t of document.querySelectorAll(".tab"))
   t.onclick = () => { selKind = t.dataset.kind;
     for (const x of document.querySelectorAll(".tab")) x.classList.toggle("on", x===t);

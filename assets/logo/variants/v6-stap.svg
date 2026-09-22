@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="serialtap logo variant 6: S monogram">
+  <!-- V6 S·Tap —— 字母 S 由方波台阶构成（serial 的波形笔画），末端是分接端口 -->
+  <path d="M72 22 H30 V50 H70 V78 H30" fill="none" stroke="currentColor" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="72" cy="22" r="5" fill="currentColor"/>
+  <circle cx="30" cy="78" r="8" fill="#2DD4BF"/>
+</svg>

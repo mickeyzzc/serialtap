@@ -3,7 +3,7 @@
 package tray
 
 import (
-	"encoding/binary"
+	_ "embed"
 	"fmt"
 	"os"
 	"os/exec"
@@ -336,51 +336,20 @@ func (t *trayUI) watchToggle(ui *devUI, name string) {
 	}
 }
 
-// —— 程序化生成托盘图标（32x32 32bpp ICO，深蓝底白色 S；断连时灰阶）——
+// —— 托盘图标：assets/logo/app-icon.svg 生成的多尺寸 ICO（go:embed）——
+// 重新生成：cd assets/logo && python gen.py（svglib 光栅化 + Pillow 组装，
+// 自动把 icon.ico / icon_dim.ico 拷到本目录）。dim 版为去饱和压暗的
+// "守护进程未运行"态。
+
+//go:embed icon.ico
+var iconNormal []byte
+
+//go:embed icon_dim.ico
+var iconDim []byte
 
 func buildIcon(dim bool) []byte {
-	const size = 32
-	glyph := [7]string{
-		".###.",
-		"#....",
-		"#....",
-		".###.",
-		"....#",
-		"....#",
-		"###..",
-	}
-	br, bg, bb := 30, 58, 95 // #1E3A5F
 	if dim {
-		br, bg, bb = 128, 128, 128
+		return iconDim
 	}
-	var px []byte // BMP 像素自底向上、BGRA
-	for y := size - 1; y >= 0; y-- {
-		for x := 0; x < size; x++ {
-			r, g, b := br, bg, bb
-			gx, gy := (x-9)/3, (y-6)/3 // 字形 3 倍缩放居中
-			if gx >= 0 && gx < 5 && gy >= 0 && gy < 7 && glyph[gy][gx] == '#' {
-				r, g, b = 255, 255, 255
-			}
-			px = append(px, byte(b), byte(g), byte(r), 255)
-		}
-	}
-	mask := make([]byte, size*size/8) // AND 掩码全 0 = 不透明
-	bmp := make([]byte, 40)
-	binary.LittleEndian.PutUint32(bmp[0:], 40)
-	binary.LittleEndian.PutUint32(bmp[4:], size)
-	binary.LittleEndian.PutUint32(bmp[8:], size*2) // XOR+AND 两倍高
-	binary.LittleEndian.PutUint16(bmp[12:], 1)
-	binary.LittleEndian.PutUint16(bmp[14:], 32)
-	data := append(append(bmp, px...), mask...)
-
-	ico := make([]byte, 6, 6+16+len(data))
-	binary.LittleEndian.PutUint16(ico[2:], 1) // type: 1 = RT_ICON
-	binary.LittleEndian.PutUint16(ico[4:], 1) // 图标数
-	ico = append(ico, make([]byte, 16)...)
-	ico[6], ico[7] = size, size
-	binary.LittleEndian.PutUint16(ico[10:], 1)  // planes
-	binary.LittleEndian.PutUint16(ico[12:], 32) // bpp
-	binary.LittleEndian.PutUint32(ico[14:], uint32(len(data)))
-	binary.LittleEndian.PutUint32(ico[18:], 22) // 数据起始偏移（6+16）
-	return append(ico, data...)
+	return iconNormal
 }

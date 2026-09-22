@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>serialtap · Logo 设计探索</title>
+<style>
+  :root {
+    --ink: #0B1220; --panel: #101A2C; --line: #1E2A44;
+    --text: #E2E8F0; --dim: #8CA0BC; --teal: #2DD4BF;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    background: radial-gradient(1200px 600px at 50% -100px, #16233C 0%, var(--ink) 55%);
+    color: var(--text); min-height: 100vh; padding: 48px 24px 80px;
+  }
+  .mono { font-family: "Cascadia Code", Consolas, "Courier New", monospace; }
+  header { text-align: center; margin-bottom: 40px; }
+  header h1 { font-weight: 200; font-size: 44px; letter-spacing: .12em; }
+  header p { color: var(--dim); font-size: 12px; letter-spacing: .25em; margin-top: 10px; }
+  .grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 28px; max-width: 1180px; margin: 0 auto;
+  }
+  .card {
+    background: linear-gradient(180deg, var(--panel) 0%, #0C1526 100%);
+    border: 1px solid var(--line); border-radius: 16px; padding: 30px 26px 24px;
+    transition: transform .5s cubic-bezier(.16,1,.3,1), border-color .3s;
+  }
+  .card:hover { transform: translateY(-4px); border-color: #2C3E62; }
+  .stage {
+    height: 200px; display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(closest-side, #1A2A47 0%, transparent 78%);
+    border-radius: 12px; margin-bottom: 18px;
+  }
+  .stage svg { width: 128px; height: 128px; color: #E2E8F0; }
+  .card h2 { font-size: 15px; letter-spacing: .18em; font-weight: 600; }
+  .card .sub { color: var(--teal); font-size: 11px; letter-spacing: .18em; margin: 6px 0 12px; }
+  .card p { color: var(--dim); font-size: 13px; line-height: 1.75; }
+  .badge {
+    display: inline-block; font-size: 11px; color: #062B26; background: var(--teal);
+    border-radius: 999px; padding: 3px 12px; letter-spacing: .1em; margin-bottom: 10px;
+    font-weight: 600;
+  }
+  .row {
+    max-width: 1180px; margin: 44px auto 0; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 16px; padding: 26px;
+    display: flex; align-items: center; gap: 34px; flex-wrap: wrap;
+  }
+  .row .app {
+    display: flex; align-items: center; gap: 22px; flex-wrap: wrap;
+  }
+  .row img { border-radius: 14px; display: block; }
+  .row .ladder { display: flex; align-items: flex-end; gap: 14px; }
+  .row .ladder img { border-radius: 4px; }
+  .row .note { color: var(--dim); font-size: 13px; line-height: 1.8; max-width: 460px; }
+  .row h3 { font-size: 14px; letter-spacing: .15em; margin-bottom: 8px; }
+  footer { text-align: center; margin-top: 56px; color: #56698A; font-size: 11px; letter-spacing: .2em; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>serialtap</h1>
+  <p class="mono">USB 串口中间层 · LOGO DESIGN EXPLORATION</p>
+</header>
+
+<div class="grid">
+
+  <div class="card">
+    <div class="stage">
+      <svg viewBox="0 0 100 100"><g fill="none" stroke-linecap="round"><path d="M14 36 H86" stroke="currentColor" stroke-width="10"/><path d="M50 36 V80" stroke="#2DD4BF" stroke-width="10"/></g><circle cx="14" cy="36" r="7" fill="currentColor"/><circle cx="86" cy="36" r="7" fill="currentColor"/><circle cx="50" cy="84" r="7" fill="#2DD4BF"/></svg>
+    </div>
+    <h2>V1 · T-TAP</h2>
+    <div class="sub mono">T 型分接头</div>
+    <p>tap 的字面意象：一根串口总线横贯，中段垂直引出抽头到监听端口。三端点圆点即三个连接器。结构最简，极小尺寸下最清晰。</p>
+  </div>
+
+  <div class="card">
+    <div class="stage">
+      <svg viewBox="0 0 100 100"><g fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M12 30 H28 V52 H44 V30 H60 V52 H76 V30 H88" stroke="currentColor" stroke-width="8"/><path d="M52 52 V78" stroke="#2DD4BF" stroke-width="8"/></g><circle cx="52" cy="84" r="7" fill="#2DD4BF"/></svg>
+    </div>
+    <span class="badge">★ 推荐 / 已采用</span>
+    <h2>V2 · WAVE-TAP</h2>
+    <div class="sub mono">方波 · 在线分接</div>
+    <p>UART 方波本身就是"串口"的通用符号；低电平段中点垂直向下的抽头正是 serialtap 做的事——总线照常流动，一旁分接观测。故事最完整，尺寸收缩性够用。</p>
+  </div>
+
+  <div class="card">
+    <div class="stage">
+      <svg viewBox="0 0 100 100"><g fill="none" stroke-linecap="round"><circle cx="46" cy="46" r="26" stroke="currentColor" stroke-width="8"/><path d="M86 86 L64 64" stroke="currentColor" stroke-width="8"/></g><circle cx="46" cy="46" r="9" fill="#2DD4BF"/></svg>
+    </div>
+    <h2>V3 · PROBE</h2>
+    <div class="sub mono">探针 · 监听环</div>
+    <p>wiretap 的监听意象：总线截面是一枚环，探针从 45° 搭上去取信号，环心亮点是被截获的数据。气质偏"测量仪器"。</p>
+  </div>
+
+  <div class="card">
+    <div class="stage">
+      <svg viewBox="0 0 100 100"><rect x="16" y="18" width="58" height="13" rx="6.5" fill="currentColor"/><rect x="16" y="43.5" width="58" height="13" rx="6.5" fill="#2DD4BF"/><rect x="16" y="69" width="58" height="13" rx="6.5" fill="currentColor"/><path d="M74 50 H84" stroke="#2DD4BF" stroke-width="8" stroke-linecap="round"/><circle cx="88" cy="50" r="6" fill="none" stroke="#2DD4BF" stroke-width="6"/></svg>
+    </div>
+    <h2>V4 · LAYER-TAP</h2>
+    <div class="sub mono">中间层</div>
+    <p>三层堆叠 = 业务程序 / serialtap / 板子，高亮的中间层向右引出一个开放端口——"中间层 + 可接入"的架构语义直译。偏平台感。</p>
+  </div>
+
+  <div class="card">
+    <div class="stage">
+      <svg viewBox="0 0 100 100"><rect x="14" y="20" width="72" height="60" rx="10" fill="none" stroke="currentColor" stroke-width="7"/><path d="M32 40 L46 50 L32 60" fill="none" stroke="#2DD4BF" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><rect x="54" y="44" width="11" height="13" rx="2" fill="#2DD4BF"/></svg>
+    </div>
+    <h2>V5 · TERMINAL</h2>
+    <div class="sub mono">终端窗口</div>
+    <p>开发者工具的窗口意象：取景窗内的提示符与光标块。识别度高但同质化也高（终端类产品常用），与"串口/分接"无关联。</p>
+  </div>
+
+  <div class="card">
+    <div class="stage">
+      <svg viewBox="0 0 100 100"><path d="M72 22 H30 V50 H70 V78 H30" fill="none" stroke="currentColor" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/><circle cx="72" cy="22" r="5" fill="currentColor"/><circle cx="30" cy="78" r="8" fill="#2DD4BF"/></svg>
+    </div>
+    <h2>V6 · S-TAP</h2>
+    <div class="sub mono">字母标</div>
+    <p>字母 S 的笔画全部由方波台阶构成（serial 的波形笔画），末端一个分接端口圆点。作为 monogram 独特性最强，适合做字标联动。</p>
+  </div>
+
+</div>
+
+<div class="row">
+  <div class="app">
+    <img src="app-icon-256.png" width="128" height="128" alt="serialtap 应用图标 128px">
+    <div class="ladder">
+      <img src="app-icon-64.png"  width="64"  height="64"  alt="64px">
+      <img src="app-icon-32.png"  width="32"  height="32"  alt="32px（托盘实际尺寸）">
+      <img src="app-icon-24.png"  width="24"  height="24"  alt="24px">
+      <img src="app-icon-16.png"  width="16"  height="16"  alt="16px">
+    </div>
+  </div>
+  <div class="note">
+    <h3>应用图标 · 尺寸阶梯</h3>
+    推荐方案 V2 落在深底圆角方上：方波 = 串口电平，低电平中点向下的抽头 = 在线分接（tap）。深底保证浅色任务栏与浅色页面上同样可见；32px 托盘实测轮廓清晰。产物：<span class="mono">icon.ico / icon-dim.ico / app-icon-*.png</span>（见本目录 README）。
+  </div>
+</div>
+
+<footer class="mono">SERIALTAP · 2026 · ASSETS/LOGO</footer>
+
+</body>
+</html>
