@@ -401,7 +401,7 @@ func TestFlashDryRun(t *testing.T) {
 }
 
 // —— 多板同芯片（两只 303a:1001 同名）场景的确定性 ——
-// 背景：wifipulse 经 status 取"第一台" + ProxyStart 返回"第一个"端点，
+// 背景：homepulse 经 status 取"第一台" + ProxyStart 返回"第一个"端点，
 // map 迭代随机时两层各掷骰子，业务程序会随机连到错误的板子上。
 
 // 撞名 token 后缀跨守护重启稳定：同一块板（同 key/by-id）无论何时撞名，

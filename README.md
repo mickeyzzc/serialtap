@@ -25,7 +25,7 @@ works with any USB serial device (CH340/CH343/CP210x/FTDI/native USB-CDC…).
   `flash` 代理刷固件（守护进程经 unix socket 控制通道编排：让口 → esptool → 回采，
   防止 esptool 与常驻采集器抢口把 ESP32 楔进 ROM 下载模式）
 - **透明 USB 代理**：`proxy` 为设备开一个 127.0.0.1 TCP 端点，业务程序
-  （如 [wifipulse](../wifipulse) 感知引擎）经它直接读写板子串口 ——
+  （如 [homepulse](../homepulse) 感知引擎）经它直接读写板子串口 ——
   对程序等同直连；端口不重开（无复位脉冲），采集照常（tap 模式双向日志），
   可用 `proxy_tap_exclude` 剔除高频遥测行；单客户端语义，设备拔出/守护退出自动收口
 - **零丢失**：跨读取块行拼装，端口关闭时的残余半行以 `…partial` 标记落盘
@@ -40,6 +40,8 @@ works with any USB serial device (CH340/CH343/CP210x/FTDI/native USB-CDC…).
 |---|---|---|---|
 | run/attach/list/analyze/decode-backtrace | ✓ | ✓ | ✓ |
 | pause / resume / status / flash 代理刷写 | ✓ | ✓ | ✓（Win10 1803+） |
+| `reopen` 串口层软重连 | ✓ | ✓ | ✓ |
+| `reset` USB 层软重枚举 | ✗ | ✗ | ✓（pnputil，Win10+，需管理员/UAC） |
 | 设备身份（稳定 key） | by-path 物理口 | `cu.*` 设备名（位置/序列号编码） | USB 实例 ID（注册表） |
 | release 空闲自动回采 | ✓（/proc） | ✓（lsof） | ✗ —— 用 `--for` 限时回采或 `resume` 手动回采 |
 | 控制 socket 默认路径 | `$XDG_RUNTIME_DIR/serialtap.sock` → `/tmp/serialtap-<uid>.sock` | 同左（/tmp 回退） | `%LOCALAPPDATA%\serialtap\serialtap.sock` |
@@ -72,7 +74,8 @@ serialtap tray --root <日志根> --sock <控制socket>   # 与 run 的参数保
 - **设备卡**：接入状态（collecting/paused/suspended/flashing）、代理会话徽标、
   实时写入速率（由日志大小差分）、全量/事件日志体积与留存总量
 - **实时日志**：全量 / 事件流双 tab，SSE 尾随（700ms 增量推送，自动跟随
-  日轮转与大小轮转），自动滚动可暂停、可清屏
+  日轮转与大小轮转），自动滚动可暂停、可清屏；**设备下拉 + 点设备卡整卡
+  切换**要查看的板子（多板并存时从这里选 COM）
 - **最近事件**：签名命中（复位 banner、Guru Meditation、WDT…）+ 采集器
   生命周期 + 代理刷机记录，跨设备分组，命中行高亮
 - **操作**：按设备暂停/恢复、代理开/停 —— 经与 ctl socket **同一条处理路径**
@@ -104,6 +107,8 @@ Windows 上是 `serialtap.exe list`（设备形如 `COM3`）、单口采集 `ser
 | `pause [RE]` / `resume [RE]` | 暂停/恢复采集（省略 = 全部） |
 | `release RE [--for 5m]` | **临时让出串口**给外部工具：默认端口空闲 3 秒自动回采，或限时自动回采 |
 | `flash RE <bin>[@0x10000]...` | **代理刷固件**：让口 → esptool → 自动回采，进度流式回传；失败自动重试（`--retries`，默认 3 次 × `--retry-wait` 5s——Windows 上 USB-CDC 设备复位后首次 open/SetCommState 常瞬时失败，esptool 自身不重试）；`--args-file build/flasher_args.json` 一键刷 IDF 全套；`--dry-run` 预演将执行的命令。RE 为正则，**匹配多台时默认拒绝**（防误刷在测设备——多板同芯片时未锚定正则会把别的板拖进刷写序列，列出匹配设备并要求锚定），确要逐台刷给 `--all`，精确刷一台用锚定（如 `^board$`）。远程刷写见[控制协议 · SSH 隧道](docs/ctl-protocol.md#远程使用ssh-隧道) |
+| `reopen RE [--all]` | **串口层软断开重连**：立即关口 → 跳过退避立即重开。端口疑似卡死（读空转/驱动状态怪异）时的快速自愈；不改变所有权与暂停语义（与 `release` 不同）。注意会打断进行中的透传会话（客户端重连即可），且 open/close 各带一拍复位脉冲（见[复位语义](#复位语义重要)——对 CH340/乐鑫原生 USB 口等于顺带软重启了板子）。多台门禁同 flash（`--all`） |
+| `reset RE [--all]` | **USB 层软拔插**：让口 → `pnputil /restart-device`（禁用+启用设备节点，等效软件层面的拔插）→ 用自身枚举器确认重枚举 → 回采。作用于设备的串口接口节点，JTAG 等兄弟接口不受影响。适用于设备在总线但驱动/端口僵死（打不开、僵尸句柄）。需管理员权限：非提权守护进程自动弹 UAC 提权重试（可取消）。**仅 Windows**；设备整个消失在总线上时无解（只能物理重插）。多台门禁同 flash（`--all`） |
 | `status` | 守护进程与设备实时状态（collecting/paused/suspended/flashing） |
 | `tray`（Windows） | 托盘常驻：接入状态、按设备暂停/恢复、打开日志，见下节 |
 | `analyze LOG...` | 离线签名扫描：计数 / 首末时间 / 样本行汇总表 |
@@ -133,6 +138,9 @@ USB-JTAG 口（USB_SERIAL_JTAG 外设在硅内实现了与 CH340 一致的自动
 - `pause`（刷机前）：会复位设备 —— 无妨，esptool 本来就要复位
 - 静默看门狗（`silent_reopen_s`）**默认关**：只对保证有周期日志输出的设备
   （如 30s 心跳）显式开启；否则合法的安静设备会被复位循环
+- `reopen`（串口层软重连）是**显式的手动例外**：使用者主动要求关口重开，
+  这一拍复位是特性的一部分（对 CH340/乐鑫原生 USB 口等于软重启板子），
+  而不是自动行为 —— 自动路径（断线重开循环）依旧遵守退避纪律
 
 ## 日志布局
 
@@ -198,7 +206,7 @@ loginctl enable-linger $USER               # 开机自启（不登录也跑）
   找到后结束它；本守护的采集器会按退避自动接管。
 - **代理端点连上但收不到设备数据**：TCP Dial 在 accept/挂接完成前就返回，
   设备→客户端方向在挂接前的字节不镜像（客户端→设备方向有内核缓冲不受影响）。
-  应用层先握手（如 wifipulse 的 sense_start/ack）即可规避。
+  应用层先握手（如 homepulse 的 sense_start/ack）即可规避。
 
 ## 故障排查（原有条目）
 

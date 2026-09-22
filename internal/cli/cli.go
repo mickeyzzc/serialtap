@@ -49,6 +49,10 @@ func usage() {
   serialtap flash RE <bin>[@0x10000]...  代理刷固件：让口 → esptool → 自动回采
       [--args-file F] [--esptool CMD] [--baud N] [--chip C] [--dry-run] [--all]
                                          （RE 匹配多台时默认拒绝，防误刷在测设备；批量刷给 --all）
+  serialtap reopen RE [--all]            串口层软断开重连：立即关口→跳过退避重开
+                                         （端口疑似卡死时自愈；会打断透传会话，客户端重连即可）
+  serialtap reset RE [--all]             USB 层软拔插：让口 → pnputil 重启设备节点 → 回采
+                                         （设备在总线但驱动/端口僵死时；需管理员——非提权守护自动弹 UAC）
   serialtap status                       查看守护进程与设备实时状态
   serialtap version
 
@@ -115,6 +119,10 @@ func Run(args []string) int {
 		err = cmdRelease(args[1:])
 	case "flash":
 		err = cmdFlash(args[1:])
+	case "reopen":
+		err = cmdReopen(args[1:])
+	case "reset":
+		err = cmdReset(args[1:])
 	case "pause":
 		err = cmdPauseSocket(args[1:], true)
 	case "resume":
@@ -259,6 +267,19 @@ func cmdRun(args []string) error {
 				return
 			}
 			respond(ctl.Response{OK: true, Event: "flash-done"})
+		case "reopen":
+			n, err := d.Reopen(req.Pattern, req.All)
+			if err != nil {
+				respond(ctl.Response{OK: false, Error: err.Error()})
+				return
+			}
+			respond(ctl.Response{OK: true, Line: fmt.Sprintf("%d", n)})
+		case "reset":
+			if err := d.Reset(req.Pattern, req.All); err != nil {
+				respond(ctl.Response{OK: false, Error: err.Error()})
+				return
+			}
+			respond(ctl.Response{OK: true})
 		default:
 			respond(ctl.Response{OK: false, Error: "unknown cmd: " + req.Cmd})
 		}
@@ -648,6 +669,57 @@ func cmdFlash(args []string) error {
 		sleep:    time.Sleep,
 		logf:     func(f string, a ...any) { fmt.Printf(f+"\n", a...) },
 	}.run(runOnce)
+}
+
+// —— 串口层/USB 层软断开重连 ——
+
+// cmdReopen: 串口层软断开重连（立即关口→跳过退避重开；打断透传会话）。
+func cmdReopen(args []string) error {
+	fs := flag.NewFlagSet("reopen", flag.ExitOnError)
+	sock := fs.String("sock", "", "控制 socket 路径")
+	all := fs.Bool("all", false, "模式匹配多台设备时仍逐台重开（默认拒绝——精确操作一台请锚定正则）")
+	pos := parseFlags(fs, args)
+	if len(pos) != 1 {
+		return fmt.Errorf("reopen 需要一个设备匹配正则，如 reopen '^sense-c3$'")
+	}
+	var respErr string
+	err := ctlSend(*sock, ctl.Request{Cmd: "reopen", Pattern: pos[0], All: *all}, func(r ctl.Response) bool {
+		if !r.OK {
+			respErr = r.Error
+			return true
+		}
+		fmt.Printf("已触发 %s 台设备的串口软重连（关口→立即重开；透传客户端会断开，重连即可）\n", r.Line)
+		return true
+	})
+	if respErr != "" {
+		return fmt.Errorf("%s", respErr)
+	}
+	return err
+}
+
+// cmdReset: USB 层软拔插（让口 → pnputil 重启设备节点 → 回采，需管理员）。
+func cmdReset(args []string) error {
+	fs := flag.NewFlagSet("reset", flag.ExitOnError)
+	sock := fs.String("sock", "", "控制 socket 路径")
+	all := fs.Bool("all", false, "模式匹配多台设备时仍逐台重置（默认拒绝——精确操作一台请锚定正则）")
+	pos := parseFlags(fs, args)
+	if len(pos) != 1 {
+		return fmt.Errorf("reset 需要一个设备匹配正则，如 reset '^s3zero$'")
+	}
+	fmt.Println("USB 软重置中：让口 → pnputil 重启设备节点（若弹出 UAC 请确认）→ 回采…")
+	var respErr string
+	err := ctlSend(*sock, ctl.Request{Cmd: "reset", Pattern: pos[0], All: *all}, func(r ctl.Response) bool {
+		if !r.OK {
+			respErr = r.Error
+			return true
+		}
+		fmt.Println("✓ USB 设备节点已重启，采集已恢复")
+		return true
+	})
+	if respErr != "" {
+		return fmt.Errorf("%s", respErr)
+	}
+	return err
 }
 
 // pause/resume：守护进程在 → socket（立即生效且走同一文件语义）；不在 → 直接改文件。

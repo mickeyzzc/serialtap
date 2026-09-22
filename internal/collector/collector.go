@@ -73,6 +73,9 @@ type Collector struct {
 	stop     chan struct{}
 	sr       SuspendResume // 程序化让出/收回（release 与代理刷固件）
 
+	curPort   atomic.Value // Port —— 当前端口句柄（Reopen 软断开用；关闭后残留旧值，Close 幂等无害）
+	reopenReq atomic.Bool  // 串口层软重连请求（置位后本循环退出即跳过退避重开）
+
 	// 透传桥状态（见 proxy.go）
 	proxyMu    sync.Mutex     // 保护 proxyConn
 	proxyConn  net.Conn       // 当前代理客户端（单客户端，nil = 无会话）
@@ -103,6 +106,19 @@ func (c *Collector) pauseState() *pause.PauseState { return c.pause }
 
 func (c *Collector) Stop() {
 	c.stopOnce.Do(func() { close(c.stop) })
+}
+
+// Reopen: 串口层软断开重连 —— 关闭当前端口句柄，采集循环读错误退出后
+// 跳过退避立即重开。不改变所有权与暂停语义（与 Suspend 不同），用于
+// 端口疑似驱动/对端卡死时的快速自愈。会打断进行中的透传会话（客户端
+// 按既有语义重连）。端口未开时仅置请求位，下次打开即按新句柄工作。
+func (c *Collector) Reopen() {
+	c.reopenReq.Store(true)
+	if v := c.curPort.Load(); v != nil {
+		if p, ok := v.(Port); ok {
+			_ = p.Close() // 读立即报错 → collectOnce 退出 → 立即重开
+		}
+	}
 }
 
 // event: 生命周期事件进 events 文件 + 守护进程 stdout。
@@ -150,6 +166,7 @@ func (c *Collector) Run() {
 			return
 		default:
 		}
+		manualReopen := c.reopenReq.CompareAndSwap(true, false)
 		switch reason {
 		case reasonPaused:
 			// 外层循环处理等待
@@ -163,6 +180,11 @@ func (c *Collector) Run() {
 			}
 			backoff = min(backoff*2, maxBackoff)
 		default:
+			if manualReopen {
+				// 串口层软重连（Reopen() 触发）：立即重开，不退避
+				c.event("port cycle (manual reopen)")
+				continue
+			}
 			c.event("port lost (%s) — reopening in %s", reason, backoff)
 			if !c.sleep(backoff) {
 				return
@@ -187,8 +209,25 @@ func (c *Collector) collectOnce() (collectExit, error) {
 	if err != nil {
 		return reasonOpenFailed, err
 	}
+	c.curPort.Store(port)
 	c.sr.portOpen.Store(true)
 	defer c.sr.portOpen.Store(false)
+	// 关口 defer 先注册（LIFO 后执行）：必须先摘写入口再关端口。
+	// 此前顺序相反 —— Close 与 proxy 泵的并发写竞态，Windows 重叠 IO
+	// 未及取消时 Close 静默失败（错误被 _ = 吞掉），句柄泄漏在守护进程
+	// 里，此后任何人（esptool/采集器重开）都打不开该口，只能重启守护
+	// （2026-09-22 s3zero 实测：proxy 会话 + pause 后端口永久 busy）。
+	defer func() {
+		// 写入口已在上一个 defer 摘除；给在途写 50ms 收尾再关
+		time.Sleep(50 * time.Millisecond)
+		if err := port.Close(); err != nil {
+			// 重叠 IO 取消可能瞬时失败：稍候重试一次，仍败则必须留痕
+			time.Sleep(150 * time.Millisecond)
+			if err2 := port.Close(); err2 != nil {
+				c.event("port close error: %v / retry %v（句柄可能泄漏，重启守护可解）", err, err2)
+			}
+		}
+	}()
 	// 透传桥的写入口：端口存续期间登记，关闭即撤销（见 proxy.go）
 	c.setPortWriter(port)
 	defer c.setPortWriter(nil)
@@ -198,7 +237,6 @@ func (c *Collector) collectOnce() (collectExit, error) {
 	// 1s 读超时：喂看门狗检查、响应 stop/pause（注意 v1.8 API 是 Duration，
 	// 传裸数字会成纳秒级忙轮询）
 	_ = port.SetReadTimeout(time.Second)
-	defer func() { _ = port.Close() }()
 	c.event("serial opened (%d baud)", c.cfg.Baud)
 
 	var asm lineAssembler

@@ -75,7 +75,7 @@ func (d *daemon) ProxyStop(pattern string) (int, error) {
 }
 
 // proxyEndpointOf: 设备当前的透传监听端点（未开 = 空串）。status 暴露给
-// 客户端做"端点已存在则附加、不开新的"判定（所有权语义见 wifipulse link）。
+// 客户端做"端点已存在则附加、不开新的"判定（所有权语义见 homepulse link）。
 func (d *daemon) proxyEndpointOf(key string) string {
 	d.proxyMu.Lock()
 	defer d.proxyMu.Unlock()

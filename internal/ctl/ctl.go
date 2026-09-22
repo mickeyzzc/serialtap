@@ -17,13 +17,13 @@ import (
 
 // Request: 客户端请求（一行 JSON）。
 type Request struct {
-	Cmd       string     `json:"cmd"`                  // status | pause | resume | release | flash | proxy
+	Cmd       string     `json:"cmd"`                  // status | pause | resume | release | flash | proxy | reopen | reset
 	Pattern   string     `json:"pattern,omitempty"`    // 设备匹配正则（tty/name/key/by-id 任一）
 	ForMs     int64      `json:"for_ms,omitempty"`     // release: 限时自动回采
 	UntilIdle bool       `json:"until_idle,omitempty"` // release: 端口空闲后自动回采
 	Spec      flash.Spec `json:"spec,omitempty"`       // flash: 刷写参数
 	Action    string     `json:"action,omitempty"`     // proxy: start | stop
-	All       bool       `json:"all,omitempty"`        // flash: 模式匹配多台仍逐台刷（默认拒绝，防误刷在测设备）
+	All       bool       `json:"all,omitempty"`        // flash/reopen/reset: 模式匹配多台仍逐台执行（默认拒绝，防误伤在测设备）
 }
 
 // DevState: status 返回的设备状态。

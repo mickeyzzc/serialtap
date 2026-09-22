@@ -1,7 +1,8 @@
 # 控制协议(ctl)
 
 守护进程(`serialtap run`)在本地暴露一个 unix socket 控制通道,供 CLI 子命令
-(`status` / `pause` / `resume` / `release` / `flash`)与守护进程通信。
+(`status` / `pause` / `resume` / `release` / `flash` / `proxy` / `reopen` / `reset`)
+与守护进程通信。
 本文描述该协议的完整语义,供脚本化集成使用。
 
 ## 连接
@@ -18,13 +19,13 @@
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `cmd` | string | `status` \| `pause` \| `resume` \| `release` \| `flash` \| `proxy` |
+| `cmd` | string | `status` \| `pause` \| `resume` \| `release` \| `flash` \| `proxy` \| `reopen` \| `reset` |
 | `pattern` | string | 设备匹配正则,匹配 tty / 设备名 / key(by-path)/ by-id 任一。除 `status` 外的命令都要 |
 | `for_ms` | int | 仅 `release`:限时自动回采的毫秒数 |
 | `until_idle` | bool | 仅 `release`:端口空闲后自动回采 |
 | `spec` | object | 仅 `flash`:刷写参数,见下 |
 | `action` | string | 仅 `proxy`:`start` \| `stop`(默认 start) |
-| `all` | bool | 仅 `flash`:模式匹配**多台设备**时仍逐台刷。默认拒绝多台(防误刷在测设备——多板同芯片时未锚定正则会把别的板拖进刷写序列) |
+| `all` | bool | 仅 `flash`/`reopen`/`reset`:模式匹配**多台设备**时仍逐台执行。默认拒绝多台(防误伤在测设备——多板同芯片时未锚定正则会把别的板拖进操作序列) |
 
 `pattern` 是**未锚定**正则(`ch340` 会匹配所有名字含 ch340 的设备);
 要精确匹配一台请锚定,如 `^board-a$`。
@@ -40,17 +41,17 @@
 | `chip` | string | 芯片类型如 `esp32s3`;省略 = 自动(args_file 提供时会从中取 `--chip`) |
 | `dry_run` | bool | 只预演:守护进程侧解析并回显将执行的 esptool 命令,不动端口、不执行、不改状态 |
 
-**并发语义**:`flash` / `release` / `resume` 三者互斥 —— 一个 `flash` 进行中时,
-并发的 `flash`/`release`/`resume` 立即返回错误(fail-fast,不排队),防止两个
-esptool 抢同一口或 resume 在刷写中途抢回口。`flash` 开始时会撤销匹配设备的
-pending release。单台刷写超时由配置 `flash_timeout_s` 兜底(默认 600s,超时杀
-esptool 进程并回采)。
+**并发语义**:`flash` / `release` / `resume` / `reopen` / `reset` 互斥 —— 一个
+`flash` 等操作进行中时,并发动端口的命令立即返回错误(fail-fast,不排队),
+防止两个 esptool 抢同一口或 resume 在刷写中途抢回口。`flash`/`reset` 开始时
+会撤销匹配设备的 pending release。单台刷写超时由配置 `flash_timeout_s` 兜底
+(默认 600s,超时杀 esptool 进程并回采)。
 
-**多设备语义**:`pattern` 匹配多台时,`flash` **默认拒绝**并返回错误列出
-全部匹配设备名——多板同芯片(如两只乐鑫原生 USB-JTAG 同名)时,未锚定的
-正则会把在测的板也拖进刷写序列(让口复位 + 错芯片镜像)。确要批量刷在
-请求带 `all: true`(CLI 为 `--all`),此时恢复逐台刷、中途失败即停止
-(已刷完的保持完成状态,失败设备之后的不再刷)。
+**多设备语义**:`pattern` 匹配多台时,`flash`/`reopen`/`reset` **默认拒绝**并
+返回错误列出全部匹配设备名——多板同芯片(如两只乐鑫原生 USB-JTAG 同名)时,
+未锚定的正则会把在测的板也拖进操作序列(flash: 让口复位 + 错芯片镜像)。
+确要批量执行在请求带 `all: true`(CLI 为 `--all`),此时恢复逐台执行、
+中途失败即停止(已完成的保持完成状态,失败设备之后的不再执行)。
 
 ## 响应(Response)
 
@@ -59,7 +60,7 @@ esptool 进程并回采)。
 | `ok` | bool | 是否成功 |
 | `error` | string | 失败原因 |
 | `event` | string | `flash-log` \| `flash-done`(仅 flash 流式响应) |
-| `line` | string | flash-log 的输出行;release 成功时为让出口数 |
+| `line` | string | flash-log 的输出行;release/reopen 成功时为操作口数 |
 | `devices` | [{name, tty, key, state}] | 仅 status:`state` ∈ `collecting` \| `paused` \| `suspended` \| `flashing`;**按 key 排序**——"取第一台"类的消费方拿到的是确定结果 |
 | `endpoint` | string | 仅 proxy start:透传 TCP 端点 |
 | `device` | string | 仅 proxy start:返回端点所属设备名(客户端校验"拨的就是选中的那台") |
@@ -128,6 +129,41 @@ esptool 进程并回采)。
 
 完整编排:让口(等端口真关,超时 10s)→ esptool(`--port <tty> [--chip] [--baud]
 write_flash <offset> <bin>...`)→ 自动回采。
+
+### reopen(串口层软断开重连)
+
+```json
+→ {"cmd":"reopen","pattern":"^board-a$"}
+← {"ok":true,"line":"1"}       // 触发了 1 个口的软重连
+```
+
+采集器立即关闭当前串口句柄并**跳过退避**重开(区别于断线自动重开的
+指数退避)。不改变所有权与暂停语义(与 `release` 不同),用于端口疑似
+卡死的快速自愈。会打断进行中的透传会话(客户端重连即可);close/open
+各带一拍复位脉冲(对 CH340/乐鑫原生 USB 口等于软重启板子,见架构文档)。
+
+### reset(USB 层软拔插,仅 Windows)
+
+```json
+→ {"cmd":"reset","pattern":"^board-a$"}
+← {"ok":true}
+```
+
+完整编排:让口(超时 10s)→ `pnputil /restart-device <实例路径>`(by-id 即
+Windows 设备实例路径;禁用+启用节点,等效软件层面的拔插,只动串口接口
+节点,JTAG 等兄弟接口不受影响)→ 守护进程用自身枚举器轮询确认设备重枚举
+回来(窗口 10s)→ 回采。
+
+注意:
+
+- **需管理员权限**。非提权守护进程检测到"拒绝访问"会自动经
+  `Start-Process -Verb RunAs` 弹 UAC 提权重试(用户可取消;取消即失败)
+- pnputil 失败时**退出码仍可能为 0**(实测 Win11 zh-CN 2026-09),成败判定
+  用输出标记 + 枚举复核,不信任 exit code
+- 设备整个不在总线上时(枚举器里没有)无解,只能物理重插;重枚举确认超时
+  同样报错并提示人工处理
+- 设备节点整段消失重建时,采集器由热插拔 watcher 自动重建;原地重启时由
+  Resume 直接重开 —— 两条路径都收敛回采
 
 ## 示例:命令行直连
 
