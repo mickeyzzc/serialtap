@@ -543,9 +543,14 @@ func cmdStatus(args []string) error {
 		}
 		fmt.Printf("%-16s %-14s %-10s %-24s %s\n", "NAME", "TTY", "STATE", "PROXY", "KEY")
 		for _, d := range r.Devices {
+			// 活跃会话显示客户端地址；无会话但端点在等则显示监听地址（listen: 前缀
+			// 区分），两者皆空才是 "-"（#16：端点待命不可见是观测盲区）。
 			px := "-"
-			if d.Proxy != "" {
+			switch {
+			case d.Proxy != "":
 				px = d.Proxy
+			case d.ProxyEndpoint != "":
+				px = "listen:" + d.ProxyEndpoint
 			}
 			fmt.Printf("%-16s %-14s %-10s %-24s %s\n", d.Name, d.Tty, d.State, px, d.Key)
 		}
