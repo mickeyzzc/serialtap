@@ -374,3 +374,4 @@ func (p *errReadOncePort) Close() error                         { return nil }
 func (p *errReadOncePort) SetDTR(bool) error                    { return nil }
 func (p *errReadOncePort) SetRTS(bool) error                    { return nil }
 func (p *errReadOncePort) SetReadTimeout(d time.Duration) error { return nil }
+func (p *errReadOncePort) Write(b []byte) (int, error) { return len(b), nil } // Port 接口新增 Write（代理透传）
