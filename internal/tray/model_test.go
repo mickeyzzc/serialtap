@@ -1,8 +1,10 @@
 package tray
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -95,4 +97,56 @@ func TestQueryStatus(t *testing.T) {
 	if _, ok := QueryStatus(filepath.Join(t.TempDir(), "absent.sock")); ok {
 		t.Fatal("不可达 socket 应返回 false")
 	}
+}
+
+func TestSortedDevicesStable(t *testing.T) {
+	in := []ctl.DevState{
+		{Name: "b", Tty: "COM5", State: "collecting"},
+		{Name: "a", Tty: "COM3", State: "paused"},
+		{Name: "c", Tty: "COM9", State: "collecting"},
+	}
+	got := SortedDevices(in)
+	if got[0].Name != "a" || got[1].Name != "b" || got[2].Name != "c" {
+		t.Fatalf("未按名排序: %+v", got)
+	}
+	// 入参切片不被改动（daemon.Status 遍历 map 顺序随机，原序由调用方持有）
+	if in[0].Name != "b" {
+		t.Fatalf("入参被改动: %+v", in)
+	}
+}
+
+// SendPause/SendResume：经真 socket 的往返（daemon handler 的同款语义）。
+func TestSendPauseResumeRoundTrip(t *testing.T) {
+	sock := sockPathT(t, "send-pause")
+	srv, err := ctl.Listen(sock)
+	if err != nil {
+		t.Skipf("本平台无法监听 unix socket: %v", err)
+	}
+	t.Cleanup(srv.Close)
+	var gotPattern string
+	go srv.Serve(func(req ctl.Request, respond func(ctl.Response)) {
+		if req.Cmd == "pause" || req.Cmd == "resume" {
+			gotPattern = req.Pattern
+		}
+		respond(ctl.Response{OK: true})
+	})
+	if err := SendPause(sock, "^board$"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SendResume(sock, ""); err != nil {
+		t.Fatal(err)
+	}
+	if gotPattern != "" {
+		t.Fatalf("resume 空 pattern 应覆盖为空: %q", gotPattern)
+	}
+}
+
+// sockPathT: 测试 socket 短路径（macOS sun_path 104 字节上限）。
+func sockPathT(t *testing.T, name string) string {
+	if runtime.GOOS == "darwin" {
+		p := filepath.Join("/tmp", fmt.Sprintf("serialtap-tray-test-%d-%s.sock", os.Getpid(), name))
+		t.Cleanup(func() { os.Remove(p) })
+		return p
+	}
+	return filepath.Join(t.TempDir(), name+".sock")
 }

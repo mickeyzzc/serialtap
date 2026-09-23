@@ -143,6 +143,23 @@ func TestCtlSubcommandsAgainstLiveServer(t *testing.T) {
 			}
 			respond(ctl.Response{OK: true, Event: "flash-log", Line: "progress 1"})
 			respond(ctl.Response{OK: true, Event: "flash-done"})
+		case "proxy":
+			if req.Pattern == "" {
+				respond(ctl.Response{OK: false, Error: "no pattern"})
+				return
+			}
+			if req.Action == "stop" {
+				respond(ctl.Response{OK: true, Line: "1"})
+				return
+			}
+			respond(ctl.Response{OK: true, Endpoint: "127.0.0.1:7100",
+				Device: "luatos", DeviceKey: "k1"})
+		case "reopen", "reset":
+			if req.Pattern == "" {
+				respond(ctl.Response{OK: false, Error: "no pattern"})
+				return
+			}
+			respond(ctl.Response{OK: true, Line: "1"})
 		default:
 			respond(ctl.Response{OK: true})
 		}
@@ -172,6 +189,31 @@ func TestCtlSubcommandsAgainstLiveServer(t *testing.T) {
 	// release 缺参数
 	if code := Run([]string{"release", "--sock", sock}); code != 1 {
 		t.Fatalf("release 缺设备应退出码 1: %d", code)
+	}
+	// proxy 开启（回端点）
+	if code := Run([]string{"proxy", "luatos", "--sock", sock}); code != 0 {
+		t.Fatalf("proxy 失败: %d", code)
+	}
+	// proxy 停止
+	if code := Run([]string{"proxy", "luatos", "--stop", "--sock", sock}); code != 0 {
+		t.Fatalf("proxy --stop 失败: %d", code)
+	}
+	// proxy 缺参数
+	if code := Run([]string{"proxy", "--sock", sock}); code != 1 {
+		t.Fatalf("proxy 缺设备应退出码 1: %d", code)
+	}
+	// reopen / reset（含 --all）
+	if code := Run([]string{"reopen", "^sense$", "--sock", sock}); code != 0 {
+		t.Fatalf("reopen 失败: %d", code)
+	}
+	if code := Run([]string{"reopen", "sense", "--all", "--sock", sock}); code != 0 {
+		t.Fatalf("reopen --all 失败: %d", code)
+	}
+	if code := Run([]string{"reset", "^s3zero$", "--sock", sock}); code != 0 {
+		t.Fatalf("reset 失败: %d", code)
+	}
+	if code := Run([]string{"reset", "--sock", sock}); code != 1 {
+		t.Fatalf("reset 缺设备应退出码 1: %d", code)
 	}
 	// --for 坏值
 	if code := Run([]string{"release", "x", "--for", "bad", "--sock", sock}); code != 1 {
