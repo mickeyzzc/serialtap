@@ -19,6 +19,14 @@ func sshWarn(getenv func(string) string) string {
 	return ""
 }
 
+// logf: nil 安全的日志快捷方式（logf 只被本文件使用，放在 darwin 文件里
+// 避免在 Linux lint 视角下成为死代码）。
+func (h Host) logf(format string, args ...any) {
+	if h.Logf != nil {
+		h.Logf(format, args...)
+	}
+}
+
 //go:embed icon.png
 var iconBytes []byte // 菜单栏 template 图标（黑+透明，随深/浅色菜单栏自适应）
 

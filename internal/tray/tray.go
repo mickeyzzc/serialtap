@@ -15,10 +15,3 @@ type Host struct {
 	Quit      func()               // 停止守护循环（菜单"退出"触发；须幂等）
 	Logf      func(string, ...any) // 可选日志钩子（托盘就绪/告警进守护日志）
 }
-
-// logf: nil 安全的日志快捷方式。
-func (h Host) logf(format string, args ...any) {
-	if h.Logf != nil {
-		h.Logf(format, args...)
-	}
-}
