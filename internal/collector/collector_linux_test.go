@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -185,7 +186,16 @@ func TestReadErrorReopens(t *testing.T) {
 
 func TestPauseResume(t *testing.T) {
 	root := t.TempDir()
-	withFakePort(t, &testutil.FakePort{Chunks: [][]byte{[]byte("line one\n")}})
+	// 重开会话用新端口实例（FakePort Close 后永久 ErrClosed，复用会立即 read error）
+	var opens int32
+	oldOpen := OpenPort
+	OpenPort = func(tty string, baud int) (Port, error) {
+		if atomic.AddInt32(&opens, 1) == 1 {
+			return &testutil.FakePort{Chunks: [][]byte{[]byte("line one\n")}}, nil
+		}
+		return &testutil.FakePort{}, nil
+	}
+	t.Cleanup(func() { OpenPort = oldOpen })
 	cfg := config.DefaultConfig()
 	cfg.Root = root
 	w, _ := logstore.NewDeviceWriter(root, "pdev", 64)
@@ -210,6 +220,12 @@ func TestPauseResume(t *testing.T) {
 	testutil.WaitFor(t, 3*time.Second, func() bool {
 		return strings.Contains(testutil.ReadFile(t, evPath), "paused")
 	}, "未响应暂停")
+
+	// 先确认进入挂起等待态再解除 —— 关口路径带 50ms 收尾 sleep，
+	// 立即 Clear 会与循环顶暂停检查竞态（跳过等待段，hold cleared 不出现）
+	testutil.WaitFor(t, 3*time.Second, func() bool {
+		return strings.Contains(testutil.ReadFile(t, evPath), "port released")
+	}, "未进入挂起等待")
 
 	// 解除暂停 → 重开
 	os.Remove(pause.PauseFilePath(root))
