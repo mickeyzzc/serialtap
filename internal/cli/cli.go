@@ -293,18 +293,21 @@ func cmdRun(args []string) error {
 	go ctlSrv.Serve(handler)
 	stdoutLog("[ctl] 控制通道: %s", sockPath)
 
-	// Web 观测面板：状态/实时日志/事件只读展示 + 暂停/恢复/代理操作。
-	// 操作经 commander 桥到上面同一条 ctl 处理路径 —— 面板不引入第二套控制逻辑。
+	// Web 观测面板：状态/实时日志/事件只读展示 + 全部运行操作（暂停/恢复/
+	// 代理/让口/软重连/USB 重置/上传刷机）。操作经 commander 桥到上面同一条
+	// ctl 处理路径 —— 面板不引入第二套控制逻辑；flash 上传走 Web 侧落盘后
+	// 直调 daemon.Flash（同一次编排，进度 SSE 流回浏览器）。
 	webCmd := func(req ctl.Request) (ctl.Response, error) {
 		switch req.Cmd {
-		case "status", "pause", "resume", "proxy":
+		case "status", "pause", "resume", "proxy", "release", "reopen", "reset":
 			var resp ctl.Response
 			handler(req, func(r ctl.Response) { resp = r })
 			return resp, nil
 		}
-		return ctl.Response{}, fmt.Errorf("面板不支持该命令（走 CLI）: %s", req.Cmd)
+		return ctl.Response{}, fmt.Errorf("面板不支持该命令: %s", req.Cmd)
 	}
-	webSrv := web.Start(cfg.WebAddr, cfg.Root, d.Status, webCmd, stdoutLog)
+	webSrv := web.Start(cfg.WebAddr, cfg.Root, d.Status, webCmd, stdoutLog,
+		web.WithFlasher(d.Flash))
 	defer webSrv.Close()
 
 	sigCh := make(chan os.Signal, 1)
