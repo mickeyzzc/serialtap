@@ -29,7 +29,8 @@ language that can write a line to a socket.
 
 ```json
 {
-  "cmd": "status | pause | resume | release | flash",
+  "cmd": "status | pause | resume | release | flash | proxy | reopen | reset",
+  "action": "stop",          // proxy only: stop passthrough (default = start)
   "pattern": "regex, matched against tty / device name / by-path key / by-id",
   "for_ms": 300000,
   "until_idle": true,
@@ -40,7 +41,9 @@ language that can write a line to a socket.
 | Field | Used by | Meaning |
 |---|---|---|
 | `cmd` | all | The command. Unknown commands get `ok:false` with `unknown cmd`. |
-| `pattern` | pause/resume/release/flash | Device regex. Omitted on pause/resume = all devices. For release/flash it is required and must match at least one live collector. |
+| `pattern` | pause/resume/release/flash/proxy/reopen/reset | Device regex. Omitted on pause/resume = all devices. For the rest it is required and must match at least one live collector. |
+| `action` | proxy | `stop` = stop passthrough for matched devices; default = start. |
+| `all` | flash/reopen/reset | Execute one-by-one even when the pattern matches several devices (default: refuse and list the device names, protecting devices under test). |
 | `for_ms` | release | Re-acquire after this many milliseconds (instead of idle detection). |
 | `until_idle` | release | Re-acquire after the port has been idle (no other process holding it) for 3 continuous seconds. Used when `for_ms` is absent. |
 | `spec` | flash | See below. |
@@ -109,6 +112,25 @@ Streams `flash-log` responses (one per esptool output line, `\r`-split for
 progress bars), then one final `flash-done` with `ok` reflecting the outcome.
 On esptool failure the collector is still resumed. Multiple matches flash one
 by one — send an anchored pattern (`^board$`) to flash exactly one.
+
+### `proxy`
+
+For each matched device: suspends the exclusive hold, opens a TCP endpoint
+(`endpoint` carries the address; `device`/`device_key` identify the owning
+device — authoritative when several boards share a name), capture continues
+during passthrough. `action:"stop"` stops it; `line` carries the count.
+
+### `reopen`
+
+For each matched device: close the port → the collector loop exits on read
+error → reopens immediately **skipping the backoff**. `line` carries the count.
+Interrupts live proxy sessions.
+
+### `reset` (Windows only)
+
+For each matched device: yield the port → restart the serial interface node
+via pnputil → verify re-enumeration → resume capture. Needs admin (an
+unelevated daemon pops UAC).
 
 ## Examples
 

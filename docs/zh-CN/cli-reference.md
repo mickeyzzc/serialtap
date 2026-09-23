@@ -39,14 +39,16 @@ serialtap 循环剥离位置参数绕开了这一点，所以 `attach /dev/ttyAC
 ## `run` —— 守护模式
 
 ```
-serialtap run [--config F] [--root DIR] [--baud N] [--exclude RE]... [--poll-ms N] [--sock PATH]
+serialtap run [--config F] [--root DIR] [--baud N] [--exclude RE]... [--poll-ms N]
+              [--sock PATH] [--web ADDR] [--no-tray]
 ```
 
 每 `poll_interval_ms` 轮询一次 USB 串口，每设备起一个采集协程，拔走即停。
 同时负责：
 
-- 提供**控制 socket**，服务 `status`/`pause`/`resume`/`release`/`flash`
-  （见[控制协议](control-protocol.md)）
+- 提供**控制 socket**，服务 `status`/`pause`/`resume`/`release`/`flash`/
+  `proxy`/`reopen`/`reset`（见[控制协议](control-protocol.md)）
+- 启动 **Web 观测面板**（默认 `127.0.0.1:8801`，见 `--web`）
 - 启动时与每小时清扫过期日志（`retention_days`）
 - `PAUSED` 文件 mtime 变化时热重载
 
@@ -60,6 +62,8 @@ flags：
 | `--exclude RE` | 忽略匹配 RE 的设备；可重复；**追加到**配置的 `exclude` 列表之后 |
 | `--poll-ms N` | 设备轮询间隔毫秒（覆盖配置） |
 | `--sock PATH` | 控制 socket 路径。默认：配置 `control_socket`，否则 `$XDG_RUNTIME_DIR/serialtap.sock`，再否则 `/tmp/serialtap-<uid>.sock` |
+| `--web ADDR` | Web 观测面板监听地址（覆盖配置 `web_addr`；`off` 关闭） |
+| `--no-tray` | 不进驻托盘/菜单栏（macOS 默认进驻；Linux/Windows 恒无嵌入托盘） |
 
 若 socket 路径已被**活着的** serialtap 实例持有，启动会被拒绝（第二个守护
 进程抢不走控制通道）。崩溃残留的死 socket 文件会被自动清理接管。
@@ -128,6 +132,17 @@ serialtap resume [RE] [--sock PATH] [--root DIR]
 守护进程在运行时，命令走控制 socket（立即生效，文件语义相同）；不在时
 直接编辑 `PAUSED` 文件（守护进程之后启动会照常读取）。
 
+## `proxy RE` —— 透明 USB 代理
+
+```
+serialtap proxy RE [--stop] [--sock PATH]
+```
+
+为匹配设备各开一个 **TCP 端点透传串口**：业务程序把端点当串口用（telnet /
+自有 TCP 客户端 / socat 转 PTY），对设备而言与直连无异，**期间采集照常**
+（透传数据同时落全量日志）。`--stop` 停止匹配设备的透传。高频遥测可用配置
+`proxy_tap_exclude`（行正则）剔除出全量日志。
+
 ## `release RE` —— 临时让口
 
 ```
@@ -173,6 +188,40 @@ flags：
 
 输出持续流式打印直到 `✓ 刷写完成`（或失败信息）；失败时采集器同样会恢复。
 多台命中逐台刷 —— 精确刷一台请锚定模式（`^board$`）。
+
+## `reopen RE` —— 串口层软断开重连
+
+```
+serialtap reopen RE [--all] [--sock PATH]
+```
+
+立即关闭匹配设备的端口并**跳过退避**重开（自动重开路径是 5s 起步指数退避）。
+端口疑似卡死（读空转、驱动状态怪异）时的快速自愈。不改变所有权与暂停语义
+（与 `release` 不同）；会打断进行中的透传会话（客户端重连即可）。close/open
+各带一拍复位脉冲（见 README 复位语义）。多台命中默认拒绝并列出设备名，
+`--all` 显式确认后逐台执行。
+
+## `reset RE` —— USB 层软拔插（仅 Windows）
+
+```
+serialtap reset RE [--all] [--sock PATH]
+```
+
+让口 → `pnputil /restart-device` 禁用+启用设备的**串口接口节点**（等效软件
+拔插，JTAG 兄弟接口不受影响）→ 用自身枚举器确认重枚举 → 回采。适用于设备
+在总线但驱动/端口僵死（打不开、僵尸句柄）。需要管理员：非提权守护进程自动
+弹 UAC 提权重试（可取消）。设备整个消失在总线上时无解，只能物理重插。
+多台门禁同 `reopen`。
+
+## `tray` —— Windows 托盘常驻
+
+```
+serialtap tray [--config F] [--root DIR] [--sock PATH] [--poll-ms N]
+```
+
+独立常驻进程（与守护进程仅经 ctl socket 通信）：接入状态查看、按设备
+暂停/恢复、打开日志、打开 Web 面板、启动守护进程。macOS 无此子命令
+（`run` 自带菜单栏）。
 
 ## `analyze LOG...` —— 离线签名汇总
 

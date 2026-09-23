@@ -25,7 +25,8 @@
 
 ```json
 {
-  "cmd": "status | pause | resume | release | flash",
+  "cmd": "status | pause | resume | release | flash | proxy | reopen | reset",
+  "action": "stop",          // 仅 proxy：停止透传（缺省 = 开启）
   "pattern": "正则，匹配 tty / 设备名 / by-path key / by-id",
   "for_ms": 300000,
   "until_idle": true,
@@ -36,7 +37,9 @@
 | 字段 | 使用者 | 含义 |
 |---|---|---|
 | `cmd` | 全部 | 命令名。未知命令得到 `ok:false` 与 `unknown cmd`。 |
-| `pattern` | pause/resume/release/flash | 设备正则。pause/resume 省略 = 全部设备。release/flash 必填且须命中至少一个在线采集器。 |
+| `pattern` | pause/resume/release/flash/proxy/reopen/reset | 设备正则。pause/resume 省略 = 全部设备。其余命令必填且须命中至少一个在线采集器。 |
+| `action` | proxy | `stop` = 停止匹配设备的透传；缺省 = 开启透传。 |
+| `all` | flash/reopen/reset | 模式匹配多台时仍逐台执行（默认拒绝并列出设备名，防误伤在测设备）。 |
 | `for_ms` | release | 这些毫秒后回采（替代空闲检测）。 |
 | `until_idle` | release | 端口连续空闲（无其他进程持有）3 秒后回采。`for_ms` 缺省时使用。 |
 | `spec` | flash | 见下。 |
@@ -101,6 +104,22 @@ tty 连续 3 秒无其他进程持有之后。模式命中不到任何采集器�
 响应（esptool 每输出一行一条，`\r` 分行让进度条透过来），最后一条
 `flash-done` 的 `ok` 反映整体结果。esptool 失败时采集器同样恢复。多台命中
 逐台刷 —— 要精确刷一台发锚定模式（`^board$`）。
+
+### `proxy`
+
+开启时对每台命中设备挂起独占、建立 TCP 端点（`endpoint` 返回地址，
+`device`/`device_key` 标识端点所属设备 —— 多板同名时以它为准），透传期间
+采集照常。`action:"stop"` 停止，`line` 返回停止数量。
+
+### `reopen`
+
+对每台命中设备：立即关闭端口 → 采集循环读错误退出 → **跳过退避**立即重开。
+`line` 返回触发台数。会打断进行中的透传会话。
+
+### `reset`（仅 Windows）
+
+对每台命中设备：让口 → pnputil 重启串口接口节点 → 枚举确认重枚举 → 回采。
+需要管理员权限（非提权守护自动弹 UAC）。
 
 ## 示例
 

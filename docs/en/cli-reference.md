@@ -41,14 +41,16 @@ which flashes every match one by one.
 ## `run` — daemon mode
 
 ```
-serialtap run [--config F] [--root DIR] [--baud N] [--exclude RE]... [--poll-ms N] [--sock PATH]
+serialtap run [--config F] [--root DIR] [--baud N] [--exclude RE]... [--poll-ms N]
+              [--sock PATH] [--web ADDR] [--no-tray]
 ```
 
 Polls for USB serial ports every `poll_interval_ms`, starts one collector
 goroutine per device, stops it on unplug. Also:
 
 - serves the **control socket** used by `status`/`pause`/`resume`/`release`/
-  `flash` (see [control-protocol.md](control-protocol.md))
+  `flash`/`proxy`/`reopen`/`reset` (see [control-protocol.md](control-protocol.md))
+- starts the **web observation panel** (default `127.0.0.1:8801`, see `--web`)
 - sweeps expired logs at startup and then hourly (`retention_days`)
 - reloads the `PAUSED` file whenever its mtime changes
 
@@ -62,6 +64,8 @@ Flags:
 | `--exclude RE` | ignore devices matching RE; may be repeated; **added to** the config's `exclude` list |
 | `--poll-ms N` | device poll interval in ms (overrides config) |
 | `--sock PATH` | control socket path. Default: config `control_socket`, else `$XDG_RUNTIME_DIR/serialtap.sock`, else `/tmp/serialtap-<uid>.sock` |
+| `--web ADDR` | web panel listen address (overrides config `web_addr`; `off` disables) |
+| `--no-tray` | do not embed a tray/menu-bar (macOS lives there by default; Linux/Windows never embed one) |
 
 If the socket path is already held by a **live** serialtap instance, startup is
 refused (a second daemon cannot steal the control channel). A stale socket file
@@ -135,6 +139,18 @@ If the daemon is running, these commands go through the control socket
 (effective immediately, same file semantics); if not, they edit the `PAUSED`
 file directly, and the daemon (when started later) picks the file up.
 
+## `proxy RE` — transparent USB proxy
+
+```
+serialtap proxy RE [--stop] [--sock PATH]
+```
+
+Opens a **TCP endpoint per matched device** that bridges the serial port:
+business software talks to the endpoint as if directly connected, while
+**capture continues** (passthrough data also lands in the full log). `--stop`
+stops passthrough for matched devices. High-rate telemetry can be excluded
+from the full log via the `proxy_tap_exclude` config (per-line regex).
+
 ## `release RE` — temporarily yield a port
 
 ```
@@ -185,6 +201,44 @@ Output streams through until the final completion line (`✓ 刷写完成，已�
 — yes, the binary speaks Chinese) or the failure message; on failure the
 collector is still resumed. Multiple matches flash one by one — anchor the
 pattern (`^board$`) to flash exactly one board.
+
+## `reopen RE` — serial-layer soft reconnect
+
+```
+serialtap reopen RE [--all] [--sock PATH]
+```
+
+Closes the matched devices' ports immediately and reopens them **skipping the
+backoff** (the automatic path is exponential backoff starting at 5 s). Fast
+self-heal for wedged ports (idle reads, odd driver states). Does not change
+ownership or pause semantics (unlike `release`); interrupts live proxy
+sessions (clients just reconnect). close/open each deliver a reset pulse
+(see the README reset semantics). Multi-device matches are refused by default
+with the device names listed; `--all` confirms one-by-one execution.
+
+## `reset RE` — USB-layer soft replug (Windows only)
+
+```
+serialtap reset RE [--all] [--sock PATH]
+```
+
+Yields the port → disables+re-enables the device's **serial interface node**
+via `pnputil /restart-device` (a software replug; sibling JTAG interfaces are
+untouched) → verifies re-enumeration with its own enumerator → resumes
+capture. For devices present on the bus but wedged (won't open, zombie
+handles). Needs admin: an unelevated daemon pops UAC to retry (cancellable).
+A device that vanished from the bus entirely can only be physically replugged.
+Multi-device gate as `reopen`.
+
+## `tray` — Windows resident tray
+
+```
+serialtap tray [--config F] [--root DIR] [--sock PATH] [--poll-ms N]
+```
+
+A separate resident process (talks to the daemon only over the ctl socket):
+device status, per-device pause/resume, open logs, open the web panel, start
+the daemon. Not available on macOS (`run` has the menu bar built in).
 
 ## `analyze LOG...` — offline signature tally
 
