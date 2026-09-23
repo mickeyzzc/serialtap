@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/mickeyzzc/serialtap/internal/config"
+	"github.com/mickeyzzc/serialtap/internal/testutil"
 )
 
 func TestLogsChronologicalFirstLast(t *testing.T) {
@@ -76,7 +77,12 @@ func TestElfFromLogPath(t *testing.T) {
 }
 
 func TestFindAddr2line(t *testing.T) {
-	if p, err := findAddr2line("/bin/echo"); err != nil || p == "" {
+	// 跨平台的"存在且可执行"路径：测试二进制本身
+	exe, err := os.Executable()
+	if err != nil {
+		t.Skipf("os.Executable 不可用: %v", err)
+	}
+	if p, err := findAddr2line(exe); err != nil || p == "" {
 		t.Fatalf("显式指定失败: %q %v", p, err)
 	}
 	if _, err := findAddr2line("/nonexistent/a2l"); err == nil {
@@ -89,11 +95,12 @@ func TestFindAddr2line(t *testing.T) {
 }
 
 func TestDecodeBacktraceWithFakeAddr2line(t *testing.T) {
+	a2l := testutil.FakeTool(t)
+	t.Setenv("FAKE_EXIT", "0")
+	t.Setenv("FAKE_OUT", "")
 	dir := t.TempDir()
 	elf := filepath.Join(dir, "fake.elf")
 	os.WriteFile(elf, []byte("ELF"), 0o644)
-	a2l := filepath.Join(dir, "fake-addr2line")
-	os.WriteFile(a2l, []byte("#!/bin/sh\necho \"$0 $@\"\n"), 0o755)
 
 	log := filepath.Join(dir, "serial.log")
 	os.WriteFile(log, []byte("[ts] Backtrace: 0x400D0C5A:0x3FFB7D40 0x4008C71E:0x3FFB7D60\n"), 0o644)

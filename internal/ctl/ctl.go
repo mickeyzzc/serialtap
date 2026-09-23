@@ -26,29 +26,36 @@ func sunPathLimit() int {
 
 // Request: 客户端请求（一行 JSON）。
 type Request struct {
-	Cmd       string     `json:"cmd"`                  // status | pause | resume | release | flash
+	Cmd       string     `json:"cmd"`                  // status | pause | resume | release | flash | proxy | reopen | reset
 	Pattern   string     `json:"pattern,omitempty"`    // 设备匹配正则（tty/name/key/by-id 任一）
 	ForMs     int64      `json:"for_ms,omitempty"`     // release: 限时自动回采
 	UntilIdle bool       `json:"until_idle,omitempty"` // release: 端口空闲后自动回采
 	Spec      flash.Spec `json:"spec,omitempty"`       // flash: 刷写参数
+	Action    string     `json:"action,omitempty"`     // proxy: start | stop
+	All       bool       `json:"all,omitempty"`        // flash/reopen/reset: 模式匹配多台仍逐台执行（默认拒绝，防误伤在测设备）
 }
 
 // DevState: status 返回的设备状态。
 type DevState struct {
-	Name  string `json:"name"`
-	Tty   string `json:"tty"`
-	Key   string `json:"key"`
-	State string `json:"state"` // collecting | paused | suspended | flashing
+	Name          string `json:"name"`
+	Tty           string `json:"tty"`
+	Key           string `json:"key"`
+	State         string `json:"state"`                    // collecting | paused | suspended | flashing
+	Proxy         string `json:"proxy,omitempty"`          // 透传会话客户端地址（空 = 无会话）
+	ProxyEndpoint string `json:"proxy_endpoint,omitempty"` // 透传监听端点（空 = 未开端点；注意与 Proxy 客户端地址区分）
 }
 
 // Response: 服务端响应（一行 JSON；flash 会流式多行）。
 type Response struct {
-	OK      bool       `json:"ok"`
-	Error   string     `json:"error,omitempty"`
-	Event   string     `json:"event,omitempty"` // flash-log | flash-done
-	Line    string     `json:"line,omitempty"`
-	Code    int        `json:"code,omitempty"`
-	Devices []DevState `json:"devices,omitempty"`
+	OK        bool       `json:"ok"`
+	Error     string     `json:"error,omitempty"`
+	Event     string     `json:"event,omitempty"` // flash-log | flash-done
+	Line      string     `json:"line,omitempty"`
+	Code      int        `json:"code,omitempty"`
+	Devices   []DevState `json:"devices,omitempty"`
+	Endpoint  string     `json:"endpoint,omitempty"`   // proxy start: 透传 TCP 端点
+	Device    string     `json:"device,omitempty"`     // proxy start: 返回端点所属设备名
+	DeviceKey string     `json:"device_key,omitempty"` // proxy start: 返回端点所属设备 key
 }
 
 // Handler: 请求处理。respond 可多次调用（flash 流式输出），最后一次带总结性状态。
@@ -61,13 +68,7 @@ type Server struct {
 	stopCh chan struct{}
 }
 
-// DefaultSocketPath: XDG_RUNTIME_DIR/serialtap.sock，回退 /tmp/serialtap-$UID.sock。
-func DefaultSocketPath() string {
-	if x := os.Getenv("XDG_RUNTIME_DIR"); x != "" {
-		return filepath.Join(x, "serialtap.sock")
-	}
-	return fmt.Sprintf("/tmp/serialtap-%d.sock", os.Getuid())
-}
+// DefaultSocketPath: 平台相关（socketpath_unix.go / socketpath_windows.go）。
 
 // Listen: 建立监听（socket 权限 0600，同用户专用）。
 // socket 已被活着的实例持有 → 拒绝（防止第二实例偷走控制通道）；
@@ -84,10 +85,15 @@ func Listen(path string) (*Server, error) {
 		}
 		_ = os.Remove(path) // 死 socket
 	}
+	// Windows 默认路径在 %LOCALAPPDATA%\serialtap 下，父目录可能不存在
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, fmt.Errorf("控制 socket 目录创建失败: %w", err)
+	}
 	ln, err := net.Listen("unix", path)
 	if err != nil {
 		return nil, fmt.Errorf("控制 socket 监听失败: %w", err)
 	}
+	// Windows 的 AF_UNIX 无文件权限语义，Chmod 仅在类 Unix 上有实际效果
 	if err := os.Chmod(path, 0o600); err != nil {
 		_ = ln.Close()
 		return nil, err

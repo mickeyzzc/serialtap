@@ -1,3 +1,6 @@
 serialtap
+serialtap.exe
 logs/
 *.log
+.demo-logs/
+config.local.json

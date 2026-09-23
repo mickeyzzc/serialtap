@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="serialtap logo variant 2: wave tap">
+  <!-- V2 Wave·Tap —— UART 方波总线 + 低电平中点抽头：串口电平 × 在线分接 -->
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 30 H28 V52 H44 V30 H60 V52 H76 V30 H88" stroke="currentColor" stroke-width="8"/>
+    <path d="M52 52 V78" stroke="#2DD4BF" stroke-width="8"/>
+  </g>
+  <circle cx="52" cy="84" r="7" fill="#2DD4BF"/>
+</svg>

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="serialtap logo variant 5: terminal tap">
+  <!-- V5 Terminal·Tap —— 终端取景窗 + 提示符与光标：开发者工具的窗口意象 -->
+  <rect x="14" y="20" width="72" height="60" rx="10" fill="none" stroke="currentColor" stroke-width="7"/>
+  <path d="M32 40 L46 50 L32 60" fill="none" stroke="#2DD4BF" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="54" y="44" width="11" height="13" rx="2" fill="#2DD4BF"/>
+</svg>
