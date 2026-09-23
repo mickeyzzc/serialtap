@@ -32,6 +32,9 @@ type daemon struct {
 	releases   map[string]releaseSpec
 }
 
+// Daemon: daemon 的导出别名（cli 的托盘接线需要具名类型；New 返回 *daemon）。
+type Daemon = daemon
+
 func discardLog(string, ...any) {}
 
 // New: 构造守护核心。enum/logf 为注入点（生产用默认实现，测试注入假件）。

@@ -1,20 +1,24 @@
 # serialtap
 
-**A zero-touch USB serial log collector for Linux.** Plug in a device — serialtap
-detects it, opens the port once, and keeps timestamped logs rolling with an
-error-signature event stream. Built for ESP32 fleet debugging, works with any
-USB serial device (CH340/CH343/CP210x/FTDI/native USB-CDC…).
+**A zero-touch USB serial log collector for Linux and macOS.** Plug in a
+device — serialtap detects it, opens the port once, and keeps timestamped
+logs rolling with an error-signature event stream. Built for ESP32 fleet
+debugging, works with any USB serial device (CH340/CH343/CP210x/FTDI/native
+USB-CDC…).
 
 单二进制 Go 程序：插上设备自动识别 → 持续采集 → 双通道日志（全量 + 错误事件）→
-离线分析（签名汇总 / Backtrace addr2line 解码）。
+离线分析（签名汇总 / Backtrace addr2line 解码）。macOS 上 `run` 默认进驻菜单栏
+托盘，图标即可暂停/恢复/打开日志/退出。
 
 [![CI](https://github.com/mickeyzzc/serialtap/actions/workflows/ci.yml/badge.svg)](https://github.com/mickeyzzc/serialtap/actions/workflows/ci.yml)
 
 ## 特性
 
 - **热插拔自动采集**：轮询发现 USB 串口（1s），每设备一个采集协程，插上即采、拔走即停
-- **身份稳定**：以 USB 物理口（by-path）为设备身份 —— 重枚举换 ttyUSB 号不影响；
-  同型号适配器（by-id 无序列号的 CH340）也不撞车
+- **macOS 菜单栏托盘**：`run` 在 mac 上默认进驻菜单栏 —— 实时设备状态、暂停/恢复
+  全部采集、打开日志目录、退出（`--no-tray` 关闭；Linux 不受影响，仍是纯静态二进制）
+- **身份稳定**：以 USB 物理口为设备身份（Linux by-path / macOS locationID）——
+  重枚举换 ttyUSB 号不影响；同型号适配器（by-id 无序列号的 CH340）也不撞车
 - **双通道日志**：`serial-日期.log` 全量（毫秒级逐行时间戳）+ `events-日期.log`
   事件流（错误签名命中 + 采集器生命周期），按日 + 按大小轮转，保留期自动清理
 - **错误签名引擎**：内置 ESP-IDF 常见故障行（`rst:0x` 复位 banner、`E (` 错误级日志、
@@ -36,14 +40,18 @@ USB serial device (CH340/CH343/CP210x/FTDI/native USB-CDC…).
 git clone https://github.com/mickeyzzc/serialtap && cd serialtap
 make build                 # 或: go build .
 ./serialtap list           # 看当前设备: tty / 名字 / VID:PID / by-id / 物理口
-./serialtap run            # 守护模式
+./serialtap run            # 守护模式（macOS 默认带菜单栏托盘）
 ```
+
+macOS 本地构建托盘版需要 clang（装 Xcode Command Line Tools 即可），
+`go build .` 默认 CGO 开；`CGO_ENABLED=0` 构建得到无托盘版（枚举/采集不受影响，
+发布的 Linux 二进制始终是无 CGO 纯静态）。
 
 ## 命令
 
 | 命令 | 作用 |
 |---|---|
-| `run` | 守护模式。轮询发现 USB 串口，每设备一个采集协程 |
+| `run` | 守护模式。轮询发现 USB 串口，每设备一个采集协程；macOS 默认进驻菜单栏托盘（`--no-tray` 关闭） |
 | `attach TTY [--name N]` | 单口采集（手动围观/测试，可接 socat PTY） |
 | `list` | 列出当前设备与身份 |
 | `pause [RE]` / `resume [RE]` | 暂停/恢复采集（省略 = 全部） |
@@ -86,6 +94,20 @@ USB-JTAG 口（USB_SERIAL_JTAG 外设在硅内实现了与 CH340 一致的自动
 
 配置文件默认路径 `~/.config/serialtap/config.json`（不存在则全默认值），
 所有字段见 `config.example.json` 与 `config.go`。
+
+## macOS 说明
+
+- **设备身份**：Linux 走 sysfs by-path；macOS 解析 `ioreg`（IOKit 注册表）——
+  以 USB `locationID`（物理口）为 key，`usb-<vid>_<pid>[-<序列号>]` 为 by-id。
+  by-id 风格与 Linux 对齐，配置里的 `names` 规则可跨平台复用；ioreg 只在
+  端口集合变化（热插拔）时执行，稳态轮询零开销。只枚举 `/dev/cu.usb*`
+  （蓝牙/wlan-debug 等本机串口天然滤除；采集用 cu.*，tty.* 在 mac 上 open 会
+  等载波阻塞）
+- **菜单栏托盘**：默认 CGO 构建包含托盘（fyne.io/systray）：设备实时状态、
+  暂停/恢复全部、打开日志目录（Finder）、退出。`run --no-tray` 走无头模式
+  （SSH 远程 mac 场景）；`CGO_ENABLED=0` 构建自动无托盘
+- **控制 socket**：默认 `/tmp/serialtap-$UID.sock`（BSD 的 unix socket 路径
+  上限 104 字节，路径过长会明确报错）
 
 ## 离线分析
 
@@ -137,6 +159,7 @@ internal/pause/            # 刷写暂停清单
 internal/daemon/           # 热插拔守护循环（枚举 diff + 起停采集器 + release/flash 编排）
 internal/flash/            # 代理刷固件（esptool 编排 + flasher_args.json 解析）
 internal/ctl/              # 控制 unix socket（JSON 行协议）
+internal/tray/             # 托盘/菜单栏（darwin+cgo 实现，其余平台无 GUI 桩）
 internal/analyze/          # 离线分析（签名汇总 + addr2line 解码）
 internal/testutil/         # 跨包测试助手（假串口等）
 ```

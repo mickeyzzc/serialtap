@@ -30,6 +30,10 @@ var builtinNameRules = []config.NameRule{
 	{Match: `USB_Serial-if00`, Name: "ch340"},           // 1a86:7523 — ai-thinker 板
 	{Match: `USB_Single_Serial`, Name: "ch343"},         // 1a86:7522/55d3 — luatos 板
 	{Match: `Espressif_USB_JTAG`, Name: "esp32s3-jtag"}, // 原生 USB-JTAG — seeed/n16r8
+	// vid_pid 形式（macOS by-id 即此格式 usb-<vid>_<pid>[-sn]，Linux by-id 不含 → 互不干扰）
+	{Match: `1a86_7523`, Name: "ch340"},
+	{Match: `1a86_(7522|55d3)`, Name: "ch343"},
+	{Match: `usb-303a_`, Name: "esp32s3-jtag"}, // Espressif 原生 USB（VID 303a）
 }
 
 func applyNameRules(rules []config.NameRule, byID string) string {
