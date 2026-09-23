@@ -261,10 +261,10 @@ func TestLiveStream(t *testing.T) {
 
 func TestPickAddr(t *testing.T) {
 	for in, want := range map[string]string{
-		"":                 "127.0.0.1:8801",
-		"off":              "",
-		"127.0.0.1:9000":   "127.0.0.1:9000",
-		"bad addr":         "127.0.0.1:8801",
+		"":               "127.0.0.1:8801",
+		"off":            "",
+		"127.0.0.1:9000": "127.0.0.1:9000",
+		"bad addr":       "127.0.0.1:8801",
 	} {
 		if got := PickAddr(in); got != want {
 			t.Errorf("PickAddr(%q)=%q want %q", in, got, want)

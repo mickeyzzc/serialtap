@@ -15,7 +15,8 @@ works with any USB serial device (CH340/CH343/CP210x/FTDI/native USB-CDC…).
 
 - **热插拔自动采集**：轮询发现 USB 串口（1s），每设备一个采集协程，插上即采、拔走即停
 - **macOS 菜单栏托盘**：`run` 在 mac 上默认进驻菜单栏 —— 实时设备状态、暂停/恢复
-  全部采集、打开日志目录、退出（`--no-tray` 关闭；Linux 不受影响，仍是纯静态二进制）
+  全部采集、打开日志目录、打开 Web 面板、退出（`--no-tray` 关闭；
+  Linux 不受影响，仍是纯静态二进制）
 - **身份稳定**：以 USB 物理口为设备身份（Linux by-path / macOS locationID）——
   重枚举换 ttyUSB 号不影响；同型号适配器（by-id 无序列号的 CH340）也不撞车
 - **双通道日志**：`serial-日期.log` 全量（毫秒级逐行时间戳）+ `events-日期.log`
@@ -179,8 +180,9 @@ token 是设备稳定身份（key/by-id，Windows 实例路径内嵌 MAC）的 4
   （蓝牙/wlan-debug 等本机串口天然滤除；采集用 cu.*，tty.* 在 mac 上 open 会
   等载波阻塞）
 - **菜单栏托盘**：默认 CGO 构建包含托盘（fyne.io/systray）：设备实时状态、
-  暂停/恢复全部、打开日志目录（Finder）、退出。`run --no-tray` 走无头模式
-  （SSH 远程 mac 场景）；`CGO_ENABLED=0` 构建自动无托盘
+  暂停/恢复全部、打开日志目录（Finder）、打开 Web 面板（默认
+  http://127.0.0.1:8801/，面板关闭自动隐藏该项）、退出。`run --no-tray`
+  走无头模式（SSH 远程 mac 场景）；`CGO_ENABLED=0` 构建自动无托盘
 - **控制 socket**：默认 `/tmp/serialtap-$UID.sock`（BSD 的 unix socket 路径
   上限 104 字节，路径过长会明确报错）
 

@@ -159,11 +159,11 @@ func latestFile(dir, kind string) (string, int64, bool) {
 // deviceDTO: 面板设备载荷 = ctl.DevState + 日志目录富化（最新文件与大小，
 // 前端用大小差分算写入速率）。
 type deviceDTO struct {
-	Name  string `json:"name"`
-	Tty   string `json:"tty"`
-	Key   string `json:"key"`
-	State string `json:"state"`
-	Proxy string `json:"proxy,omitempty"`            // 附加中的客户端地址
+	Name          string `json:"name"`
+	Tty           string `json:"tty"`
+	Key           string `json:"key"`
+	State         string `json:"state"`
+	Proxy         string `json:"proxy,omitempty"`          // 附加中的客户端地址
 	ProxyEndpoint string `json:"proxy_endpoint,omitempty"` // 透传监听端点（空 = 未开）
 
 	SerialFile  string `json:"serial_file,omitempty"`

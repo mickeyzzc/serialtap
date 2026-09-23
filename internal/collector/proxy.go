@@ -7,8 +7,9 @@
 // proxy_tap_exclude 正则剔除高频遥测行防刷盘）。
 //
 // 方向：
-//   设备 → 客户端：collectOnce 读循环拿到字节后 proxyOut 镜像写出；
-//   客户端 → 设备：AttachProxy 起的 pump 协程读 TCP，经登记的端口写入口写入。
+//
+//	设备 → 客户端：collectOnce 读循环拿到字节后 proxyOut 镜像写出；
+//	客户端 → 设备：AttachProxy 起的 pump 协程读 TCP，经登记的端口写入口写入。
 package collector
 
 import (

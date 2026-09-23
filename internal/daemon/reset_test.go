@@ -18,11 +18,13 @@ import (
 )
 
 // newMutableDaemon: enum 返回可变切片的守护（reset 测试要模拟设备消失/回来）。
-func newMutableDaemon(t *testing.T, root string, devs *[]device.DeviceInfo) (*daemon, error) {
+// snapshot 由调用方提供并自行加锁 —— enum 轮询跑在别的 goroutine 上，
+// 无锁直读共享切片会被 -race 抓（TestResetOrchestration 写侧有锁，读侧必须同锁）。
+func newMutableDaemon(t *testing.T, root string, snapshot func() []device.DeviceInfo) (*daemon, error) {
 	cfg := config.DefaultConfig()
 	cfg.Root = root
 	cfg.PollMs = 10
-	return New(cfg, nil, func() ([]device.DeviceInfo, error) { return *devs, nil }, nil)
+	return New(cfg, nil, func() ([]device.DeviceInfo, error) { return snapshot(), nil }, nil)
 }
 
 func fakePorts(t *testing.T) {
@@ -39,8 +41,9 @@ func fakePorts(t *testing.T) {
 func TestReopenCyclesPortImmediately(t *testing.T) {
 	root := t.TempDir()
 	fakePorts(t)
-	d, err := newMutableDaemon(t, root, &[]device.DeviceInfo{
-		{Tty: "/dev/ttyFAKE", Key: "kA", Name: "fakeA"},
+	devs := []device.DeviceInfo{{Tty: "/dev/ttyFAKE", Key: "kA", Name: "fakeA"}}
+	d, err := newMutableDaemon(t, root, func() []device.DeviceInfo {
+		return append([]device.DeviceInfo(nil), devs...)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -72,9 +75,12 @@ func TestReopenCyclesPortImmediately(t *testing.T) {
 func TestReopenResetMultiDeviceGate(t *testing.T) {
 	root := t.TempDir()
 	fakePorts(t)
-	d, err := newMutableDaemon(t, root, &[]device.DeviceInfo{
+	devs := []device.DeviceInfo{
 		{Tty: "/dev/a", Key: "ka", Name: "sense", ByID: "USB\\VID_303A&PID_1001&MI_00\\7&1"},
 		{Tty: "/dev/b", Key: "kb", Name: "sense-dev", ByID: "USB\\VID_303A&PID_1001&MI_00\\7&2"},
+	}
+	d, err := newMutableDaemon(t, root, func() []device.DeviceInfo {
+		return append([]device.DeviceInfo(nil), devs...)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -108,17 +114,21 @@ func TestReopenResetMultiDeviceGate(t *testing.T) {
 func TestResetOrchestration(t *testing.T) {
 	root := t.TempDir()
 	fakePorts(t)
+	var mu sync.Mutex // devs 的读写锁：enum 快照（别的 goroutine）与下面的消失/回来写都走它
 	devs := []device.DeviceInfo{
 		{Tty: "/dev/ttyFAKE", Key: "kA", Name: "fakeA", ByID: "USB\\VID_303A&PID_1001&MI_00\\7&fake&2&0000"},
 	}
-	d, err := newMutableDaemon(t, root, &devs)
+	d, err := newMutableDaemon(t, root, func() []device.DeviceInfo {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]device.DeviceInfo(nil), devs...)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(d.Shutdown)
 	d.Tick()
 
-	var mu sync.Mutex
 	var gotInstance string
 	old := usbRestartDevice
 	usbRestartDevice = func(instanceID string) (string, error) {
@@ -161,8 +171,8 @@ func TestResetOrchestration(t *testing.T) {
 func TestResetPnputilFailureStillResumes(t *testing.T) {
 	root := t.TempDir()
 	fakePorts(t)
-	d, err := newMutableDaemon(t, root, &[]device.DeviceInfo{
-		{Tty: "/dev/ttyFAKE", Key: "kA", Name: "fakeA", ByID: "USB\\X\\7&1"},
+	d, err := newMutableDaemon(t, root, func() []device.DeviceInfo {
+		return []device.DeviceInfo{{Tty: "/dev/ttyFAKE", Key: "kA", Name: "fakeA", ByID: "USB\\X\\7&1"}}
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -189,8 +199,9 @@ func TestResetPnputilFailureStillResumes(t *testing.T) {
 func TestResetRequiresInstanceID(t *testing.T) {
 	root := t.TempDir()
 	fakePorts(t)
-	d, err := newMutableDaemon(t, root, &[]device.DeviceInfo{
-		{Tty: "/dev/ttyFAKE", Key: "kA", Name: "fakeA"},
+	devs := []device.DeviceInfo{{Tty: "/dev/ttyFAKE", Key: "kA", Name: "fakeA"}}
+	d, err := newMutableDaemon(t, root, func() []device.DeviceInfo {
+		return append([]device.DeviceInfo(nil), devs...)
 	})
 	if err != nil {
 		t.Fatal(err)

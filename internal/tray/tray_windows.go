@@ -90,7 +90,7 @@ func (t *trayUI) debugf(format string, args ...any) {
 
 // Run: 进入托盘主循环（阻塞至"退出"）。root 统一转为绝对路径
 // （打开日志走 ShellExecute，相对路径不可靠）。webURL 空 = 不显示面板菜单项。
-func Run(sockPath, root, webURL string, poll time.Duration) error {
+func RunResident(sockPath, root, webURL string, poll time.Duration) error {
 	if abs, err := filepath.Abs(root); err == nil {
 		root = abs
 	}

@@ -6,6 +6,7 @@ import (
 	"net"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,11 +20,20 @@ import (
 func proxyHarness(t *testing.T, tapExclude string) (*daemon, *testutil.FakePort, string) {
 	t.Helper()
 	root := t.TempDir()
+	var fpMu sync.Mutex // fp 在采集 goroutine 发布、测试 goroutine 读取 —— 无锁会被 -race 抓
 	var fp *testutil.FakePort
+	fpPtr := func() *testutil.FakePort {
+		fpMu.Lock()
+		defer fpMu.Unlock()
+		return fp
+	}
 	old := collector.OpenPort
 	collector.OpenPort = func(tty string, baud int) (collector.Port, error) {
-		fp = &testutil.FakePort{}
-		return fp, nil
+		p := &testutil.FakePort{}
+		fpMu.Lock()
+		fp = p
+		fpMu.Unlock()
+		return p, nil
 	}
 	t.Cleanup(func() { collector.OpenPort = old })
 
@@ -38,8 +48,8 @@ func proxyHarness(t *testing.T, tapExclude string) (*daemon, *testutil.FakePort,
 	}
 	t.Cleanup(d.Shutdown)
 	d.Tick()
-	testutil.WaitFor(t, 3*time.Second, func() bool { return fp != nil }, "假端口未打开")
-	return d, fp, root
+	testutil.WaitFor(t, 3*time.Second, func() bool { return fpPtr() != nil }, "假端口未打开")
+	return d, fpPtr(), root
 }
 
 func injectDev(t *testing.T, fp *testutil.FakePort, data string) {

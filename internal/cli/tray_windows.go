@@ -41,5 +41,5 @@ func cmdTray(args []string) error {
 	}
 	// 参数校验完毕，从控制台脱离 —— 双击/脚本启动不留黑窗（之后无 stderr 可写）
 	freeConsole.Call()
-	return tray.Run(sockPath, cfg.Root, webURL, time.Duration(*pollMs)*time.Millisecond)
+	return tray.RunResident(sockPath, cfg.Root, webURL, time.Duration(*pollMs)*time.Millisecond)
 }

@@ -14,24 +14,24 @@ type NameRule struct {
 }
 
 type Config struct {
-	Root          string            `json:"root"`             // 日志根目录
-	Baud          int               `json:"baud"`             // 串口波特率（USB-JTAG 板无意义但无害）
-	PollMs        int               `json:"poll_interval_ms"` // 热插拔轮询间隔
-	SilentReopenS int               `json:"silent_reopen_s"`  // 静默强制重开阈值（秒，0=关。只对保证有周期日志的设备开，见 collector.go）
-	ReopenMinS    int               `json:"reopen_min_s"`     // 断线重开退避下限（秒）
-	ReopenMaxS    int               `json:"reopen_max_s"`     // 断线重开退避上限（秒）
-	RotateMB      int               `json:"rotate_max_mb"`    // 单文件大小轮转阈值
-	RetentionDays int               `json:"retention_days"`   // 日志保留天数（<=0 永久）
-	Exclude       []string          `json:"exclude"`          // 忽略设备的正则（匹配 tty/by-id/by-path/名字任一）
-	Names         []NameRule        `json:"names"`            // 设备命名规则
-	ExtraSigs     []string          `json:"signatures_extra"` // 追加事件签名正则
-	ElfMap        map[string]string `json:"elf_map"`          // 设备名 → 固件 .elf（decode-backtrace 自动解码用）
-	ControlSocket string            `json:"control_socket"`   // 控制 unix socket（空 = 默认路径）
-	Esptool       string            `json:"esptool_cmd"`      // 代理刷固件的 esptool 命令（空 = PATH/espressif 环境自动发现）
-	FlashBaud     int               `json:"flash_baud"`       // 代理刷波特率（0 = esptool 默认）
-	FlashTimeoutS int               `json:"flash_timeout_s"`  // 单台设备刷写超时（秒，超时杀 esptool 并回采；显式写 0 = 不限时）
-	ProxyTapExclude string           `json:"proxy_tap_exclude"` // 透传会话期间不落全量日志的行正则（如 "^#S1 " 剔除高频遥测；空 = 全落）
-	WebAddr         string           `json:"web_addr"`          // Web 观测面板监听地址（空 = 默认 127.0.0.1:8801；"off" = 关闭）
+	Root            string            `json:"root"`              // 日志根目录
+	Baud            int               `json:"baud"`              // 串口波特率（USB-JTAG 板无意义但无害）
+	PollMs          int               `json:"poll_interval_ms"`  // 热插拔轮询间隔
+	SilentReopenS   int               `json:"silent_reopen_s"`   // 静默强制重开阈值（秒，0=关。只对保证有周期日志的设备开，见 collector.go）
+	ReopenMinS      int               `json:"reopen_min_s"`      // 断线重开退避下限（秒）
+	ReopenMaxS      int               `json:"reopen_max_s"`      // 断线重开退避上限（秒）
+	RotateMB        int               `json:"rotate_max_mb"`     // 单文件大小轮转阈值
+	RetentionDays   int               `json:"retention_days"`    // 日志保留天数（<=0 永久）
+	Exclude         []string          `json:"exclude"`           // 忽略设备的正则（匹配 tty/by-id/by-path/名字任一）
+	Names           []NameRule        `json:"names"`             // 设备命名规则
+	ExtraSigs       []string          `json:"signatures_extra"`  // 追加事件签名正则
+	ElfMap          map[string]string `json:"elf_map"`           // 设备名 → 固件 .elf（decode-backtrace 自动解码用）
+	ControlSocket   string            `json:"control_socket"`    // 控制 unix socket（空 = 默认路径）
+	Esptool         string            `json:"esptool_cmd"`       // 代理刷固件的 esptool 命令（空 = PATH/espressif 环境自动发现）
+	FlashBaud       int               `json:"flash_baud"`        // 代理刷波特率（0 = esptool 默认）
+	FlashTimeoutS   int               `json:"flash_timeout_s"`   // 单台设备刷写超时（秒，超时杀 esptool 并回采；显式写 0 = 不限时）
+	ProxyTapExclude string            `json:"proxy_tap_exclude"` // 透传会话期间不落全量日志的行正则（如 "^#S1 " 剔除高频遥测；空 = 全落）
+	WebAddr         string            `json:"web_addr"`          // Web 观测面板监听地址（空 = 默认 127.0.0.1:8801；"off" = 关闭）
 }
 
 func DefaultConfig() Config {
