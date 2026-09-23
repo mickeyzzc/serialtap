@@ -217,6 +217,7 @@ func cmdRun(args []string) error {
 	if err != nil {
 		return err
 	}
+	ctlSrv.Logf = stdoutLog // 关闭兜底超时的告警进守护日志（#18）
 	defer ctlSrv.Close()
 	handler := func(req ctl.Request, respond func(ctl.Response)) {
 		switch req.Cmd {
