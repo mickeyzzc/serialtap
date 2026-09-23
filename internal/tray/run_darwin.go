@@ -4,11 +4,28 @@ package tray
 
 import (
 	_ "embed"
+	"os"
 	"strconv"
 	"time"
 
 	"fyne.io/systray"
 )
+
+// sshWarn: SSH 会话下 NSStatusBar 拿不到 systemStatusBar，图标静默不显示。
+func sshWarn(getenv func(string) string) string {
+	if getenv("SSH_TTY") != "" || getenv("SSH_CONNECTION") != "" {
+		return "[tray] 警告: 检测到 SSH 会话 —— 菜单栏图标需要本机 GUI 登录会话，SSH 下不会显示（可 --no-tray）"
+	}
+	return ""
+}
+
+// logf: nil 安全的日志快捷方式（logf 只被本文件使用，放在 darwin 文件里
+// 避免在 Linux lint 视角下成为死代码）。
+func (h Host) logf(format string, args ...any) {
+	if h.Logf != nil {
+		h.Logf(format, args...)
+	}
+}
 
 //go:embed icon.png
 var iconBytes []byte // 菜单栏 template 图标（黑+透明，随深/浅色菜单栏自适应）
@@ -49,6 +66,12 @@ func onReady(h Host) {
 	systray.SetTemplateIcon(iconBytes, iconBytes)
 	systray.SetTooltip("serialtap v" + h.Version)
 	systray.SetTitle("")
+	if w := sshWarn(os.Getenv); w != "" {
+		h.logf("%s", w)
+	}
+	// NSStatusBar 在无 GUI 会话下静默返回 nil（图标不显示也不报错）——
+	// 就绪日志是"图标应该出现了"的唯一线索，请对照菜单栏确认。
+	h.logf("[tray] 菜单栏图标已创建（仅 run 运行期间显示）")
 
 	mTitle = systray.AddMenuItem("serialtap v"+h.Version, "")
 	mTitle.Disable()
