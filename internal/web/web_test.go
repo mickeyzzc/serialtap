@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -299,5 +300,146 @@ func TestIndexServed(t *testing.T) {
 	}
 	if resp.Header.Get("Content-Type") != "text/html; charset=utf-8" {
 		t.Errorf("Content-Type: %s", resp.Header.Get("Content-Type"))
+	}
+}
+
+func TestServeFiles(t *testing.T) {
+	root := t.TempDir()
+	dev := filepath.Join(root, "dev1")
+	if err := os.MkdirAll(dev, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dev, "serial-20260920.log"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dev, "serial-20260921.log"), []byte("b\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dev, "notes.txt"), []byte("x"), 0o644); err != nil { // 非 .log 应被过滤
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dev, "subdir"), 0o755); err != nil { // 目录应被过滤
+		t.Fatal(err)
+	}
+	s := &Server{root: root}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.handleDevice(w, r)
+	}))
+	defer ts.Close()
+
+	resp, err := ts.Client().Get(ts.URL + "/api/devices/dev1/files")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("files 状态码 = %d", resp.StatusCode)
+	}
+	var ents []fileEntry
+	if err := json.NewDecoder(resp.Body).Decode(&ents); err != nil {
+		t.Fatal(err)
+	}
+	if len(ents) != 2 || ents[0].Name != "serial-20260921.log" || ents[1].Name != "serial-20260920.log" {
+		t.Fatalf("文件列表应只含 .log 且按名倒序: %+v", ents)
+	}
+
+	// 未知设备 → 404；坏 action → 400
+	for _, c := range []struct {
+		path string
+		want int
+	}{{"/api/devices/nobody/files", 404}, {"/api/devices/dev1/bad", 400}, {"/api/devices/dev1", 400}} {
+		resp, err := ts.Client().Get(ts.URL + c.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != c.want {
+			t.Fatalf("GET %s = %d, want %d", c.path, resp.StatusCode, c.want)
+		}
+	}
+	// 直接走 serveFiles 的读目录失败分支（500）
+	w := httptest.NewRecorder()
+	s.serveFiles(w, filepath.Join(root, "gone"))
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("坏目录应 500, got %d", w.Code)
+	}
+}
+
+func TestHandleCmdErrors(t *testing.T) {
+	s := &Server{root: t.TempDir()} // commander 为 nil → 503
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.handleCmd(w, r)
+	}))
+	defer ts.Close()
+	client := ts.Client()
+
+	resp, err := client.Get(ts.URL + "/api/cmd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /api/cmd = %d, want 405", resp.StatusCode)
+	}
+
+	resp, err = client.Post(ts.URL+"/api/cmd", "application/json", strings.NewReader(`{"cmd":"status"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("无 commander 应 503, got %d", resp.StatusCode)
+	}
+
+	// 有 commander：坏 JSON / 非白名单命令 / commander 错误 / 正常透传
+	s2 := &Server{root: t.TempDir(), commander: func(req ctl.Request) (ctl.Response, error) {
+		if req.Cmd == "pause" {
+			return ctl.Response{}, fmt.Errorf("boom")
+		}
+		return ctl.Response{OK: true, Line: "done"}, nil
+	}}
+	ts2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s2.handleCmd(w, r)
+	}))
+	defer ts2.Close()
+
+	resp, err = client.Post(ts2.URL+"/api/cmd", "application/json", strings.NewReader("{bad json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("坏 JSON 应 400, got %d", resp.StatusCode)
+	}
+
+	resp, err = client.Post(ts2.URL+"/api/cmd", "application/json", strings.NewReader(`{"cmd":"flash"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("面板不 allowed 的命令应 400, got %d", resp.StatusCode)
+	}
+
+	for _, body := range []string{`{"cmd":"pause"}`, `{"cmd":"resume"}`} {
+		resp, err = client.Post(ts2.URL+"/api/cmd", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s = %d, want 200", body, resp.StatusCode)
+		}
+		if body == `{"cmd":"pause"}` {
+			if ok, _ := out["ok"].(bool); ok {
+				t.Fatal("commander 错误应回 ok:false")
+			}
+		} else if ok, _ := out["ok"].(bool); !ok {
+			t.Fatal("正常命令应回 ok:true")
+		}
 	}
 }
