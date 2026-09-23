@@ -2,9 +2,11 @@ package ctl
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 )
@@ -131,4 +133,40 @@ func TestListenRefusesWhenSocketOwned(t *testing.T) {
 		t.Fatalf("接管残留 socket 失败: %v", err)
 	}
 	second.Close()
+}
+
+// 回归（#14）：高并发拨号 + Close 锤击 —— Serve 的 wg.Add 不得与 Close 的
+// wg.Wait 并发（Accept 在关停窗口内成功返回的迟到连接是原触发路径）。
+func TestServeConcurrentDialCloseNoRace(t *testing.T) {
+	for i := 0; i < 50; i++ {
+		sock := sockPath(t, fmt.Sprintf("race%d", i))
+		srv, err := Listen(sock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		go srv.Serve(func(req Request, respond func(Response)) { respond(Response{OK: true}) })
+
+		stop := make(chan struct{})
+		var dialers sync.WaitGroup
+		for j := 0; j < 4; j++ {
+			dialers.Add(1)
+			go func() {
+				defer dialers.Done()
+				for {
+					select {
+					case <-stop:
+						return
+					default:
+					}
+					if c, derr := net.Dial("unix", sock); derr == nil {
+						_ = c.Close()
+					}
+				}
+			}()
+		}
+		time.Sleep(time.Duration(i%5) * time.Millisecond) // 每轮错开相位，扫过竞争窗口
+		srv.Close()
+		close(stop)
+		dialers.Wait()
+	}
 }
