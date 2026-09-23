@@ -19,6 +19,10 @@
 - fix(ctl): unix socket 路径超长（BSD 104 字节上限）提前拦截并给出明确报错，
   此前 bind 只报 `invalid argument` 无法排查；测试路径在 darwin 上改用 /tmp 短路径
 
+- **中英双语文档拆分**：`README.md`（英文）/ `README.zh-CN.md`（中文）两个入口，
+  `docs/en/` 与 `docs/zh-CN/` 各含五篇深度文档（CLI 参考、配置参考、架构、
+  控制协议、部署指南）
+
 ### 全新 Logo（Wave·Tap：方波 · 在线分接）
 
 - 设计定稿 **Wave·Tap**：UART 方波横贯 + 低电平中点向下的抽头——串口
