@@ -19,15 +19,14 @@ import (
 )
 
 // newFlashServer: 假 flasher（记录调用参数，回放固定输出后成功返回）。
-func newFlashServer(t *testing.T, emit func(out func(string))) (*Server, *httptest.Server, *[]flash.Spec) {
+func newFlashServer(t *testing.T, emit func(out func(string))) (*Server, *httptest.Server, *specsLog) {
 	t.Helper()
-	var mu sync.Mutex
-	var specs []flash.Spec
+	log := &specsLog{}
 	s := &Server{root: t.TempDir()}
 	s.flasher = func(pattern string, all bool, spec flash.Spec, out func(string)) error {
-		mu.Lock()
-		specs = append(specs, spec)
-		mu.Unlock()
+		log.mu.Lock()
+		log.items = append(log.items, spec)
+		log.mu.Unlock()
 		emit(out)
 		return nil
 	}
@@ -36,7 +35,25 @@ func newFlashServer(t *testing.T, emit func(out func(string))) (*Server, *httpte
 	mux.HandleFunc("/api/flash/stream", s.flashStream)
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
-	return s, ts, &specs
+	return s, ts, log
+}
+
+// specsLog: 假 flasher 的调用记录（读写在 -race 下都要持锁）。
+type specsLog struct {
+	mu    sync.Mutex
+	items []flash.Spec
+}
+
+func (l *specsLog) len() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.items)
+}
+
+func (l *specsLog) first() flash.Spec {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.items[0]
 }
 
 func multipartFlash(t *testing.T, url string, pattern string, bins [][2]string,
@@ -61,7 +78,7 @@ func multipartFlash(t *testing.T, url string, pattern string, bins [][2]string,
 }
 
 func TestFlashUploadRunsAndStreamReplays(t *testing.T) {
-	_, ts, specs := newFlashServer(t, func(out func(string)) {
+	_, ts, log := newFlashServer(t, func(out func(string)) {
 		out("esptool v4.9 fake")
 		out("Wrote 100 bytes at 0x0")
 	})
@@ -75,13 +92,13 @@ func TestFlashUploadRunsAndStreamReplays(t *testing.T) {
 
 	// spec 传到了 flasher：两个 bin、偏移对齐、文件名保留（Base+白名单清洗）
 	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) && len(*specs) == 0 {
+	for time.Now().Before(deadline) && log.len() == 0 {
 		time.Sleep(20 * time.Millisecond)
 	}
-	if len(*specs) != 1 {
-		t.Fatalf("flasher 应被调一次: %d", len(*specs))
+	if log.len() != 1 {
+		t.Fatalf("flasher 应被调一次: %d", log.len())
 	}
-	sp := (*specs)[0]
+	sp := log.first()
 	if len(sp.Bins) != 2 || sp.Bins[0].Offset != "0x0" || sp.Bins[1].Offset != "0x10000" {
 		t.Fatalf("spec 偏移错误: %+v", sp.Bins)
 	}
