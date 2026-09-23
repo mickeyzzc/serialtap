@@ -10,7 +10,10 @@ import (
 	"testing"
 
 	"github.com/mickeyzzc/serialtap/internal/collector"
+	"github.com/mickeyzzc/serialtap/internal/config"
 	"github.com/mickeyzzc/serialtap/internal/ctl"
+	"github.com/mickeyzzc/serialtap/internal/daemon"
+	"github.com/mickeyzzc/serialtap/internal/device"
 	"github.com/mickeyzzc/serialtap/internal/pause"
 )
 
@@ -264,4 +267,65 @@ func TestCtlServerErrorPropagatesExitCode(t *testing.T) {
 			t.Fatalf("Run(%v) = %d, want 1", args, rc)
 		}
 	}
+}
+
+func TestStateZH(t *testing.T) {
+	cases := map[string]string{
+		"collecting": "● 采集中",
+		"paused":     "⏸ 已暂停",
+		"suspended":  "↩ 让口中",
+		"flashing":   "⚡ 刷写中",
+		"odd-state":  "odd-state", // 未知状态原样透传
+	}
+	for in, want := range cases {
+		if got := stateZH(in); got != want {
+			t.Fatalf("stateZH(%q) = %q, want %q", in, got, want)
+		}
+	}
+	discardLog("覆盖无操作 sink %d", 1)
+}
+
+// trayHost 在 Linux（无托盘）上只是不被调用，构造与回调契约仍须可测：
+// 面板 URL 归一化、空设备 Status=nil、PauseAll/ResumeAll 走 PAUSED 文件、Quit 透传。
+func TestTrayHost(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Config{Root: root}
+	d, err := daemon.New(cfg, nil, func() ([]device.DeviceInfo, error) { return nil, nil }, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(d.Shutdown)
+
+	h := trayHost(d, cfg, func() {})
+	if h.Version != Version {
+		t.Fatalf("Version = %q, want %q", h.Version, Version)
+	}
+	if h.PanelURL != "http://127.0.0.1:8801/" {
+		t.Fatalf("缺省 WebAddr 应给出默认面板 URL, got %q", h.PanelURL)
+	}
+	if h := trayHost(d, config.Config{Root: root, WebAddr: "off"}, nil); h.PanelURL != "" {
+		t.Fatalf("WebAddr=off 不应给面板按钮, got %q", h.PanelURL)
+	}
+	if lines := h.Status(); len(lines) != 0 {
+		t.Fatalf("无设备时 Status 应为空, got %v", lines)
+	}
+	if err := h.PauseAll(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "PAUSED")); err != nil {
+		t.Fatalf("PauseAll 应写 PAUSED 文件: %v", err)
+	}
+	if err := h.ResumeAll(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "PAUSED")); !os.IsNotExist(err) {
+		t.Fatal("ResumeAll 后 PAUSED 应移除")
+	}
+	quit := false
+	hq := trayHost(d, cfg, func() { quit = true })
+	hq.Quit()
+	if !quit {
+		t.Fatal("Quit 应回调退出钩子")
+	}
+	_ = h.OpenLogs() // 平台相关（open 命令），覆盖即可不断言
 }

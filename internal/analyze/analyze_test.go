@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -121,5 +122,49 @@ func TestDecodeBacktraceWithFakeAddr2line(t *testing.T) {
 	os.WriteFile(plain, []byte("nothing here\n"), 0o644)
 	if err := DecodeBacktrace(plain, elf, a2l, config.Config{}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestFindAddr2lineDiscovery(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("无扩展名脚本在 Windows 无执行语义")
+	}
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "fake-addr2line")
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := findAddr2line(exe); err != nil || p != exe {
+		t.Fatalf("显式路径应直接采用: %q %v", p, err)
+	}
+	if _, err := findAddr2line(filepath.Join(dir, "nope")); err == nil {
+		t.Fatal("不存在的显式路径应报错")
+	}
+	t.Setenv("ESP_ADDR2LINE", exe)
+	if p, err := findAddr2line(""); err != nil || p != exe {
+		t.Fatalf("环境变量应优先: %q %v", p, err)
+	}
+	os.Unsetenv("ESP_ADDR2LINE")
+
+	// PATH 无交叉工具链、HOME 无 .espressif → 报找不到
+	t.Setenv("PATH", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if _, err := findAddr2line(""); err == nil {
+		t.Fatal("空环境应报找不到 addr2line")
+	}
+
+	// HOME/.espressif/tools/<t>/<v>/<h>/bin 命中
+	bin := filepath.Join(home, ".espressif", "tools", "xtensa", "1.0", "x86_64", "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(bin, "xtensa-esp32-elf-addr2line")
+	if err := os.WriteFile(want, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := findAddr2line(""); err != nil || p != want {
+		t.Fatalf("espressif glob 发现应命中: %q %v", p, err)
 	}
 }

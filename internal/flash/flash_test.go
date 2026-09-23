@@ -272,3 +272,105 @@ func TestEimRootsAt(t *testing.T) {
 		t.Fatal("无目标行应返回 nil")
 	}
 }
+
+func TestResolveEsptoolExplicit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("无扩展名脚本在 Windows 无执行语义")
+	}
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "fake-esptool")
+	if err := os.WriteFile(exe, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := ResolveEsptool(exe); err != nil || p != exe {
+		t.Fatalf("显式路径应直接采用: %q, %v", p, err)
+	}
+	if _, err := ResolveEsptool(filepath.Join(dir, "nope")); err == nil {
+		t.Fatal("不存在的显式路径应报错")
+	}
+}
+
+func TestResolveEsptoolDiscovery(t *testing.T) {
+	t.Setenv("PATH", t.TempDir()) // PATH 无 esptool
+	emptyHome := t.TempDir()
+	// eim/pip --user 配置也无（决定性：不受宿主 ~/.espressif、%APPDATA% 影响）
+	for _, k := range []string{"HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"} {
+		t.Setenv(k, emptyHome)
+	}
+
+	tools := t.TempDir()
+	t.Setenv("IDF_TOOLS_PATH", tools)
+	if _, err := ResolveEsptool(""); err == nil {
+		t.Fatal("空工具根应报找不到")
+	}
+
+	// venv 布局按平台：unix bin/esptool，windows Scripts\esptool.exe
+	bin, exe := filepath.Join(tools, "python_env", "idf60_py311_env", "bin"), "esptool"
+	if runtime.GOOS == "windows" {
+		bin, exe = filepath.Join(tools, "python_env", "idf60_py311_env", "Scripts"), "esptool.exe"
+	}
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(bin, exe)
+	if err := os.WriteFile(want, []byte("#!/bin/sh\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p, err := ResolveEsptool("")
+	if err != nil || p != want {
+		t.Fatalf("python_env 发现应命中: %q, %v", p, err)
+	}
+}
+
+func TestEimRoots(t *testing.T) {
+	dir := t.TempDir()
+	if got := eimRootsAt(dir); got != nil {
+		t.Fatalf("无 eim_config.toml 应返回 nil, got %v", got)
+	}
+	cfg := filepath.Join(dir, "eim_config.toml")
+	if err := os.WriteFile(cfg, []byte("tool_install_folder_name = '/opt/eim/tools'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := eimRootsAt(dir)
+	want := []string{filepath.Dir("/opt/eim/tools"), "/opt/eim/tools"} // Dir 随平台分隔符
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("eim 工具根解析 = %v, want %v", got, want)
+	}
+	if err := os.WriteFile(cfg, []byte("tool_install_folder_name = no-quotes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := eimRootsAt(dir); got != nil {
+		t.Fatalf("无引号行应返回 nil, got %v", got)
+	}
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+	// eimRoots 读 $HOME/.espressif/eim_config.toml
+	if err := os.MkdirAll(filepath.Join(dir, ".espressif"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".espressif", "eim_config.toml"),
+		[]byte("tool_install_folder_name = '/opt/eim/tools'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := eimRoots(); len(got) != 2 {
+		t.Fatalf("HOME 注入版 eimRoots = %v", got)
+	}
+}
+
+func TestSplitCRLFExtra(t *testing.T) {
+	if a, tok, err := splitCRLF(nil, true); a != 0 || tok != nil || err != nil {
+		t.Fatalf("EOF 空输入: %d %q %v", a, tok, err)
+	}
+	if a, tok, err := splitCRLF([]byte("abc"), false); a != 0 || tok != nil || err != nil {
+		t.Fatalf("不完整数据应等待: %d %q %v", a, tok, err)
+	}
+	if a, tok, err := splitCRLF([]byte("abc"), true); a != 3 || string(tok) != "abc" || err != nil {
+		t.Fatalf("EOF 冲刷: %d %q %v", a, tok, err)
+	}
+	if a, tok, err := splitCRLF([]byte("x\r"), true); a != 2 || string(tok) != "x" || err != nil {
+		t.Fatalf("\\r 结尾: %d %q %v", a, tok, err)
+	}
+	if a, tok, err := splitCRLF([]byte("p\rq\n"), false); a != 2 || string(tok) != "p" || err != nil {
+		t.Fatalf("\r 进度条前缀: %d %q %v", a, tok, err)
+	}
+}
