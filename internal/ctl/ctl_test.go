@@ -137,22 +137,99 @@ func TestListenRefusesWhenSocketOwned(t *testing.T) {
 
 // 回归（#14）：高并发拨号 + Close 锤击 —— Serve 的 wg.Add 不得与 Close 的
 // wg.Wait 并发（Accept 在关停窗口内成功返回的迟到连接是原触发路径）。
-func TestServeConcurrentDialCloseNoRace(t *testing.T) {
-	for i := 0; i < 50; i++ {
-		sock := sockPath(t, fmt.Sprintf("race%d", i))
+// —— Close 活性（#18）：挂起连接 / 在途 handler / 幂等 / 并发冒烟 ——
+
+// 确定性复现：一个客户端保持连接不关，Close 必须有界返回。
+// （旧版 50 轮 × 4 dialer 的压力循环只能 ~40% 概率命中窗口，且单跑 ~30s。）
+func TestCloseReturnsWithIdleConnection(t *testing.T) {
+	sock := sockPath(t, "idle")
+	srv, err := Listen(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go srv.Serve(func(req Request, respond func(Response)) { respond(Response{OK: true}) })
+
+	c, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close() // 故意跨 Close 保持打开
+
+	done := make(chan struct{})
+	go func() { srv.Close(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("客户端仍连接时 Close() 未返回（#18 回归）")
+	}
+}
+
+// 在途 handler 不受连接关闭影响（如代理刷写）—— Close 靠兜底时限有界返回。
+func TestCloseBoundsWhenHandlerInFlight(t *testing.T) {
+	oldGrace := closeGrace
+	closeGrace = 100 * time.Millisecond
+	t.Cleanup(func() { closeGrace = oldGrace })
+
+	sock := sockPath(t, "inflight")
+	srv, err := Listen(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	go srv.Serve(func(req Request, respond func(Response)) {
+		close(started)
+		time.Sleep(500 * time.Millisecond) // 模拟长 handler
+		respond(Response{OK: true})
+	})
+	c, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	fmt.Fprintln(c, `{"cmd":"status"}`)
+	<-started
+
+	t0 := time.Now()
+	srv.Close()
+	if d := time.Since(t0); d > time.Second {
+		t.Fatalf("在途 handler 时 Close 应在兜底时限内返回，实际 %s", d)
+	}
+	if d := time.Since(t0); d < closeGrace {
+		t.Fatalf("兜底未生效（%s 就返回了）", d)
+	}
+}
+
+// Close 幂等：重复调用不 panic（stopCh 只关一次）。
+func TestCloseIdempotent(t *testing.T) {
+	sock := sockPath(t, "idem")
+	srv, err := Listen(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go srv.Serve(func(req Request, respond func(Response)) { respond(Response{OK: true}) })
+	srv.Close()
+	srv.Close() // 不得 panic
+	if _, err := os.Stat(sock); !os.IsNotExist(err) {
+		t.Fatal("重复 Close 后 socket 文件应已删除")
+	}
+}
+
+// 并发拨号/关闭冒烟（-race 下验证 Add/Wait 与连接注册的同步）。
+func TestServeConcurrentDialCloseSmoke(t *testing.T) {
+	for i := 0; i < 10; i++ {
+		sock := sockPath(t, fmt.Sprintf("smoke%d", i))
 		srv, err := Listen(sock)
 		if err != nil {
 			t.Fatal(err)
 		}
 		go srv.Serve(func(req Request, respond func(Response)) { respond(Response{OK: true}) })
-
-		stop := make(chan struct{})
 		var dialers sync.WaitGroup
-		for j := 0; j < 4; j++ {
+		stop := make(chan struct{})
+		for j := 0; j < 2; j++ {
 			dialers.Add(1)
 			go func() {
 				defer dialers.Done()
-				for {
+				for k := 0; k < 20; k++ { // 有界：不再热循环
 					select {
 					case <-stop:
 						return
@@ -164,8 +241,14 @@ func TestServeConcurrentDialCloseNoRace(t *testing.T) {
 				}
 			}()
 		}
-		time.Sleep(time.Duration(i%5) * time.Millisecond) // 每轮错开相位，扫过竞争窗口
-		srv.Close()
+		time.Sleep(time.Duration(i) * time.Millisecond)
+		done := make(chan struct{})
+		go func() { srv.Close(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("第 %d 轮 Close 未返回", i)
+		}
 		close(stop)
 		dialers.Wait()
 	}
