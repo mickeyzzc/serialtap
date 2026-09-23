@@ -66,6 +66,9 @@ type Server struct {
 	ln     net.Listener
 	wg     sync.WaitGroup
 	stopCh chan struct{}
+
+	mu     sync.Mutex
+	closed bool // Close 已开始（Serve 不得再注册新连接：wg.Add 与 wg.Wait 并发是数据竞争，#14）
 }
 
 // DefaultSocketPath: 平台相关（socketpath_unix.go / socketpath_windows.go）。
@@ -114,7 +117,15 @@ func (s *Server) Serve(h Handler) {
 				continue
 			}
 		}
+		s.mu.Lock()
+		if s.closed {
+			// Close 已在进行：这条迟到连接不能注册（Add 不得与 Wait 并发），直接丢弃
+			s.mu.Unlock()
+			_ = conn.Close()
+			continue
+		}
 		s.wg.Add(1)
+		s.mu.Unlock()
 		go func() {
 			defer s.wg.Done()
 			s.handleConn(conn, h)
@@ -139,6 +150,9 @@ func (s *Server) handleConn(conn net.Conn, h Handler) {
 
 // Close: 停止接受并等待在途连接结束，删除 socket 文件。
 func (s *Server) Close() {
+	s.mu.Lock()
+	s.closed = true
+	s.mu.Unlock()
 	close(s.stopCh)
 	_ = s.ln.Close()
 	s.wg.Wait()
