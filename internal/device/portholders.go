@@ -49,3 +49,7 @@ func PortHoldersAt(procRoot, tty string) []int {
 func PortHolders(tty string) []int {
 	return PortHoldersAt("/proc", tty)
 }
+
+// IdleDetectSupported: 本平台能否检测"端口被谁占用"（release 的空闲自动回采依赖）。
+// Linux 走 /proc，macOS 走 lsof，均只读探测。
+func IdleDetectSupported() bool { return true }

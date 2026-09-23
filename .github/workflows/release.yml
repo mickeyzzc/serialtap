@@ -17,13 +17,19 @@ jobs:
           go-version-file: go.mod
       - name: Build binaries
         run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags '-s -w' -o dist/serialtap-linux-amd64 .
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags '-s -w' -o dist/serialtap-linux-arm64 .
-          cd dist && sha256sum serialtap-linux-* > sha256sums.txt
+          for os in linux darwin windows; do
+            for arch in amd64 arm64; do
+              ext=""
+              [ "$os" = "windows" ] && ext=".exe"
+              CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags '-s -w' \
+                -o "dist/serialtap-$os-$arch$ext" .
+            done
+          done
+          cd dist && sha256sum serialtap-* > sha256sums.txt
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/serialtap-linux-amd64 dist/serialtap-linux-arm64 dist/sha256sums.txt \
+          gh release create "$GITHUB_REF_NAME" dist/serialtap-* \
             --title "serialtap ${GITHUB_REF_NAME}" \
             --generate-notes

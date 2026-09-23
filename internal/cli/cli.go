@@ -2,6 +2,7 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -24,6 +25,7 @@ import (
 	"github.com/mickeyzzc/serialtap/internal/pause"
 	"github.com/mickeyzzc/serialtap/internal/signature"
 	"github.com/mickeyzzc/serialtap/internal/tray"
+	"github.com/mickeyzzc/serialtap/internal/web"
 )
 
 const Version = "0.1.0"
@@ -43,9 +45,18 @@ func usage() {
       [--elf F] [--addr2line BIN] [--config F]
   serialtap pause [RE]...                暂停采集（省略=全部）
   serialtap resume [RE]...               恢复采集（省略=全部）
+  serialtap tray                         Windows 托盘常驻：状态/按设备暂停恢复/开日志
+      [--config F] [--root DIR] [--sock PATH] [--poll-ms N]
+  serialtap proxy RE [--stop]            透明 USB 代理：为匹配设备开 TCP 端点透传串口
+                                         （对业务程序等同直连；期间采集照常，可配 proxy_tap_exclude）
   serialtap release RE [--for 5m]        临时让出串口给外部工具（默认空闲 3s 自动回采）
   serialtap flash RE <bin>[@0x10000]...  代理刷固件：让口 → esptool → 自动回采
-      [--args-file F] [--esptool CMD] [--baud N] [--chip C]
+      [--args-file F] [--esptool CMD] [--baud N] [--chip C] [--dry-run] [--all]
+                                         （RE 匹配多台时默认拒绝，防误刷在测设备；批量刷给 --all）
+  serialtap reopen RE [--all]            串口层软断开重连：立即关口→跳过退避重开
+                                         （端口疑似卡死时自愈；会打断透传会话，客户端重连即可）
+  serialtap reset RE [--all]             USB 层软拔插：让口 → pnputil 重启设备节点 → 回采
+                                         （设备在总线但驱动/端口僵死时；需管理员——非提权守护自动弹 UAC）
   serialtap status                       查看守护进程与设备实时状态
   serialtap version
 
@@ -106,14 +117,22 @@ func Run(args []string) int {
 		err = cmdDecodeCLI(args[1:])
 	case "status":
 		err = cmdStatus(args[1:])
+	case "proxy":
+		err = cmdProxy(args[1:])
 	case "release":
 		err = cmdRelease(args[1:])
 	case "flash":
 		err = cmdFlash(args[1:])
+	case "reopen":
+		err = cmdReopen(args[1:])
+	case "reset":
+		err = cmdReset(args[1:])
 	case "pause":
 		err = cmdPauseSocket(args[1:], true)
 	case "resume":
 		err = cmdPauseSocket(args[1:], false)
+	case "tray":
+		err = cmdTray(args[1:])
 	case "version":
 		fmt.Println("serialtap " + Version)
 	default:
@@ -153,11 +172,15 @@ func cmdRun(args []string) error {
 	fs.Var(&exclude, "exclude", "忽略设备正则（可多次）")
 	sockFlag := fs.String("sock", "", "控制 socket 路径（默认自动；被占用时启动会被拒绝）")
 	noTray := fs.Bool("no-tray", false, "不进驻托盘/菜单栏（macOS 默认进驻）")
+	webFlag := fs.String("web", "", "Web 观测面板地址（默认 127.0.0.1:8801；off = 关闭）")
 	parseFlags(fs, args)
 
 	cfg, err := loadCfgMerged(*cfgPath, *root, *baud)
 	if err != nil {
 		return err
+	}
+	if *webFlag != "" {
+		cfg.WebAddr = *webFlag
 	}
 	if *pollMs > 0 {
 		cfg.PollMs = *pollMs
@@ -195,7 +218,7 @@ func cmdRun(args []string) error {
 		return err
 	}
 	defer ctlSrv.Close()
-	go ctlSrv.Serve(func(req ctl.Request, respond func(ctl.Response)) {
+	handler := func(req ctl.Request, respond func(ctl.Response)) {
 		switch req.Cmd {
 		case "status":
 			respond(ctl.Response{OK: true, Devices: d.Status()})
@@ -216,6 +239,22 @@ func cmdRun(args []string) error {
 				return
 			}
 			respond(ctl.Response{OK: true})
+		case "proxy":
+			if req.Action == "stop" {
+				n, err := d.ProxyStop(req.Pattern)
+				if err != nil {
+					respond(ctl.Response{OK: false, Error: err.Error()})
+					return
+				}
+				respond(ctl.Response{OK: true, Line: fmt.Sprintf("%d", n)})
+				return
+			}
+			ep, devName, devKey, err := d.ProxyStart(req.Pattern)
+			if err != nil {
+				respond(ctl.Response{OK: false, Error: err.Error()})
+				return
+			}
+			respond(ctl.Response{OK: true, Endpoint: ep, Device: devName, DeviceKey: devKey})
 		case "release":
 			forDur := time.Duration(req.ForMs) * time.Millisecond
 			n, err := d.Release(req.Pattern, forDur, req.UntilIdle)
@@ -225,7 +264,7 @@ func cmdRun(args []string) error {
 			}
 			respond(ctl.Response{OK: true, Line: fmt.Sprintf("%d", n)})
 		case "flash":
-			err := d.Flash(req.Pattern, req.Spec, func(line string) {
+			err := d.Flash(req.Pattern, req.All, req.Spec, func(line string) {
 				respond(ctl.Response{OK: true, Event: "flash-log", Line: line})
 			})
 			if err != nil {
@@ -233,11 +272,39 @@ func cmdRun(args []string) error {
 				return
 			}
 			respond(ctl.Response{OK: true, Event: "flash-done"})
+		case "reopen":
+			n, err := d.Reopen(req.Pattern, req.All)
+			if err != nil {
+				respond(ctl.Response{OK: false, Error: err.Error()})
+				return
+			}
+			respond(ctl.Response{OK: true, Line: fmt.Sprintf("%d", n)})
+		case "reset":
+			if err := d.Reset(req.Pattern, req.All); err != nil {
+				respond(ctl.Response{OK: false, Error: err.Error()})
+				return
+			}
+			respond(ctl.Response{OK: true})
 		default:
 			respond(ctl.Response{OK: false, Error: "unknown cmd: " + req.Cmd})
 		}
-	})
+	}
+	go ctlSrv.Serve(handler)
 	stdoutLog("[ctl] 控制通道: %s", sockPath)
+
+	// Web 观测面板：状态/实时日志/事件只读展示 + 暂停/恢复/代理操作。
+	// 操作经 commander 桥到上面同一条 ctl 处理路径 —— 面板不引入第二套控制逻辑。
+	webCmd := func(req ctl.Request) (ctl.Response, error) {
+		switch req.Cmd {
+		case "status", "pause", "resume", "proxy":
+			var resp ctl.Response
+			handler(req, func(r ctl.Response) { resp = r })
+			return resp, nil
+		}
+		return ctl.Response{}, fmt.Errorf("面板不支持该命令（走 CLI）: %s", req.Cmd)
+	}
+	webSrv := web.Start(cfg.WebAddr, cfg.Root, d.Status, webCmd, stdoutLog)
+	defer webSrv.Close()
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
@@ -294,8 +361,13 @@ func stateZH(s string) string {
 }
 
 func trayHost(d *daemon.Daemon, cfg config.Config, quit func()) tray.Host {
+	panelURL := "" // 与 Windows 托盘同语义：PickAddr 归一化，"off"/空地址 → 不显示按钮
+	if addr := web.PickAddr(cfg.WebAddr); addr != "" {
+		panelURL = "http://" + addr + "/"
+	}
 	return tray.Host{
-		Version: Version,
+		Version:  Version,
+		PanelURL: panelURL,
 		Status: func() []string {
 			devs := d.Status()
 			if len(devs) == 0 {
@@ -459,25 +531,65 @@ func cmdStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
 	sock := fs.String("sock", "", "控制 socket 路径（默认自动）")
 	parseFlags(fs, args)
-	return ctlSend(*sock, ctl.Request{Cmd: "status"}, func(r ctl.Response) bool {
+	var respErr string
+	err := ctlSend(*sock, ctl.Request{Cmd: "status"}, func(r ctl.Response) bool {
 		if !r.OK {
-			return errOut(r.Error)
+			respErr = r.Error // 统一由 Run 的错误出口打印
+			return true
 		}
 		if len(r.Devices) == 0 {
 			fmt.Println("（无采集设备）")
 			return true
 		}
-		fmt.Printf("%-16s %-14s %-10s %s\n", "NAME", "TTY", "STATE", "KEY")
+		fmt.Printf("%-16s %-14s %-10s %-24s %s\n", "NAME", "TTY", "STATE", "PROXY", "KEY")
 		for _, d := range r.Devices {
-			fmt.Printf("%-16s %-14s %-10s %s\n", d.Name, d.Tty, d.State, d.Key)
+			px := "-"
+			if d.Proxy != "" {
+				px = d.Proxy
+			}
+			fmt.Printf("%-16s %-14s %-10s %-24s %s\n", d.Name, d.Tty, d.State, px, d.Key)
 		}
 		return true
 	})
+	if respErr != "" {
+		return fmt.Errorf("%s", respErr)
+	}
+	return err
 }
 
-func errOut(msg string) bool {
-	fmt.Fprintln(os.Stderr, "错误:", msg)
-	return true
+func cmdProxy(args []string) error {
+	fs := flag.NewFlagSet("proxy", flag.ExitOnError)
+	sock := fs.String("sock", "", "控制 socket 路径")
+	stop := fs.Bool("stop", false, "停止透传（默认开启）")
+	pos := parseFlags(fs, args)
+	if len(pos) != 1 {
+		return fmt.Errorf("proxy 需要一个设备匹配正则，如 proxy luatos")
+	}
+	req := ctl.Request{Cmd: "proxy", Pattern: pos[0]}
+	if *stop {
+		req.Action = "stop"
+	}
+	var respErr string
+	err := ctlSend(*sock, req, func(r ctl.Response) bool {
+		if !r.OK {
+			respErr = r.Error
+			return true
+		}
+		if req.Action == "stop" {
+			fmt.Printf("已停止透传（%s）\n", pos[0])
+		} else {
+			dev := pos[0]
+			if r.Device != "" {
+				dev = r.Device // 守护侧确认的端点所属设备（多板同名时以它为准）
+			}
+			fmt.Printf("透传端点: %s\n设备 %s 的串口现在可经该 TCP 端点直接读写（采集照常）\n", r.Endpoint, dev)
+		}
+		return true
+	})
+	if respErr != "" {
+		return fmt.Errorf("%s", respErr)
+	}
+	return err
 }
 
 func cmdRelease(args []string) error {
@@ -497,9 +609,11 @@ func cmdRelease(args []string) error {
 		req.ForMs = d.Milliseconds()
 		req.UntilIdle = false
 	}
-	return ctlSend(*sock, req, func(r ctl.Response) bool {
+	var respErr string
+	err := ctlSend(*sock, req, func(r ctl.Response) bool {
 		if !r.OK {
-			return errOut(r.Error)
+			respErr = r.Error // 统一由 Run 的错误出口打印
+			return true
 		}
 		if req.ForMs > 0 {
 			fmt.Printf("已让出端口（%s 限时 %s 后自动回采）—— 其他工具现在可用该口\n", pos[0], *forDur)
@@ -508,6 +622,47 @@ func cmdRelease(args []string) error {
 		}
 		return true
 	})
+	if respErr != "" {
+		return fmt.Errorf("%s", respErr)
+	}
+	return err
+}
+
+// noRetryError 标记不值得重试的失败（如守护进程不可达）。
+type noRetryError struct{ error }
+
+// flashRetry 让 flash 命令在客户端侧按次数重试。动机：Windows 上
+// USB-CDC 设备复位/重枚举后的首次 open / SetCommState 常以
+// ERROR_GEN_FAILURE 瞬时失败（实测 ESP32-S3 USB-Serial-JTAG，
+// 2026-09-22），esptool 不做任何重试 —— 单发 CLI 一撞即退。
+// 每次重试都会让守护进程完整走一遍 让口 → esptool → 回采 编排，
+// 幂等且顺带充当了端口的"预热开合"。
+type flashRetry struct {
+	attempts int           // 总尝试次数（含首次），1 = 不重试
+	wait     time.Duration // 尝试间隔
+	sleep    func(time.Duration)
+	logf     func(string, ...any)
+}
+
+func (r flashRetry) run(op func() error) error {
+	var err error
+	for i := 1; i <= r.attempts; i++ {
+		if i > 1 {
+			r.logf("—— flash 第 %d/%d 次尝试 ——", i, r.attempts)
+		}
+		if err = op(); err == nil {
+			return nil
+		}
+		var nr noRetryError
+		if errors.As(err, &nr) {
+			return nr.error
+		}
+		if i < r.attempts {
+			r.logf("— 尝试失败（%s），%s 后重试", err, r.wait)
+			r.sleep(r.wait)
+		}
+	}
+	return err
 }
 
 func cmdFlash(args []string) error {
@@ -518,6 +673,10 @@ func cmdFlash(args []string) error {
 	baud := fs.Int("baud", 0, "刷写波特率")
 	chip := fs.String("chip", "", "芯片类型（如 esp32s3，省略自动识别）")
 	argsFile := fs.String("args-file", "", "ESP-IDF build/flasher_args.json（与其余 bin 参数二选一）")
+	dryRun := fs.Bool("dry-run", false, "只预演：显示每台匹配设备将执行的 esptool 命令，不动端口")
+	all := fs.Bool("all", false, "模式匹配多台设备时仍逐台刷（默认拒绝——多板同名时防误刷在测设备，精确刷一台请锚定正则）")
+	retries := fs.Int("retries", 3, "失败重试总次数（含首次；Windows CDC 复位后首开常瞬时失败，1=不重试）")
+	retryWait := fs.Duration("retry-wait", 5*time.Second, "重试间隔")
 	pos := parseFlags(fs, args)
 	if len(pos) < 1 || (len(pos) < 2 && *argsFile == "") {
 		return fmt.Errorf("用法: flash <设备正则> <镜像>[@<offset>]... 或 --args-file build/flasher_args.json")
@@ -526,7 +685,7 @@ func cmdFlash(args []string) error {
 	if err != nil {
 		return err
 	}
-	spec := flash.Spec{ArgsFile: *argsFile}
+	spec := flash.Spec{ArgsFile: *argsFile, DryRun: *dryRun}
 	if *esptool != "" {
 		spec.Esptool = *esptool
 	} else if cfg.Esptool != "" {
@@ -545,28 +704,102 @@ func cmdFlash(args []string) error {
 		}
 		spec.Bins = append(spec.Bins, bin)
 	}
-	return ctlSend(*sock, ctl.Request{Cmd: "flash", Pattern: pos[0], Spec: spec}, func(r ctl.Response) bool {
-		switch r.Event {
-		case "flash-log":
-			fmt.Println(r.Line)
-			return false
-		case "flash-done":
-			if !r.OK {
-				fmt.Fprintf(os.Stderr, "刷写失败: %s\n", r.Error)
-			} else {
-				fmt.Println("✓ 刷写完成，已恢复采集")
+	// flash-done 带 ok=false 时 ctlSend 本身不报错（协议层正常），
+	// 退出码要反映刷写失败 —— 脚本化调用依赖它。
+	// 传输层错误（守护进程不可达等）包成 noRetryError：重试无益。
+	runOnce := func() error {
+		var flashErr error
+		err = ctlSend(*sock, ctl.Request{Cmd: "flash", Pattern: pos[0], All: *all, Spec: spec}, func(r ctl.Response) bool {
+			switch r.Event {
+			case "flash-log":
+				fmt.Println(r.Line)
+				return false
+			case "flash-done":
+				if !r.OK {
+					flashErr = fmt.Errorf("刷写失败: %s", r.Error)
+				} else {
+					fmt.Println("✓ 刷写完成，已恢复采集")
+				}
+				return true
+			default:
+				if !r.OK {
+					flashErr = fmt.Errorf("%s", r.Error)
+					return true
+				}
+				return false
 			}
-			return true
-		default:
-			if !r.OK {
-				return errOut(r.Error)
-			}
-			return false
+		})
+		if err != nil {
+			return noRetryError{err}
 		}
-	})
+		return flashErr
+	}
+	attempts := *retries
+	if *dryRun || attempts < 1 {
+		attempts = 1
+	}
+	return flashRetry{
+		attempts: attempts,
+		wait:     *retryWait,
+		sleep:    time.Sleep,
+		logf:     func(f string, a ...any) { fmt.Printf(f+"\n", a...) },
+	}.run(runOnce)
 }
 
-// pause/resume：守护进程在 → socket（立即生效且走同一文件语义）；不在 → 直接改文件
+// —— 串口层/USB 层软断开重连 ——
+
+// cmdReopen: 串口层软断开重连（立即关口→跳过退避重开；打断透传会话）。
+func cmdReopen(args []string) error {
+	fs := flag.NewFlagSet("reopen", flag.ExitOnError)
+	sock := fs.String("sock", "", "控制 socket 路径")
+	all := fs.Bool("all", false, "模式匹配多台设备时仍逐台重开（默认拒绝——精确操作一台请锚定正则）")
+	pos := parseFlags(fs, args)
+	if len(pos) != 1 {
+		return fmt.Errorf("reopen 需要一个设备匹配正则，如 reopen '^sense-c3$'")
+	}
+	var respErr string
+	err := ctlSend(*sock, ctl.Request{Cmd: "reopen", Pattern: pos[0], All: *all}, func(r ctl.Response) bool {
+		if !r.OK {
+			respErr = r.Error
+			return true
+		}
+		fmt.Printf("已触发 %s 台设备的串口软重连（关口→立即重开；透传客户端会断开，重连即可）\n", r.Line)
+		return true
+	})
+	if respErr != "" {
+		return fmt.Errorf("%s", respErr)
+	}
+	return err
+}
+
+// cmdReset: USB 层软拔插（让口 → pnputil 重启设备节点 → 回采，需管理员）。
+func cmdReset(args []string) error {
+	fs := flag.NewFlagSet("reset", flag.ExitOnError)
+	sock := fs.String("sock", "", "控制 socket 路径")
+	all := fs.Bool("all", false, "模式匹配多台设备时仍逐台重置（默认拒绝——精确操作一台请锚定正则）")
+	pos := parseFlags(fs, args)
+	if len(pos) != 1 {
+		return fmt.Errorf("reset 需要一个设备匹配正则，如 reset '^s3zero$'")
+	}
+	fmt.Println("USB 软重置中：让口 → pnputil 重启设备节点（若弹出 UAC 请确认）→ 回采…")
+	var respErr string
+	err := ctlSend(*sock, ctl.Request{Cmd: "reset", Pattern: pos[0], All: *all}, func(r ctl.Response) bool {
+		if !r.OK {
+			respErr = r.Error
+			return true
+		}
+		fmt.Println("✓ USB 设备节点已重启，采集已恢复")
+		return true
+	})
+	if respErr != "" {
+		return fmt.Errorf("%s", respErr)
+	}
+	return err
+}
+
+// pause/resume：守护进程在 → socket（立即生效且走同一文件语义）；不在 → 直接改文件。
+// 服务端拒绝（ok:false，如"刷写进行中"）必须原样报错退出 —— 不能回退文件直改
+// （守护明明活着），也不能谎报成功。
 func cmdPauseSocket(args []string, pauseMode bool) error {
 	fs := flag.NewFlagSet("pause/resume", flag.ExitOnError)
 	sock := fs.String("sock", "", "控制 socket 路径")
@@ -580,8 +813,18 @@ func cmdPauseSocket(args []string, pauseMode bool) error {
 	if pauseMode {
 		cmd = "pause"
 	}
-	err := ctlSend(*sock, ctl.Request{Cmd: cmd, Pattern: pattern}, func(r ctl.Response) bool { return true })
+	var respErr string
+	err := ctlSend(*sock, ctl.Request{Cmd: cmd, Pattern: pattern},
+		func(r ctl.Response) bool {
+			if !r.OK && r.Error != "" {
+				respErr = r.Error
+			}
+			return true
+		})
 	if err == nil {
+		if respErr != "" {
+			return fmt.Errorf("%s", respErr)
+		}
 		if pauseMode {
 			fmt.Println("已暂停（守护进程已生效）")
 		} else {
@@ -589,6 +832,6 @@ func cmdPauseSocket(args []string, pauseMode bool) error {
 		}
 		return nil
 	}
-	// 守护不在 → 文件直改（历史行为）
+	// 守护不在（连接失败）→ 文件直改（历史行为）
 	return cmdPauseCLI(args, pauseMode)
 }

@@ -50,6 +50,7 @@ func TestLoadMissingPathUsesDefaults(t *testing.T) {
 func TestDefaultConfigPath(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // Windows 的 os.UserHomeDir 走 USERPROFILE
 	if p := DefaultConfigPath(); !strings.HasPrefix(p, home) || !strings.HasSuffix(p, "config.json") {
 		t.Fatalf("默认路径异常: %q", p)
 	}

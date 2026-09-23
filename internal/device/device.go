@@ -36,6 +36,30 @@ var builtinNameRules = []config.NameRule{
 	{Match: `usb-303a_`, Name: "esp32s3-jtag"}, // Espressif 原生 USB（VID 303a）
 }
 
+// 内置 VID:PID 命名规则（精确匹配）。by-id 规则未命中时套用：
+// Linux 上 by-id 规则先命中（结果一致，冗余无害）；Windows/macOS 的 by-id 字符串
+// 形态不同，枚举层拿到 VID:PID 时靠这对设备定型。
+type vidRule struct{ VID, PID, Name string }
+
+var builtinVIDRules = []vidRule{
+	{VID: "1a86", PID: "7523", Name: "ch340"},
+	{VID: "1a86", PID: "7522", Name: "ch343"},
+	{VID: "1a86", PID: "55d3", Name: "ch343"},
+	{VID: "303a", PID: "1001", Name: "esp32s3-jtag"}, // 原生 USB-JTAG/串口
+}
+
+func applyVIDRules(vid, pid string) string {
+	if vid == "" || pid == "" {
+		return ""
+	}
+	for _, r := range builtinVIDRules {
+		if r.VID == vid && r.PID == pid {
+			return r.Name
+		}
+	}
+	return ""
+}
+
 func applyNameRules(rules []config.NameRule, byID string) string {
 	for _, r := range rules {
 		if r.Match == "" || r.Name == "" {
@@ -65,6 +89,9 @@ func buildDevices(ports []string, byID, byPath map[string]string,
 		name := applyNameRules(names, idv)
 		if name == "" {
 			name = applyNameRules(builtinNameRules, idv)
+		}
+		if name == "" {
+			name = applyVIDRules(vid, pid)
 		}
 		if name == "" {
 			if idv != "" {

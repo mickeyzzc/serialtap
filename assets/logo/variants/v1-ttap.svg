@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="serialtap logo variant 1: T-tap">
+  <!-- V1 T·Tap —— T 型分接头：串口总线中段垂直引出抽头，tap 的字面意象 -->
+  <g fill="none" stroke-linecap="round">
+    <path d="M14 36 H86" stroke="currentColor" stroke-width="10"/>
+    <path d="M50 36 V80" stroke="#2DD4BF" stroke-width="10"/>
+  </g>
+  <circle cx="14" cy="36" r="7" fill="currentColor"/>
+  <circle cx="86" cy="36" r="7" fill="currentColor"/>
+  <circle cx="50" cy="84" r="7" fill="#2DD4BF"/>
+</svg>

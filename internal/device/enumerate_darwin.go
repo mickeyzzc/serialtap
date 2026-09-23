@@ -33,6 +33,11 @@ type usbIdentity struct {
 	vid, pid, serial, loc string
 }
 
+// darwinUSBName: cu.* 里属于 USB 串口适配器的前缀（usb 覆盖 usbserial/usbmodem，
+// wch/SLAB/USA 为 WCH/CP210x/Keyspan 驱动的命名）——蓝牙/wlan-debug 等
+// 本机串口天然滤除。
+var darwinUSBName = regexp.MustCompile(`^cu\.(usb|wch|SLAB|USA)`)
+
 // ioregSource: ioreg 执行 seam（测试注入假输出）。portsSource 同理（端口清单 seam）。
 var (
 	ioregSource = func() (string, error) {
@@ -58,7 +63,7 @@ func Enumerate(exclude []*regexp.Regexp, names []config.NameRule) ([]DeviceInfo,
 	}
 	var ports []string
 	for _, p := range all {
-		if strings.HasPrefix(p, "/dev/cu.usb") {
+		if darwinUSBName.MatchString(filepath.Base(p)) {
 			ports = append(ports, p)
 		}
 	}

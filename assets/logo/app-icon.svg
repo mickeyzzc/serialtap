@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="serialtap app icon">
+  <!-- serialtap 应用图标（V2 Wave·Tap 落在深底圆角方上）：
+       方波 = 串口电平，低电平中点向下的抽头 = 在线分接（tap）；
+       深底保证浅色任务栏/浅色页面上也可见，圆角方是应用图标惯例。 -->
+  <rect x="2" y="2" width="96" height="96" rx="22" fill="#0F172A"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M14 32 H28 V52 H42 V32 H56 V52 H70 V32 H86" stroke="#E2E8F0" stroke-width="8"/>
+    <path d="M49 52 V76" stroke="#2DD4BF" stroke-width="8"/>
+  </g>
+  <circle cx="49" cy="82" r="6.5" fill="#2DD4BF"/>
+</svg>

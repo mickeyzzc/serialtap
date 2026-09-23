@@ -13,6 +13,7 @@
     { "match": "USB_Single_Serial_XXXXXXXXXXXX", "name": "board-b" }
   ],
   "signatures_extra": ["NO-SOI"],
+  "proxy_tap_exclude": "",
   "elf_map": {
     "board-a": "/path/to/your/firmware/build/app.elf"
   }

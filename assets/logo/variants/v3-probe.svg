@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="serialtap logo variant 3: probe ring">
+  <!-- V3 Probe·Ring —— 同心环总线截面 + 探针搭线：wiretap 监听意象 -->
+  <g fill="none" stroke-linecap="round">
+    <circle cx="46" cy="46" r="26" stroke="currentColor" stroke-width="8"/>
+    <path d="M86 86 L64 64" stroke="currentColor" stroke-width="8"/>
+  </g>
+  <circle cx="46" cy="46" r="9" fill="#2DD4BF"/>
+</svg>

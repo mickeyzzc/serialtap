@@ -5,6 +5,7 @@ package tray
 import (
 	_ "embed"
 	"os"
+	"os/exec"
 	"strconv"
 	"time"
 
@@ -39,6 +40,7 @@ var (
 	mPause   *systray.MenuItem
 	mResume  *systray.MenuItem
 	mOpen    *systray.MenuItem
+	mWeb     *systray.MenuItem // PanelURL 空 = 未创建（nil channel = 分支禁用）
 	mQuit    *systray.MenuItem
 )
 
@@ -91,6 +93,9 @@ func onReady(h Host) {
 	mPause = systray.AddMenuItem("⏸ 暂停全部采集", "写入 PAUSED 清单并立即生效")
 	mResume = systray.AddMenuItem("▶ 恢复全部采集", "清空 PAUSED 清单并立即生效")
 	mOpen = systray.AddMenuItem("📂 打开日志目录", "在 Finder 中打开")
+	if h.PanelURL != "" {
+		mWeb = systray.AddMenuItem("🌐 打开 Web 面板", h.PanelURL)
+	}
 	systray.AddSeparator()
 	mQuit = systray.AddMenuItem("⏏ 退出 serialtap", "")
 
@@ -105,6 +110,11 @@ func onReady(h Host) {
 }
 
 func clickLoop(h Host) {
+	// mWeb 未创建时用 nil channel 永久阻塞该分支（PanelURL 空 = 面板关闭）
+	var webCh chan struct{}
+	if mWeb != nil {
+		webCh = mWeb.ClickedCh
+	}
 	for {
 		select {
 		case <-mPause.ClickedCh:
@@ -119,6 +129,8 @@ func clickLoop(h Host) {
 			refresh(h)
 		case <-mOpen.ClickedCh:
 			_ = h.OpenLogs()
+		case <-webCh:
+			_ = exec.Command("open", h.PanelURL).Start()
 		case <-mQuit.ClickedCh:
 			systray.Quit() // onExit → h.Quit 停守护循环
 			return

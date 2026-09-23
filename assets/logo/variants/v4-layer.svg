@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="serialtap logo variant 4: layer tap">
+  <!-- V4 Layer·Tap —— 三层堆叠（业务程序/中间层/板子），高亮的中间层向右引出端口 -->
+  <rect x="16" y="18" width="58" height="13" rx="6.5" fill="currentColor"/>
+  <rect x="16" y="43.5" width="58" height="13" rx="6.5" fill="#2DD4BF"/>
+  <rect x="16" y="69" width="58" height="13" rx="6.5" fill="currentColor"/>
+  <path d="M74 50 H84" stroke="#2DD4BF" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="88" cy="50" r="6" fill="none" stroke="#2DD4BF" stroke-width="6"/>
+</svg>

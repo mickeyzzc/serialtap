@@ -143,6 +143,23 @@ func TestCtlSubcommandsAgainstLiveServer(t *testing.T) {
 			}
 			respond(ctl.Response{OK: true, Event: "flash-log", Line: "progress 1"})
 			respond(ctl.Response{OK: true, Event: "flash-done"})
+		case "proxy":
+			if req.Pattern == "" {
+				respond(ctl.Response{OK: false, Error: "no pattern"})
+				return
+			}
+			if req.Action == "stop" {
+				respond(ctl.Response{OK: true, Line: "1"})
+				return
+			}
+			respond(ctl.Response{OK: true, Endpoint: "127.0.0.1:7100",
+				Device: "luatos", DeviceKey: "k1"})
+		case "reopen", "reset":
+			if req.Pattern == "" {
+				respond(ctl.Response{OK: false, Error: "no pattern"})
+				return
+			}
+			respond(ctl.Response{OK: true, Line: "1"})
 		default:
 			respond(ctl.Response{OK: true})
 		}
@@ -173,6 +190,31 @@ func TestCtlSubcommandsAgainstLiveServer(t *testing.T) {
 	if code := Run([]string{"release", "--sock", sock}); code != 1 {
 		t.Fatalf("release 缺设备应退出码 1: %d", code)
 	}
+	// proxy 开启（回端点）
+	if code := Run([]string{"proxy", "luatos", "--sock", sock}); code != 0 {
+		t.Fatalf("proxy 失败: %d", code)
+	}
+	// proxy 停止
+	if code := Run([]string{"proxy", "luatos", "--stop", "--sock", sock}); code != 0 {
+		t.Fatalf("proxy --stop 失败: %d", code)
+	}
+	// proxy 缺参数
+	if code := Run([]string{"proxy", "--sock", sock}); code != 1 {
+		t.Fatalf("proxy 缺设备应退出码 1: %d", code)
+	}
+	// reopen / reset（含 --all）
+	if code := Run([]string{"reopen", "^sense$", "--sock", sock}); code != 0 {
+		t.Fatalf("reopen 失败: %d", code)
+	}
+	if code := Run([]string{"reopen", "sense", "--all", "--sock", sock}); code != 0 {
+		t.Fatalf("reopen --all 失败: %d", code)
+	}
+	if code := Run([]string{"reset", "^s3zero$", "--sock", sock}); code != 0 {
+		t.Fatalf("reset 失败: %d", code)
+	}
+	if code := Run([]string{"reset", "--sock", sock}); code != 1 {
+		t.Fatalf("reset 缺设备应退出码 1: %d", code)
+	}
 	// --for 坏值
 	if code := Run([]string{"release", "x", "--for", "bad", "--sock", sock}); code != 1 {
 		t.Fatalf("坏 --for 应退出码 1: %d", code)
@@ -191,5 +233,35 @@ func TestPauseFallsBackToFileWhenNoDaemon(t *testing.T) {
 	}
 	if code := Run([]string{"resume", "--sock", sock, "--root", root}); code != 0 {
 		t.Fatalf("resume 文件回退失败: %d", code)
+	}
+}
+
+// 服务端 ok:false 必须反映为非零退出码（此前 release/status/pause 只打
+// stderr 却退出 0，脚本化会误判成功）
+func TestCtlServerErrorPropagatesExitCode(t *testing.T) {
+	// TODO(Windows): 本测试在 windows runner 上死锁（ctl.Send/Accept 在 Go 的
+	// af_unix 实现上不返回，10m 超时）。该分支此前从未在 Windows 跑过测试，
+	// 属既有问题 —— 需在 Windows 上定位后恢复。
+	if runtime.GOOS == "windows" {
+		t.Skip("ctl unix socket 在 Windows 上存在死锁，见 TODO")
+	}
+	sock := ctlSockPath(t, "ctl-err")
+	srv, err := ctl.Listen(sock)
+	if err != nil {
+		t.Skipf("本平台无法监听 unix socket: %v", err)
+	}
+	t.Cleanup(srv.Close)
+	go srv.Serve(func(req ctl.Request, respond func(ctl.Response)) {
+		respond(ctl.Response{OK: false, Error: "boom"})
+	})
+	for _, args := range [][]string{
+		{"status", "--sock", sock},
+		{"release", "x", "--sock", sock},
+		{"pause", "--sock", sock},
+		{"resume", "--sock", sock},
+	} {
+		if rc := Run(args); rc != 1 {
+			t.Fatalf("Run(%v) = %d, want 1", args, rc)
+		}
 	}
 }

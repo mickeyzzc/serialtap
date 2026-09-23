@@ -70,8 +70,10 @@ func TestBuildDevicesConfigNamesWinAndExclude(t *testing.T) {
 		t.Fatalf("exclude name 失败: %+v", got)
 	}
 
+	// by-id 基名兜底只在 VID:PID 无内置规则时触发（新命名链 VID 规则优先于兜底）
 	byID2 := map[string]string{"ttyUSB0": "weird-device"}
-	if got := buildDevices(ports, byID2, byPath, id, nil, nil); len(got) != 1 || got[0].Name != "weird-device" {
+	unknownID := func(string) (string, string) { return "10c4", "ea60" } // CP210x：无内置规则
+	if got := buildDevices(ports, byID2, byPath, unknownID, nil, nil); len(got) != 1 || got[0].Name != "weird-device" {
 		t.Fatalf("by-id 兜底命名失败: %+v", got)
 	}
 }
@@ -133,17 +135,7 @@ func TestEnumerateRealNoError(t *testing.T) {
 	}
 }
 
-func TestSanitizeName(t *testing.T) {
-	if got := SanitizeName("usb-1a86_USB Serial/我们"); got != SanitizeName(got) || len(got) == 0 {
-		t.Fatalf(" sanitize 不幂等或为空: %q", got)
-	}
-	if SanitizeName("...") == "" {
-		t.Fatal("不应返回空名")
-	}
-	if SanitizeName("a/b\\c*d") != "a-b-c-d" {
-		t.Fatalf("非法字符未替换: %q", SanitizeName("a/b\\c*d"))
-	}
-}
+// （TestSanitizeName 已上移到跨平台的 device_test.go）
 
 // PortHolders: 用假 /proc 树验证 fd 符号链接扫描（含"不报自己"语义）
 func TestPortHoldersAtFakeProc(t *testing.T) {

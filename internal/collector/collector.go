@@ -1,12 +1,16 @@
 // Package collector 实现单设备采集器：open-once-and-hold 纪律、
-// DTR/RTS 释放、读错误弃 fd、可选静默看门狗、暂停响应。
+// DTR/RTS 释放、读错误弃 fd、可选静默看门狗、暂停响应，
+// 以及透明代理桥（业务程序经 serialtap 读写板子串口，见 proxy.go）。
 package collector
 
 import (
 	"bytes"
 	"fmt"
+	"net"
+	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	serial "go.bug.st/serial"
@@ -20,8 +24,10 @@ import (
 
 // Port: 采集器所需的最小串口面。生产实现包装 go.bug.st/serial，
 // 测试注入假端口（假端口驱动采集器全链路离线测试）。
+// Read 与 Write 并发安全（全双工桥接的前提：串口句柄两个方向独立）。
 type Port interface {
 	Read(p []byte) (int, error)
+	Write(p []byte) (int, error)
 	Close() error
 	SetDTR(v bool) error
 	SetRTS(v bool) error
@@ -66,6 +72,16 @@ type Collector struct {
 	stopOnce sync.Once
 	stop     chan struct{}
 	sr       SuspendResume // 程序化让出/收回（release 与代理刷固件）
+
+	portMu    sync.Mutex  // 保护 curPort（Port 是接口，atomic.Value 存异构实现会
+	curPort   Port        // "inconsistently typed" panic；多测试假端口混用即触发）
+	reopenReq atomic.Bool // 串口层软重连请求（置位后本循环退出即跳过退避重开）
+
+	// 透传桥状态（见 proxy.go）
+	proxyMu    sync.Mutex     // 保护 proxyConn
+	proxyConn  net.Conn       // 当前代理客户端（单客户端，nil = 无会话）
+	portWriter atomic.Value   // func([]byte) error —— 端口写入口
+	tapExcl    *regexp.Regexp // 透传期间不落盘的行（proxy_tap_exclude）
 }
 
 func NewCollector(dev device.DeviceInfo, cfg config.Config, w *logstore.DeviceWriter,
@@ -76,6 +92,7 @@ func NewCollector(dev device.DeviceInfo, cfg config.Config, w *logstore.DeviceWr
 	return &Collector{
 		dev: dev, cfg: cfg, w: w, sigs: sigs, pause: p,
 		stdlog: stdlog, stop: make(chan struct{}),
+		tapExcl: compileTapExclude(cfg.ProxyTapExclude, stdlog),
 	}
 }
 
@@ -90,6 +107,21 @@ func (c *Collector) pauseState() *pause.PauseState { return c.pause }
 
 func (c *Collector) Stop() {
 	c.stopOnce.Do(func() { close(c.stop) })
+}
+
+// Reopen: 串口层软断开重连 —— 关闭当前端口句柄，采集循环读错误退出后
+// 跳过退避立即重开。不改变所有权与暂停语义（与 Suspend 不同），用于
+// 端口疑似驱动/对端卡死时的快速自愈。会打断进行中的透传会话（客户端
+// 按既有语义重连）。端口未开时仅置请求位，下次打开即按新句柄工作。
+func (c *Collector) Reopen() {
+	c.reopenReq.Store(true)
+	// 读立即报错 → collectOnce 退出 → 立即重开。残留旧值无害（Close 幂等）。
+	c.portMu.Lock()
+	p := c.curPort
+	c.portMu.Unlock()
+	if p != nil {
+		_ = p.Close()
+	}
 }
 
 // event: 生命周期事件进 events 文件 + 守护进程 stdout。
@@ -137,6 +169,7 @@ func (c *Collector) Run() {
 			return
 		default:
 		}
+		manualReopen := c.reopenReq.CompareAndSwap(true, false)
 		switch reason {
 		case reasonPaused:
 			// 外层循环处理等待
@@ -150,6 +183,11 @@ func (c *Collector) Run() {
 			}
 			backoff = min(backoff*2, maxBackoff)
 		default:
+			if manualReopen {
+				// 串口层软重连（Reopen() 触发）：立即重开，不退避
+				c.event("port cycle (manual reopen)")
+				continue
+			}
 			c.event("port lost (%s) — reopening in %s", reason, backoff)
 			if !c.sleep(backoff) {
 				return
@@ -174,15 +212,36 @@ func (c *Collector) collectOnce() (collectExit, error) {
 	if err != nil {
 		return reasonOpenFailed, err
 	}
+	c.portMu.Lock()
+	c.curPort = port
+	c.portMu.Unlock()
 	c.sr.portOpen.Store(true)
 	defer c.sr.portOpen.Store(false)
+	// 关口 defer 先注册（LIFO 后执行）：必须先摘写入口再关端口。
+	// 此前顺序相反 —— Close 与 proxy 泵的并发写竞态，Windows 重叠 IO
+	// 未及取消时 Close 静默失败（错误被 _ = 吞掉），句柄泄漏在守护进程
+	// 里，此后任何人（esptool/采集器重开）都打不开该口，只能重启守护
+	// （2026-09-22 s3zero 实测：proxy 会话 + pause 后端口永久 busy）。
+	defer func() {
+		// 写入口已在上一个 defer 摘除；给在途写 50ms 收尾再关
+		time.Sleep(50 * time.Millisecond)
+		if err := port.Close(); err != nil {
+			// 重叠 IO 取消可能瞬时失败：稍候重试一次，仍败则必须留痕
+			time.Sleep(150 * time.Millisecond)
+			if err2 := port.Close(); err2 != nil {
+				c.event("port close error: %v / retry %v（句柄可能泄漏，重启守护可解）", err, err2)
+			}
+		}
+	}()
+	// 透传桥的写入口：端口存续期间登记，关闭即撤销（见 proxy.go）
+	c.setPortWriter(port)
+	defer c.setPortWriter(nil)
 	// 见文件头注释第 2 条：open 后立即释放 DTR/RTS
 	_ = port.SetDTR(false)
 	_ = port.SetRTS(false)
 	// 1s 读超时：喂看门狗检查、响应 stop/pause（注意 v1.8 API 是 Duration，
 	// 传裸数字会成纳秒级忙轮询）
 	_ = port.SetReadTimeout(time.Second)
-	defer func() { _ = port.Close() }()
 	c.event("serial opened (%d baud)", c.cfg.Baud)
 
 	var asm lineAssembler
@@ -217,7 +276,15 @@ func (c *Collector) collectOnce() (collectExit, error) {
 			continue
 		}
 		lastRX = time.Now()
+		c.proxyOut(buf[:n]) // 透传：原始字节镜像给代理客户端（无客户端时零开销）
 		for _, line := range asm.feed(buf[:n]) {
+			if c.proxyTapDrop(line) {
+				// 透传期间的指定行不落全量日志（如高频遥测），签名照常
+				if sig, ok := c.matchSig(line); ok {
+					_ = c.w.WriteEvent(fmt.Sprintf("[%s] %s", sig, truncate(line, 200)))
+				}
+				continue
+			}
 			_ = c.w.WriteLine(line)
 			if sig, ok := c.matchSig(line); ok {
 				_ = c.w.WriteEvent(fmt.Sprintf("[%s] %s", sig, truncate(line, 200)))
