@@ -148,6 +148,7 @@ func TestServeConcurrentDialCloseNoRace(t *testing.T) {
 
 		stop := make(chan struct{})
 		var dialers sync.WaitGroup
+		d := net.Dialer{Timeout: 100 * time.Millisecond} // Windows AF_UNIX 对已关监听的 connect 可能永久阻塞，必须有界
 		for j := 0; j < 4; j++ {
 			dialers.Add(1)
 			go func() {
@@ -158,15 +159,17 @@ func TestServeConcurrentDialCloseNoRace(t *testing.T) {
 						return
 					default:
 					}
-					if c, derr := net.Dial("unix", sock); derr == nil {
+					if c, derr := d.Dial("unix", sock); derr == nil {
 						_ = c.Close()
 					}
 				}
 			}()
 		}
 		time.Sleep(time.Duration(i%5) * time.Millisecond) // 每轮错开相位，扫过竞争窗口
-		srv.Close()
+		// 先停拨号再 Close：closed-listener 风暴会卡死 Windows 的 connect；
+		// Add/Wait 竞态仍由 backlog 中未注册的连接覆盖
 		close(stop)
 		dialers.Wait()
+		srv.Close()
 	}
 }

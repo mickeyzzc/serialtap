@@ -68,7 +68,8 @@ type Server struct {
 	stopCh chan struct{}
 
 	mu     sync.Mutex
-	closed bool // Close 已开始（Serve 不得再注册新连接：wg.Add 与 wg.Wait 并发是数据竞争，#14）
+	closed bool              // Close 已开始（Serve 不得再注册新连接：wg.Add 与 wg.Wait 并发是数据竞争，#14）
+	conns  map[net.Conn]bool // 已接受连接（Close 主动关闭以解锁 handler）
 }
 
 // DefaultSocketPath: 平台相关（socketpath_unix.go / socketpath_windows.go）。
@@ -152,10 +153,27 @@ func (s *Server) handleConn(conn net.Conn, h Handler) {
 func (s *Server) Close() {
 	s.mu.Lock()
 	s.closed = true
+	// 主动关闭全部已接受连接：handler 可能正阻塞在 Scan 等下一行 ——
+	// 客户端在服务端完成建联前就关连接时，Windows AF_UNIX 不保证送达 EOF，
+	// 只等 wg 会永久挂起（实测 #14 的并发测试在 Windows 挂死 600s 超时）
+	for c := range s.conns {
+		_ = c.Close()
+	}
 	s.mu.Unlock()
 	close(s.stopCh)
 	_ = s.ln.Close()
-	s.wg.Wait()
+	// 等待上限：Windows AF_UNIX 的 conn.Close() 不保证中止在途 Read
+	// （平台限制，实测 handler 可永久卡在 Scan）—— 超限放行，剩余 handler
+	// 只会向已死 socket 写入失败返回，无副作用
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+	}
 	_ = os.Remove(s.ln.Addr().String())
 }
 

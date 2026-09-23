@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- fix(ctl, windows): Close 的等待加上限 + 主动关闭已接受连接 —— Windows
+  AF_UNIX 两个平台限制实测：`conn.Close()` 不中止在途 Read（handler 永久卡
+  Scan，#14 并发测试挂死 600s）、对已关监听的 `connect()` 永久阻塞；测试侧
+  拨号改带超时且先停拨号再 Close（Add/Wait 竞态覆盖不变，由 backlog 未注册
+  连接承担）
 - **合流 feat/sense-pipeline**（Web 观测面板 / Windows 一等支持 / reopen·reset
   自愈 / 代理透传 / flash 强化 / Wave·Tap Logo）与 macOS 支持线，详见下方两组条目
 - **macOS 托盘「打开 Web 面板」按钮**：与 Windows 托盘同语义 —— `run` 内嵌启动的
