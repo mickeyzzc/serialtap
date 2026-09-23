@@ -25,7 +25,10 @@ func TestRunGracefulShutdownOnSIGTERM(t *testing.T) {
 	t.Cleanup(func() { signal.Reset(syscall.SIGTERM, syscall.SIGINT) })
 	done := make(chan int, 1)
 	go func() {
-		done <- Run([]string{"run", "--root", root, "--exclude", ".*", "--poll-ms", "50"})
+		// --sock/--web 隔离到测试自身：默认 socket 上可能有本机生产守护在监听
+		// （单实例防护会拒绝启动，测试误判优雅退出失败，#12）；默认面板端口同理。
+		done <- Run([]string{"run", "--root", root, "--exclude", ".*", "--poll-ms", "50",
+			"--sock", filepath.Join(root, "ctl.sock"), "--web", "off"})
 	}()
 	select {
 	case code := <-done:
