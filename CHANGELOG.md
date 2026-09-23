@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- 文档：中英双语完全拆分 —— `README.md`（英文）/ `README.zh-CN.md`（中文）
+  两个入口，`docs/en/` 与 `docs/zh-CN/` 各含五篇深度文档
+  （CLI 参考、配置参考、架构、控制协议、部署指南）
+
 ## v0.1.0 (2026-09-20)
 
 首个公开发布。
