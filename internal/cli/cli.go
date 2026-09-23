@@ -324,6 +324,7 @@ func trayHost(d *daemon.Daemon, cfg config.Config, quit func()) tray.Host {
 			return exec.Command("open", cfg.Root).Start()
 		},
 		Quit: quit,
+		Logf: stdoutLog,
 	}
 }
 
