@@ -73,8 +73,9 @@ type Collector struct {
 	stop     chan struct{}
 	sr       SuspendResume // 程序化让出/收回（release 与代理刷固件）
 
-	curPort   atomic.Value // Port —— 当前端口句柄（Reopen 软断开用；关闭后残留旧值，Close 幂等无害）
-	reopenReq atomic.Bool  // 串口层软重连请求（置位后本循环退出即跳过退避重开）
+	portMu    sync.Mutex  // 保护 curPort（Port 是接口，atomic.Value 存异构实现会
+	curPort   Port        // "inconsistently typed" panic；多测试假端口混用即触发）
+	reopenReq atomic.Bool // 串口层软重连请求（置位后本循环退出即跳过退避重开）
 
 	// 透传桥状态（见 proxy.go）
 	proxyMu    sync.Mutex     // 保护 proxyConn
@@ -114,10 +115,12 @@ func (c *Collector) Stop() {
 // 按既有语义重连）。端口未开时仅置请求位，下次打开即按新句柄工作。
 func (c *Collector) Reopen() {
 	c.reopenReq.Store(true)
-	if v := c.curPort.Load(); v != nil {
-		if p, ok := v.(Port); ok {
-			_ = p.Close() // 读立即报错 → collectOnce 退出 → 立即重开
-		}
+	// 读立即报错 → collectOnce 退出 → 立即重开。残留旧值无害（Close 幂等）。
+	c.portMu.Lock()
+	p := c.curPort
+	c.portMu.Unlock()
+	if p != nil {
+		_ = p.Close()
 	}
 }
 
@@ -209,7 +212,9 @@ func (c *Collector) collectOnce() (collectExit, error) {
 	if err != nil {
 		return reasonOpenFailed, err
 	}
-	c.curPort.Store(port)
+	c.portMu.Lock()
+	c.curPort = port
+	c.portMu.Unlock()
 	c.sr.portOpen.Store(true)
 	defer c.sr.portOpen.Store(false)
 	// 关口 defer 先注册（LIFO 后执行）：必须先摘写入口再关端口。

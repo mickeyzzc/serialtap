@@ -44,7 +44,8 @@ func TestSnapshotHashChangesOnState(t *testing.T) {
 	if SnapshotHash(a, true) == SnapshotHash(b, true) {
 		t.Fatal("设备状态变化应改变 hash")
 	}
-	if SnapshotHash(a, true) != SnapshotHash(a, true) {
+	h1, h2 := SnapshotHash(a, true), SnapshotHash(a, true)
+	if h1 != h2 {
 		t.Fatal("相同快照 hash 应稳定")
 	}
 }

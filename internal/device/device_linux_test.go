@@ -70,8 +70,10 @@ func TestBuildDevicesConfigNamesWinAndExclude(t *testing.T) {
 		t.Fatalf("exclude name 失败: %+v", got)
 	}
 
+	// by-id 基名兜底只在 VID:PID 无内置规则时触发（新命名链 VID 规则优先于兜底）
 	byID2 := map[string]string{"ttyUSB0": "weird-device"}
-	if got := buildDevices(ports, byID2, byPath, id, nil, nil); len(got) != 1 || got[0].Name != "weird-device" {
+	unknownID := func(string) (string, string) { return "10c4", "ea60" } // CP210x：无内置规则
+	if got := buildDevices(ports, byID2, byPath, unknownID, nil, nil); len(got) != 1 || got[0].Name != "weird-device" {
 		t.Fatalf("by-id 兜底命名失败: %+v", got)
 	}
 }

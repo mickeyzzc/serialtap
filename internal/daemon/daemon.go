@@ -142,6 +142,7 @@ func (d *daemon) Tick() {
 		if !seen[key] {
 			d.logf("[watch] 设备移除 %s (key=%s)", c.Tty(), key)
 			c.Stop()
+			d.proxyRemove(key) // 设备拔出收口其代理监听（此前漏调，监听句柄泄漏）
 			delete(d.collectors, key)
 			delete(d.namesUsed, c.DeviceName())
 		}
