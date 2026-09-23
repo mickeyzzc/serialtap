@@ -5,9 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -21,6 +23,7 @@ import (
 	"github.com/mickeyzzc/serialtap/internal/logstore"
 	"github.com/mickeyzzc/serialtap/internal/pause"
 	"github.com/mickeyzzc/serialtap/internal/signature"
+	"github.com/mickeyzzc/serialtap/internal/tray"
 )
 
 const Version = "0.1.0"
@@ -31,6 +34,7 @@ func usage() {
 用法:
   serialtap run                          守护模式：轮询发现 USB 串口，自动起采集器
       [--config F] [--root DIR] [--baud N] [--exclude RE]... [--poll-ms N]
+      [--sock F] [--no-tray]              （macOS 默认进驻菜单栏托盘；--no-tray 关闭）
   serialtap attach TTY [--name N]        单口采集（手动/测试，可接 socat PTY）
       [--config F] [--root DIR] [--baud N]
   serialtap list [--config F]            列出当前设备与身份
@@ -148,6 +152,7 @@ func cmdRun(args []string) error {
 	var exclude multiFlag
 	fs.Var(&exclude, "exclude", "忽略设备正则（可多次）")
 	sockFlag := fs.String("sock", "", "控制 socket 路径（默认自动；被占用时启动会被拒绝）")
+	noTray := fs.Bool("no-tray", false, "不进驻托盘/菜单栏（macOS 默认进驻）")
 	parseFlags(fs, args)
 
 	cfg, err := loadCfgMerged(*cfgPath, *root, *baud)
@@ -236,25 +241,89 @@ func cmdRun(args []string) error {
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	stop := make(chan struct{})
+	var stopOnce sync.Once
 
-	tick := time.NewTicker(time.Duration(cfg.PollMs) * time.Millisecond)
-	defer tick.Stop()
-	sweepTick := time.NewTicker(time.Hour)
-	defer sweepTick.Stop()
-
-	for {
-		d.Tick()
-		select {
-		case <-sigCh:
-			stdoutLog("[watch] 退出信号 — 停止 %d 个采集器", d.Collectors())
-			d.Shutdown()
-			return nil
-		case <-tick.C:
-		case <-sweepTick.C:
-			if n, err := logstore.SweepRetention(cfg.Root, cfg.RetentionDays); err == nil && n > 0 {
-				stdoutLog("[watch] 保留期清理: 删除 %d 个旧日志", n)
+	// watch: 守护主循环。托盘可用时在 goroutine 里跑（macOS UI 占主线程），
+	// 否则就是主循环本身。任何一侧退出（菜单"退出" / 终端信号）都经 stop/sigCh 汇合。
+	watch := func() {
+		tick := time.NewTicker(time.Duration(cfg.PollMs) * time.Millisecond)
+		defer tick.Stop()
+		sweepTick := time.NewTicker(time.Hour)
+		defer sweepTick.Stop()
+		for {
+			d.Tick()
+			select {
+			case <-sigCh:
+				stdoutLog("[watch] 退出信号 — 停止 %d 个采集器", d.Collectors())
+				return
+			case <-stop:
+				return
+			case <-tick.C:
+			case <-sweepTick.C:
+				if n, err := logstore.SweepRetention(cfg.Root, cfg.RetentionDays); err == nil && n > 0 {
+					stdoutLog("[watch] 保留期清理: 删除 %d 个旧日志", n)
+				}
 			}
 		}
+	}
+
+	if tray.Supported() && !*noTray {
+		stdoutLog("[tray] 菜单栏模式 — 托盘图标可暂停/恢复/打开日志/退出")
+		tray.Run(trayHost(d, cfg, func() { stopOnce.Do(func() { close(stop) }) }), watch)
+	} else {
+		watch()
+	}
+	d.Shutdown()
+	return nil
+}
+
+// stateZH: ctl 状态 → 托盘展示文案。
+func stateZH(s string) string {
+	switch s {
+	case "collecting":
+		return "● 采集中"
+	case "paused":
+		return "⏸ 已暂停"
+	case "suspended":
+		return "↩ 让口中"
+	case "flashing":
+		return "⚡ 刷写中"
+	}
+	return s
+}
+
+func trayHost(d *daemon.Daemon, cfg config.Config, quit func()) tray.Host {
+	return tray.Host{
+		Version: Version,
+		Status: func() []string {
+			devs := d.Status()
+			if len(devs) == 0 {
+				return nil
+			}
+			lines := make([]string, 0, len(devs))
+			for _, s := range devs {
+				lines = append(lines, fmt.Sprintf("%s · %s", s.Name, stateZH(s.State)))
+			}
+			return lines
+		},
+		PauseAll: func() error {
+			if err := pause.PauseCLI(cfg.Root, true, nil); err != nil {
+				return err
+			}
+			d.Tick() // 立即生效（PAUSED 热重载也走这）
+			return nil
+		},
+		ResumeAll: func() error {
+			if _, err := d.ResumeAll(""); err != nil {
+				return err
+			}
+			return nil
+		},
+		OpenLogs: func() error {
+			return exec.Command("open", cfg.Root).Start()
+		},
+		Quit: quit,
 	}
 }
 

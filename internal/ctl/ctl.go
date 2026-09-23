@@ -9,11 +9,20 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 
 	"github.com/mickeyzzc/serialtap/internal/flash"
 )
+
+// sunPathLimit: unix socket 路径字节上限（sockaddr_un 布局：Linux 108，darwin/*BSD 104）。
+func sunPathLimit() int {
+	if runtime.GOOS == "linux" {
+		return 108
+	}
+	return 104
+}
 
 // Request: 客户端请求（一行 JSON）。
 type Request struct {
@@ -64,6 +73,10 @@ func DefaultSocketPath() string {
 // socket 已被活着的实例持有 → 拒绝（防止第二实例偷走控制通道）；
 // 仅残留文件（上次异常退出，无人监听）才清理接管。
 func Listen(path string) (*Server, error) {
+	if n := sunPathLimit(); len(path) >= n {
+		// 提前拦截：超限路径在 BSD 系 bind 只报 "invalid argument"，没法排查
+		return nil, fmt.Errorf("控制 socket 路径过长（本平台上限 %d 字节，建议放 /tmp 下）: %s", n, path)
+	}
 	if _, err := os.Stat(path); err == nil {
 		if c, derr := net.DialTimeout("unix", path, time.Second); derr == nil {
 			_ = c.Close()

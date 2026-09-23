@@ -1,14 +1,28 @@
 package ctl
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
 
+// sockPath: 测试 socket 路径。macOS 的 sun_path 上限 104 字节，而 t.TempDir()
+// 在 darwin 上位于很长的 /var/folders/… 下 —— 长测试名直接把 bind 顶爆
+// （报 invalid argument）。darwin 统一改用 /tmp 短路径。
+func sockPath(t *testing.T, name string) string {
+	if runtime.GOOS == "darwin" {
+		p := filepath.Join("/tmp", fmt.Sprintf("serialtap-test-%d-%s.sock", os.Getpid(), name))
+		t.Cleanup(func() { os.Remove(p) })
+		return p
+	}
+	return filepath.Join(t.TempDir(), name+".sock")
+}
+
 func TestServerClientRoundTrip(t *testing.T) {
-	sock := filepath.Join(t.TempDir(), "s.sock")
+	sock := sockPath(t, "roundtrip")
 	srv, err := Listen(sock)
 	if err != nil {
 		t.Fatal(err)
@@ -63,13 +77,13 @@ func TestServerClientRoundTrip(t *testing.T) {
 	}
 
 	// 守护不在 → 连接错误
-	if err := Send(filepath.Join(t.TempDir(), "nope.sock"), Request{Cmd: "status"}, nil); err == nil {
+	if err := Send(sockPath(t, "nope"), Request{Cmd: "status"}, nil); err == nil {
 		t.Fatal("缺 socket 应报错")
 	}
 }
 
 func TestSocketFileCleanedUp(t *testing.T) {
-	sock := filepath.Join(t.TempDir(), "s2.sock")
+	sock := sockPath(t, "cleaned")
 	srv, err := Listen(sock)
 	if err != nil {
 		t.Fatal(err)
@@ -99,7 +113,7 @@ func osIsNotExist(err error) bool {
 
 // —— 双实例抢 socket：活着的主人拒绝后来者；死 socket（残留文件）可接管 ——
 func TestListenRefusesWhenSocketOwned(t *testing.T) {
-	sock := filepath.Join(t.TempDir(), "own.sock")
+	sock := sockPath(t, "owned")
 	first, err := Listen(sock)
 	if err != nil {
 		t.Fatal(err)

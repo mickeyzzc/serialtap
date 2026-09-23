@@ -2,8 +2,10 @@ package cli
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -11,6 +13,17 @@ import (
 	"github.com/mickeyzzc/serialtap/internal/ctl"
 	"github.com/mickeyzzc/serialtap/internal/pause"
 )
+
+// ctlSockPath: 控制 socket 测试路径。macOS sun_path 上限 104 字节，
+// t.TempDir() 在 darwin 上太长（bind 报 invalid argument）→ 用 /tmp 短路径。
+func ctlSockPath(t *testing.T, name string) string {
+	if runtime.GOOS == "darwin" {
+		p := filepath.Join("/tmp", fmt.Sprintf("serialtap-cli-test-%d-%s.sock", os.Getpid(), name))
+		t.Cleanup(func() { os.Remove(p) })
+		return p
+	}
+	return filepath.Join(t.TempDir(), name+".sock")
+}
 
 func TestRunDispatch(t *testing.T) {
 	cases := []struct {
@@ -107,7 +120,7 @@ func TestMiscSmallSurfaces(t *testing.T) {
 
 // —— 控制通道子命令（本地起真 socket 服务验证 CLI → 协议全链路）——
 func TestCtlSubcommandsAgainstLiveServer(t *testing.T) {
-	sock := filepath.Join(t.TempDir(), "ctl.sock")
+	sock := ctlSockPath(t, "live")
 	srv, err := ctl.Listen(sock)
 	if err != nil {
 		t.Fatal(err)
@@ -169,7 +182,7 @@ func TestCtlSubcommandsAgainstLiveServer(t *testing.T) {
 func TestPauseFallsBackToFileWhenNoDaemon(t *testing.T) {
 	// socket 不存在 → 回退文件直改（历史行为）
 	root := t.TempDir()
-	sock := filepath.Join(t.TempDir(), "gone.sock")
+	sock := ctlSockPath(t, "gone")
 	if code := Run([]string{"pause", "ch340", "--sock", sock, "--root", root}); code != 0 {
 		t.Fatalf("pause 文件回退失败: %d", code)
 	}

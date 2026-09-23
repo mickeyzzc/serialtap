@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **macOS 支持**：设备枚举移植 —— 解析 `ioreg`（IOKit 注册表）取身份，
+  USB `locationID` 为物理口 key（对齐 Linux by-path 语义），
+  by-id 采用 `usb-<vid>_<pid>[-sn]` 风格与 Linux 配置规则互通；
+  只枚举 `/dev/cu.usb*`，ioreg 仅在端口集合变化时执行（稳态零开销）；
+  ioreg 失败退化为 tty 名身份，不阻塞采集
+- **macOS 菜单栏托盘**：`run` 默认进驻菜单栏（fyne.io/systray，darwin+cgo）——
+  实时设备状态、暂停/恢复全部采集、打开日志目录、退出；`run --no-tray` 无头模式；
+  Linux/无 CGO 构建走桩实现，纯静态二进制承诺不变
+- fix(ctl): unix socket 路径超长（BSD 104 字节上限）提前拦截并给出明确报错，
+  此前 bind 只报 `invalid argument` 无法排查；测试路径在 darwin 上改用 /tmp 短路径
+
 ## v0.1.0 (2026-09-20)
 
 首个公开发布。
