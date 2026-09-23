@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/mickeyzzc/serialtap/internal/ctl"
+	"github.com/mickeyzzc/serialtap/internal/flash"
 )
 
 //go:embed index.html
@@ -32,11 +33,22 @@ type Commander func(ctl.Request) (ctl.Response, error)
 // StatusProvider: 当前设备状态（daemon.Status）。
 type StatusProvider func() []ctl.DevState
 
+// Flasher: 代理刷固件执行体（即 daemon.Flash —— 面板经 Web 上传镜像后调用）。
+type Flasher func(pattern string, all bool, spec flash.Spec, out func(line string)) error
+
+// Option: Start 的可选项（保持既有调用点签名不变）。
+type Option func(*Server)
+
+// WithFlasher: 启用面板刷机（上传镜像 → 代理刷写 → SSE 进度流）。
+func WithFlasher(f Flasher) Option { return func(s *Server) { s.flasher = f } }
+
 // Server: 面板 HTTP 服务（默认只听本机回环）。
 type Server struct {
 	root      string
 	status    StatusProvider
 	commander Commander
+	flasher   Flasher
+	job       flashJob // 当前/最近一次刷机任务（单任务槽，opMu 天然串行）
 	srv       *http.Server
 }
 
@@ -56,9 +68,13 @@ func PickAddr(v string) string {
 
 // Start: 起面板（addr 为空 = 关闭，返回 no-op Server）。logf 仅报告启动/退出。
 func Start(addr, root string, status StatusProvider, commander Commander,
-	logf func(string, ...any)) *Server {
+	logf func(string, ...any), opts ...Option) *Server {
 	addr = PickAddr(addr)
 	s := &Server{root: root, status: status, commander: commander}
+	s.job.subs = map[chan flashEvent]bool{}
+	for _, o := range opts {
+		o(s)
+	}
 	if addr == "" {
 		return s
 	}
@@ -67,7 +83,9 @@ func Start(addr, root string, status StatusProvider, commander Commander,
 	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/events", s.handleEvents)
 	mux.HandleFunc("/api/cmd", s.handleCmd)
-	mux.HandleFunc("/api/devices/", s.handleDevice) // {name}/files|tail|live
+	mux.HandleFunc("/api/flash", s.handleFlash)        // POST 上传镜像并启动刷写
+	mux.HandleFunc("/api/flash/stream", s.flashStream) // SSE 进度（历史回放+实时）
+	mux.HandleFunc("/api/devices/", s.handleDevice)    // {name}/files|tail|live
 	s.srv = &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		logf("[web] 观测面板: http://%s/", addr)
@@ -505,7 +523,7 @@ func (s *Server) handleCmd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch req.Cmd {
-	case "status", "pause", "resume", "proxy":
+	case "status", "pause", "resume", "proxy", "release", "reopen", "reset":
 	default:
 		http.Error(w, "cmd not allowed from web (use CLI): "+req.Cmd, http.StatusBadRequest)
 		return

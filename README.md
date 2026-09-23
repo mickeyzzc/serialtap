@@ -91,7 +91,10 @@ serialtap tray --root <日志根> --sock <控制socket>   # 与 run 的参数保
 ## 快速开始
 
 ```bash
-# 方式一： Releases 页下载预编译二进制（linux/darwin/windows × amd64/arm64，tag 触发构建）
+# 方式一： Releases 页下载（打 v* 标签自动构建）
+#   Windows: serialtap-setup-<版本>.exe（安装包，开始菜单/桌面图标直进托盘）
+#            + 便携版 zip；macOS: .dmg（拖入应用程序，双击=菜单栏托盘）；
+#            Linux: tar.gz（binary + systemd 用户服务示例，amd64/arm64）
 # 方式二： 源码构建
 git clone https://github.com/mickeyzzc/serialtap && cd serialtap
 make build                 # 或: go build .
@@ -103,6 +106,24 @@ macOS 本地构建托盘版需要 clang（装 Xcode Command Line Tools 即可）
 `go build .` 默认 CGO 开；`CGO_ENABLED=0` 构建得到无托盘版（枚举/采集不受影响，
 发布的 Linux 二进制始终是无 CGO 纯静态）。
 Windows 上是 `serialtap.exe list`（设备形如 `COM3`）、单口采集 `serialtap attach COM3`。
+
+## 安装包与 CI
+
+- **CI**（`.github/workflows/ci.yml`）：lint + 覆盖率报告 + 三平台（ubuntu/
+  windows/macos）全量测试 + 纯 Go 交叉编译冒烟（linux/windows；darwin 托盘
+  需 cgo，由 macos 原生任务覆盖）
+- **Release**（`.github/workflows/release.yml`，打 `v*` 标签触发）：
+  - **Windows 安装包**：Inno Setup（`packaging/windows/serialtap.iss`），
+    按用户安装免管理员；开始菜单/桌面「serialtap 托盘」= `serialtap tray`
+    （FreeConsole 无黑窗），装完勾选即启动；另出便携版 zip
+  - **macOS**：universal 二进制（amd64+arm64 lipo）→ `.app`（LSUIElement
+    隐藏 Dock，双击=菜单栏托盘）→ DMG（`packaging/macos/make-app.sh`，
+    图标由 `assets/logo/gen.py` 产物经 iconutil 生成）
+  - **Linux**：tar.gz 含 binary + README + systemd 用户服务示例 + INSTALL.md
+  - 版本号经 `-ldflags -X ...cli.Version=<tag>` 注入，产物附 sha256sums
+- **Web 面板操作全覆盖**：暂停/恢复、代理开停、让口（5 分钟）、串口软重连、
+  USB 重置、**上传镜像刷机**（多 bin+偏移或 flasher_args.json，esptool
+  进度 SSE 实时回放）—— 远程/无终端场景不需要 CLI
 
 ## 命令
 
@@ -117,7 +138,7 @@ Windows 上是 `serialtap.exe list`（设备形如 `COM3`）、单口采集 `ser
 | `reopen RE [--all]` | **串口层软断开重连**：立即关口 → 跳过退避立即重开。端口疑似卡死（读空转/驱动状态怪异）时的快速自愈；不改变所有权与暂停语义（与 `release` 不同）。注意会打断进行中的透传会话（客户端重连即可），且 open/close 各带一拍复位脉冲（见[复位语义](#复位语义重要)——对 CH340/乐鑫原生 USB 口等于顺带软重启了板子）。多台门禁同 flash（`--all`） |
 | `reset RE [--all]` | **USB 层软拔插**：让口 → `pnputil /restart-device`（禁用+启用设备节点，等效软件层面的拔插）→ 用自身枚举器确认重枚举 → 回采。作用于设备的串口接口节点，JTAG 等兄弟接口不受影响。适用于设备在总线但驱动/端口僵死（打不开、僵尸句柄）。需管理员权限：非提权守护进程自动弹 UAC 提权重试（可取消）。**仅 Windows**；设备整个消失在总线上时无解（只能物理重插）。多台门禁同 flash（`--all`） |
 | `status` | 守护进程与设备实时状态（collecting/paused/suspended/flashing） |
-| `tray`（Windows） | 托盘常驻：接入状态、按设备暂停/恢复、打开日志，见下节 |
+| `tray`（Windows/macOS） | 托盘常驻：接入状态、按设备暂停/恢复、打开日志，见下节（Linux 暂无：systray 需 libappindicator，用 Web 面板） |
 | `analyze LOG...` | 离线签名扫描：计数 / 首末时间 / 样本行汇总表 |
 | `decode-backtrace LOG` | `Backtrace:` 地址帧 addr2line 解码 |
 

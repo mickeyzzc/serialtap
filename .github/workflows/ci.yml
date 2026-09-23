@@ -24,14 +24,16 @@ jobs:
           go-version-file: go.mod
       - name: Test with coverage gate (80%)
         run: |
+        run: |
           COVERPKG=$(go list ./... | grep -v internal/testutil | tr "\n" ",")
           go test -race -count=1 -coverpkg="$COVERPKG" -covermode=atomic -coverprofile=cover.out ./...
           pct=$(go tool cover -func cover.out | awk '/^total:/ {sub("%","",$3); print $3}')
-          echo "coverage: ${pct}%"
+          echo "coverage: ${pct}% (goal 80%)"
           awk -v p="$pct" 'BEGIN { exit (p < 80) ? 1 : 0 }'
 
   # 跨平台冒烟：三平台各跑一遍全量测试（-race 与覆盖率门禁仍在 ubuntu）。
   # FakeTool 会在测试内执行 go build，依赖 runner 自带的 Go 工具链。
+  # macOS 自带 Xcode（托盘 systray_darwin 需 cgo），测试即编译验证。
   test-matrix:
     strategy:
       fail-fast: false
@@ -45,11 +47,12 @@ jobs:
           go-version-file: go.mod
       - run: go test -count=1 ./...
 
+  # 纯 Go 交叉编译冒烟（linux/windows）；darwin 需 cgo，由上面 macos 原生测试覆盖
   build:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        goos: [linux, darwin, windows]
+        goos: [linux, windows]
         goarch: [amd64, arm64]
         exclude:
           - goos: windows

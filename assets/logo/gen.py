@@ -20,7 +20,7 @@ from reportlab.graphics import renderPM
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, "app-icon.svg")
-SIZES = [256, 64, 48, 32, 24, 16]
+SIZES = [512, 256, 128, 64, 48, 32, 24, 16]  # 512/128 供 macOS iconset，其余通用
 
 
 def render_png(svg_path: str, out_png: str, px: int) -> None:
@@ -58,6 +58,9 @@ def main() -> None:
     tray = os.path.normpath(os.path.join(HERE, "..", "..", "internal", "tray"))
     shutil.copy(icon, os.path.join(tray, "icon.ico"))
     shutil.copy(icon_dim, os.path.join(tray, "icon_dim.ico"))
+    # 非 Windows 托盘吃 PNG（macOS NSImage / linux 留档）
+    src.resize((256, 256), Image.LANCZOS).save(os.path.join(tray, "icon.png"))
+    dim(src.resize((256, 256), Image.LANCZOS)).save(os.path.join(tray, "icon_dim.png"))
     print("OK:", ", ".join(sorted(os.listdir(HERE))))
 
 

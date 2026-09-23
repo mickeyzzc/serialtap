@@ -1,5 +1,7 @@
 name: Release
 
+# 打 v* 标签 → 三平台构建：Linux tar.gz、macOS .app+DMG（universal）、
+# Windows 安装包（Inno Setup）+ 便携 zip；统一注入版本号，附 sha256sums。
 on:
   push:
     tags: ['v*']
@@ -8,28 +10,97 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  linux:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goarch: [amd64, arm64]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Build binaries
+      - name: Build & package
         run: |
-          for os in linux darwin windows; do
-            for arch in amd64 arm64; do
-              ext=""
-              [ "$os" = "windows" ] && ext=".exe"
-              CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath -ldflags '-s -w' \
-                -o "dist/serialtap-$os-$arch$ext" .
-            done
-          done
-          cd dist && sha256sum serialtap-* > sha256sums.txt
+          VER="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          CGO_ENABLED=0 GOARCH=${{ matrix.goarch }} go build -trimpath \
+            -ldflags "-s -w -X github.com/mickeyzzc/serialtap/internal/cli.Version=${VER}" \
+            -o "dist/serialtap-linux-${{ matrix.goarch }}" .
+          bash packaging/linux/make-tarball.sh "$VER" "dist/serialtap-linux-${{ matrix.goarch }}" . dist "${{ matrix.goarch }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-linux-${{ matrix.goarch }}
+          path: dist/*.tar.gz
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build universal, .app & DMG
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          LDFLAGS="-s -w -X github.com/mickeyzzc/serialtap/internal/cli.Version=${VER}"
+          mkdir -p dist
+          # 托盘 systray_darwin 需 cgo（Xcode）；双架构 lipo 成 universal
+          CGO_ENABLED=1 GOARCH=arm64 go build -trimpath -ldflags "$LDFLAGS" -o dist/serialtap-arm64 .
+          CGO_ENABLED=1 GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" -o dist/serialtap-amd64 .
+          lipo -create -output dist/serialtap dist/serialtap-arm64 dist/serialtap-amd64
+          python3 -m pip install --quiet svglib reportlab rlPyCairo pillow
+          (cd assets/logo && python3 gen.py)
+          bash packaging/macos/make-app.sh "$VER" dist/serialtap assets/logo dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-macos
+          path: dist/*.dmg
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build, installer & portable zip
+        shell: bash
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          mkdir -p dist packaging/windows
+          CGO_ENABLED=0 GOARCH=amd64 go build -trimpath \
+            -ldflags "-s -w -X github.com/mickeyzzc/serialtap/internal/cli.Version=${VER}" \
+            -o packaging/windows/serialtap.exe .
+          cp assets/logo/icon.ico packaging/windows/
+          choco install innosetup --no-progress -y
+          ISCC.exe //DMyAppVersion="${VER}" packaging/windows/serialtap.iss
+          mv "packaging/windows/Output/serialtap-setup-${VER}.exe" dist/
+          cp packaging/windows/serialtap.exe dist/
+          powershell -Command "Compress-Archive -Path dist/serialtap.exe -DestinationPath dist/serialtap-${VER}-windows-amd64-portable.zip"
+          rm dist/serialtap.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-windows
+          path: |
+            dist/*.exe
+            dist/*.zip
+
+  release:
+    needs: [linux, macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+      - name: sha256sums
+        run: (cd dist && sha256sum * > sha256sums.txt)
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/serialtap-* \
+          gh release create "$GITHUB_REF_NAME" dist/* \
             --title "serialtap ${GITHUB_REF_NAME}" \
             --generate-notes
