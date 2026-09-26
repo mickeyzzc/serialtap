@@ -46,6 +46,11 @@ button.danger:hover{border-color:var(--red)}
 .tab.on{background:#21262d;color:var(--fg)}
 #log{height:340px;overflow-y:auto;padding:8px 12px;margin:0;font:12px/1.45 Consolas,monospace;
 white-space:pre-wrap;word-break:break-all;background:#0a0e14}
+#waveBox{display:flex;flex-direction:column;background:#0a0e14}
+.wavebar{display:flex;align-items:center;gap:8px;padding:8px 12px;flex-wrap:wrap}
+.wavebar input{background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:6px;
+padding:3px 8px;font:12px Consolas,monospace;min-width:220px;flex:1}
+#waveCv{width:100%;height:300px;display:block;cursor:crosshair}
 #events{height:340px;overflow-y:auto;padding:8px 12px;font:12px/1.5 Consolas,monospace}
 .ev-dev{color:var(--teal);margin-top:6px}
 .ev-line{white-space:pre-wrap;word-break:break-all}
@@ -85,12 +90,28 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
         <span class="tabs">
           <span class="tab on" data-kind="serial" id="tabSerial">全量</span>
           <span class="tab" data-kind="events" id="tabEvents">事件流</span>
+          <span class="tab" data-kind="wave" id="tabWave">波形</span>
         </span>
         <label class="ck"><input type="checkbox" id="autoscroll" checked>自动滚动</label>
         <button id="btnClear">清屏</button>
         <span class="dim" id="viewerDev" style="font-size:12px;color:var(--dim)"></span>
       </div>
       <pre id="log">选择左侧设备卡片查看…</pre>
+      <div id="waveBox" class="hidden">
+        <div class="wavebar">
+          <input id="waveRe" placeholder="提取正则：捕获组=通道，如 #S1 \d+ \d+ (-?\d+)；无组则全局命中各为一通道">
+          <select id="waveWin" title="时间窗">
+            <option value="15">15s</option>
+            <option value="60" selected>60s</option>
+            <option value="300">5min</option>
+            <option value="1800">30min</option>
+          </select>
+          <button id="waveFreeze">冻结</button>
+          <button id="waveClear">清除</button>
+          <span class="dim" id="waveInfo" style="font-size:11px"></span>
+        </div>
+        <canvas id="waveCv"></canvas>
+      </div>
     </div>
     <div class="panel">
       <div class="hd"><span class="t">最近事件</span><span class="dim" style="font-size:11px">签名命中 · 生命周期 · 刷机</span></div>
@@ -319,16 +340,114 @@ for (const t of document.querySelectorAll(".tab"))
     for (const x of document.querySelectorAll(".tab")) x.classList.toggle("on", x===t);
     if (selDev) openStream(); };
 
+// —— 通用示波器（波形 tab）：提取正则把串口行变成通道样本，客户端 Canvas 绘制 ——
+// 守护进程零参与：数据源就是既有 serial SSE 流，解析/绘制全在浏览器。
+let waveSamples = [], waveTail = "", waveRe = null, waveFrozen = false, waveFrozenAt = 0;
+const WAVE_COLORS = ["#2DD4BF","#4C8DFF","#F5A623","#FF5C5C","#7ED321","#B57EDC","#40C4E0","#FF8FB1"];
+const WAVE_MAX = 40000, WAVE_NUM = /-?\d+(?:\.\d+)?/g;
+function compileWave(){
+  const src = $("waveRe").value.trim();
+  waveRe = null;
+  if (!src){ $("waveInfo").textContent = "输入提取正则后开始绘制"; return; }
+  try { waveRe = new RegExp(src); $("waveInfo").textContent = ""; }
+  catch(e){ $("waveInfo").textContent = "✗ 正则无效: " + e.message; }
+}
+function waveFeed(chunk){
+  if (!waveRe || waveFrozen) return;
+  waveTail += chunk;
+  const lines = waveTail.split("\n");
+  waveTail = lines.pop(); // 末段可能是半行，跨 chunk 拼装
+  const now = Date.now();
+  for (const line of lines){
+    let vals = [];
+    // 剥掉面板加的 [时间戳] 前缀：提取正则对准板子原始行
+    const body = line.replace(/^\[[^\]]*\]\s?/, "");
+    if (waveRe.source.indexOf("(") >= 0){
+      const m = waveRe.exec(body);
+      if (m) for (let i = 1; i < m.length && vals.length < WAVE_COLORS.length; i++){
+        const v = parseFloat(m[i]); if (!Number.isNaN(v)) vals.push(v);
+      }
+    } else {
+      for (const m of body.match(WAVE_NUM) || []) {
+        if (vals.length >= WAVE_COLORS.length) break;
+        vals.push(parseFloat(m));
+      }
+    }
+    if (vals.length) waveSamples.push({t: now, v: vals});
+  }
+  if (waveSamples.length > WAVE_MAX) waveSamples = waveSamples.slice(-WAVE_MAX);
+}
+function waveEnd(){ return waveFrozen ? waveFrozenAt : Date.now(); }
+function drawWave(){
+  const box = $("waveBox");
+  if (box.classList.contains("hidden")) return;
+  const cv = $("waveCv"), ctx = cv.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== w*dpr || cv.height !== h*dpr){ cv.width = w*dpr; cv.height = h*dpr; }
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,w,h);
+  // 网格
+  ctx.strokeStyle = "#1c2430"; ctx.lineWidth = 1;
+  for (let i = 0; i <= 5; i++){ const y = 10 + (h-20)*i/5; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
+
+  const winMs = (parseInt($("waveWin").value,10)||60) * 1000;
+  const end = waveEnd(), start = end - winMs;
+  waveSamples = waveSamples.filter(s => s.t >= start - winMs); // 双窗冗余，防抖动
+  const vis = waveSamples.filter(s => s.t >= start);
+  const nCh = vis.reduce((m,s)=>Math.max(m,s.v.length),0);
+  const info = [];
+  for (let ch = 0; ch < nCh; ch++){
+    let mn = Infinity, mx = -Infinity;
+    for (const s of vis) if (ch < s.v.length){ if (s.v[ch] < mn) mn = s.v[ch]; if (s.v[ch] > mx) mx = s.v[ch]; }
+    if (!Number.isFinite(mn)) continue;
+    if (mn === mx){ mn -= 1; mx += 1; }
+    const pad = (mx-mn)*0.08; mn -= pad; mx += pad;
+    let last = null, cur = null;
+    ctx.strokeStyle = WAVE_COLORS[ch % WAVE_COLORS.length]; ctx.lineWidth = 1.4; ctx.beginPath();
+    for (const s of vis){
+      if (ch >= s.v.length) { last = null; continue; }
+      const x = (s.t - start)/winMs * w;
+      const y = h - 10 - (s.v[ch]-mn)/(mx-mn)*(h-20);
+      cur = s.v[ch];
+      if (last === null) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+      last = {x,y};
+    }
+    ctx.stroke();
+    info.push(`<span style="color:${WAVE_COLORS[ch%WAVE_COLORS.length]}">ch${ch+1} ${cur===null?"–":cur.toFixed(2)} <span style="opacity:.6">(${mn.toFixed(1)}~${mx.toFixed(1)})</span></span>`);
+  }
+  const hzWin = vis.filter(s=>s.t >= end-5000).length;
+  $("waveInfo").innerHTML = (waveRe ? info.join(" · ") + (info.length? " · ":"") : "") +
+    `${(hzWin/5).toFixed(1)} Hz · ${vis.length} 样本` + (waveFrozen ? " · 已冻结" : "");
+  if (!vis.length && !waveRe) $("waveInfo").textContent = "输入提取正则后开始绘制";
+}
+setInterval(drawWave, 120);
+$("waveRe").oninput = compileWave;
+$("waveFreeze").onclick = () => {
+  waveFrozen = !waveFrozen;
+  if (waveFrozen) waveFrozenAt = Date.now();
+  $("waveFreeze").textContent = waveFrozen ? "恢复" : "冻结";
+};
+$("waveClear").onclick = () => { waveSamples = []; waveTail = ""; };
+
 function openStream(){
   if (es) { es.close(); es = null; }
   logBuf = ""; $("log").textContent = "";
-  $("viewerDev").textContent = selDev ? selDev + " · " + (selKind==="serial"?"全量":"事件流") : "";
+  const wave = selKind === "wave";
+  $("waveBox").classList.toggle("hidden", !wave);
+  $("log").classList.toggle("hidden", wave);
+  $("autoscroll").parentElement.classList.toggle("hidden", wave);
+  $("btnClear").classList.toggle("hidden", wave);
+  $("viewerDev").textContent = selDev ? selDev + " · " + (selKind==="serial"?"全量":selKind==="events"?"事件流":"波形") : "";
   if (!selDev) { $("log").textContent = "选择左侧设备卡片查看…"; return; }
-  es = new EventSource(`/api/devices/${encodeURIComponent(selDev)}/live?kind=${selKind}`);
+  // 波形与全量共用 serial 流：波形模式也持续累积 logBuf，切回全量不断档
+  const kind = wave ? "serial" : selKind;
+  es = new EventSource(`/api/devices/${encodeURIComponent(selDev)}/live?kind=${kind}`);
   es.onmessage = ev => {
     let chunk; try { chunk = JSON.parse(ev.data); } catch { return; }
     logBuf += chunk;
     if (logBuf.length > LOG_CAP) logBuf = logBuf.slice(-LOG_CAP);
+    if (kind === "serial") waveFeed(chunk);
     renderLog();
   };
   es.onerror = () => { /* EventSource 自动重连；面板保持最后内容 */ };
