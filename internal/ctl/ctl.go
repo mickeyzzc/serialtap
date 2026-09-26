@@ -68,9 +68,17 @@ type Server struct {
 	stopCh chan struct{}
 
 	mu     sync.Mutex
-	closed bool              // Close 已开始（Serve 不得再注册新连接：wg.Add 与 wg.Wait 并发是数据竞争，#14）
-	conns  map[net.Conn]bool // 已接受连接（Close 主动关闭以解锁 handler）
+	closed bool                  // Close 已开始（Serve 不得再注册新连接：wg.Add 与 wg.Wait 并发是数据竞争，#14）
+	conns  map[net.Conn]struct{} // 已接受连接：Close 时逐个关闭，解除 handleConn 的 Scan 阻塞（#18）
+
+	// Logf 可选：关闭兜底超时的告警进守护日志（空 = 静默放弃）。
+	Logf func(format string, args ...any)
 }
+
+// closeGrace: Close 等待在途 handler 的兜底时限（在途 flash 等长操作不受
+// 连接关闭影响；超时放弃等待 —— 进程即将退出，泄漏 goroutine 随进程消亡）。
+// 变量供测试缩短。
+var closeGrace = 3 * time.Second
 
 // DefaultSocketPath: 平台相关（socketpath_unix.go / socketpath_windows.go）。
 
@@ -102,7 +110,7 @@ func Listen(path string) (*Server, error) {
 		_ = ln.Close()
 		return nil, err
 	}
-	return &Server{ln: ln, stopCh: make(chan struct{})}, nil
+	return &Server{ln: ln, stopCh: make(chan struct{}), conns: map[net.Conn]struct{}{}}, nil
 }
 
 // Serve: 接受循环（阻塞）。Close 后返回。
@@ -126,9 +134,15 @@ func (s *Server) Serve(h Handler) {
 			continue
 		}
 		s.wg.Add(1)
+		s.conns[conn] = struct{}{}
 		s.mu.Unlock()
 		go func() {
-			defer s.wg.Done()
+			defer func() {
+				s.mu.Lock()
+				delete(s.conns, conn)
+				s.mu.Unlock()
+				s.wg.Done()
+			}()
 			s.handleConn(conn, h)
 		}()
 	}
@@ -149,22 +163,26 @@ func (s *Server) handleConn(conn net.Conn, h Handler) {
 	}
 }
 
-// Close: 停止接受并等待在途连接结束，删除 socket 文件。
+// Close: 停止接受，主动断开已接受的连接（解除 handleConn 的 Scan 阻塞），
+// 限时等待在途 handler，删除 socket 文件。幂等。
+//
+// 只关 listener 不关连接的话，客户端保持连接（托盘轮询 / Web 面板 /
+// flash 流式读取）期间 handleConn 永不返回，本函数就永不返回 ——
+// 守护进程的退出路径（defer Close）随之挂死（#18）。
 func (s *Server) Close() {
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return // 幂等：重复 Close 不 panic（stopCh 只关一次）
+	}
 	s.closed = true
-	// 主动关闭全部已接受连接：handler 可能正阻塞在 Scan 等下一行 ——
-	// 客户端在服务端完成建联前就关连接时，Windows AF_UNIX 不保证送达 EOF，
-	// 只等 wg 会永久挂起（实测 #14 的并发测试在 Windows 挂死 600s 超时）
+	close(s.stopCh)
+	_ = s.ln.Close()
 	for c := range s.conns {
 		_ = c.Close()
 	}
 	s.mu.Unlock()
-	close(s.stopCh)
-	_ = s.ln.Close()
-	// 等待上限：Windows AF_UNIX 的 conn.Close() 不保证中止在途 Read
-	// （平台限制，实测 handler 可永久卡在 Scan）—— 超限放行，剩余 handler
-	// 只会向已死 socket 写入失败返回，无副作用
+
 	done := make(chan struct{})
 	go func() {
 		s.wg.Wait()
@@ -172,7 +190,11 @@ func (s *Server) Close() {
 	}()
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(closeGrace):
+		// 在途 handler（如代理刷写）不受连接关闭影响 —— 兜底放弃等待
+		if s.Logf != nil {
+			s.Logf("[ctl] 关闭兜底：%d 个在途连接未结束，放弃等待", len(s.conns))
+		}
 	}
 	_ = os.Remove(s.ln.Addr().String())
 }
