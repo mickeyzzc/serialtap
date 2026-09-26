@@ -54,6 +54,17 @@ label.ck{font-size:12px;color:var(--dim);display:flex;gap:4px;align-items:center
 select{background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:6px;font-size:12px;padding:2px 6px}
 #files a{color:var(--blue);text-decoration:none}
 #nodata{color:var(--dim);padding:20px;text-align:center}
+.hidden{display:none!important}
+.modal{position:fixed;inset:0;background:rgba(3,6,12,.72);display:flex;align-items:center;justify-content:center;z-index:50}
+.mbox{background:var(--card);border:1px solid var(--border);border-radius:10px;width:min(680px,92vw);max-height:88vh;display:flex;flex-direction:column}
+.mhd{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border)}
+.mhd b{font-size:14px}
+.mbody{padding:12px 14px;overflow:auto}
+.mbody label{display:block;font-size:12px;color:var(--dim);margin:8px 0 2px}
+.mbody input{background:#0a0e14;color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:12px;max-width:100%}
+.mrow{display:flex;align-items:center;gap:10px;margin-top:12px}
+#fmLog{height:220px;overflow-y:auto;margin:10px 0 0;padding:8px 10px;font:12px/1.45 Consolas,monospace;
+white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
 </style>
 </head>
 <body>
@@ -87,6 +98,25 @@ select{background:#21262d;color:var(--fg);border:1px solid var(--border);border-
     </div>
   </div>
 </main>
+
+<div id="flashModal" class="modal hidden">
+  <div class="mbox">
+    <div class="mhd"><b>代理刷机</b> <span class="dim" id="fmDev" style="font-size:12px"></span>
+      <button id="fmClose" style="margin-left:auto">关闭</button></div>
+    <div class="mbody">
+      <label>设备正则（多板同名时请锚定，如 ^board$）</label>
+      <input id="fmPattern" size="18" placeholder="^board$">
+      <label>镜像文件（可多选；顺序 = 刷写顺序）</label>
+      <input id="fmBins" type="file" multiple>
+      <label>偏移 offsets（JSON 数组，与镜像顺序对齐；缺省全 0x0）</label>
+      <input id="fmOffsets" size="38" placeholder='["0x0","0x8000","0x10000"]'>
+      <label style="margin-top:12px">或直接给 ESP-IDF 构建产物（与镜像二选一）</label>
+      <input id="fmArgs" type="file" accept=".json">
+      <div class="mrow"><button id="fmGo">开始刷写</button><span class="dim" id="fmState" style="font-size:12px"></span></div>
+      <pre id="fmLog">（刷写进度将实时显示在这里）</pre>
+    </div>
+  </div>
+</div>
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
@@ -152,7 +182,10 @@ function renderCards(){
       <div class="acts">
         <button data-a="toggle">${d.state === "collecting" ? "⏸ 暂停" : "▶ 恢复"}</button>
         <button data-a="proxy">${d.proxy ? "停代理" : "开代理"}</button>
-        <button data-a="view">查看日志</button>
+        <button data-a="rel" title="临时让出串口 5 分钟（外部工具可用）">让口 5m</button>
+        <button data-a="reo" title="串口层软重连：立即关口→重开（透传会话会断开重连）">软重连</button>
+        <button data-a="rst" class="danger" title="USB 层重枚举设备节点（需管理员，非提权守护会弹 UAC）">USB 重置</button>
+        <button data-a="flash">刷机…</button>
       </div>`;
     // 整卡可点切换查看（操作按钮阻止冒泡，避免按"暂停"顺带换台）
     el.onclick = () => selectDev(d.name);
@@ -163,6 +196,14 @@ function renderCards(){
     el.querySelector('[data-a="proxy"]').onclick = e => { e.stopPropagation();
       d.proxy ? cmd("proxy", "^"+d.name.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"$", "stop")
               : cmd("proxy", d.key); };
+    const anchor = "^" + d.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$";
+    el.querySelector('[data-a="rel"]').onclick = e => { e.stopPropagation();
+      cmd("release", anchor, "", {for_ms: 300000}); };
+    el.querySelector('[data-a="reo"]').onclick = e => { e.stopPropagation(); cmd("reopen", anchor); };
+    el.querySelector('[data-a="rst"]').onclick = e => { e.stopPropagation();
+      if (confirm("USB 重置 " + d.name + "？\n重枚举设备节点（守护进程未提权时会弹 UAC），采集会短暂中断。"))
+        cmd("reset", anchor); };
+    el.querySelector('[data-a="flash"]').onclick = e => { e.stopPropagation(); openFlash(d.name); };
     c.appendChild(el);
   }
   updateVolatile();
@@ -198,17 +239,69 @@ function toast(msg, ok){
   toastTimer = setTimeout(()=>el.classList.remove("show"), 4000);
 }
 
-function cmd(c, pattern, action){
+const CMD_LABEL = {pause:"暂停", resume:"恢复", proxy:"代理", release:"让口", reopen:"软重连", reset:"USB 重置"};
+function cmd(c, pattern, action, extra){
   fetch("/api/cmd", {method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({cmd:c, pattern:pattern||"", action:action||""})}
+    body: JSON.stringify(Object.assign({cmd:c, pattern:pattern||"", action:action||""}, extra||{}))}
   ).then(r=>r.json()).then(j=>{
-    if (!j.ok) { toast("✗ " + (c==="proxy"?"代理":c==="pause"?"暂停":"恢复") + "失败: " + (j.error||"未知"), false); return; }
-    const label = c==="proxy" ? (action==="stop"?"代理已停止":"代理已启动" + (j.endpoint?" "+j.endpoint:""))
-                : c==="pause" ? "已请求暂停" : "已请求恢复";
+    if (!j.ok) { toast("✗ " + (CMD_LABEL[c]||c) + "失败: " + (j.error||"未知"), false); return; }
+    let label = CMD_LABEL[c] || c;
+    if (c==="proxy") label = action==="stop" ? "代理已停止" : "代理已启动" + (j.endpoint?" "+j.endpoint:"");
+    if (c==="reset") label = "USB 重置完成，采集已恢复";
+    if (c==="release") label = "已让口 5 分钟（到期自动回采）";
     toast("✓ " + label, true);
     setTimeout(pollStatus, 300);
   }).catch(e=>toast("✗ 请求失败: "+e, false));
 }
+
+// —— 刷机模态：上传镜像/args → POST /api/flash → SSE 进度流 ——
+let fmES = null;
+function anchorRe(name){ return "^" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$"; }
+function openFlash(name){
+  $("fmDev").textContent = name ? "· " + name : "";
+  $("fmPattern").value = name ? anchorRe(name) : "";
+  $("fmLog").textContent = ""; $("fmState").textContent = ""; $("fmGo").disabled = false;
+  $("flashModal").classList.remove("hidden");
+}
+function fmState(t, bad){ $("fmState").textContent = t; $("fmState").style.color = bad ? "var(--red)" : "var(--dim)"; }
+function fmAppend(line){
+  const el = $("fmLog");
+  el.textContent += line + "\n";
+  if (el.scrollHeight - el.scrollTop - el.clientHeight < 60) el.scrollTop = el.scrollHeight;
+}
+$("fmClose").onclick = () => { $("flashModal").classList.add("hidden"); if (fmES){ fmES.close(); fmES = null; } };
+$("fmGo").onclick = () => {
+  const fd = new FormData();
+  const pattern = $("fmPattern").value.trim();
+  if (!pattern) { fmState("设备正则必填", true); return; }
+  fd.append("pattern", pattern);
+  const args = $("fmArgs").files[0];
+  if (args) fd.append("args_file", args, args.name || "flasher_args.json");
+  else {
+    const bins = Array.from($("fmBins").files || []);
+    if (!bins.length) { fmState("先选镜像文件或 flasher_args.json", true); return; }
+    for (const f of bins) fd.append("bins", f, f.name);
+    const off = $("fmOffsets").value.trim();
+    if (off) fd.append("offsets", off);
+  }
+  $("fmGo").disabled = true; fmState("上传中…");
+  fetch("/api/flash", {method:"POST", body:fd}).then(r=>{
+    if (!r.ok) return r.text().then(t=>Promise.reject(t));
+  }).then(()=>{
+    fmState("刷写中（让口 → esptool → 回采）…");
+    if (fmES) fmES.close();
+    fmES = new EventSource("/api/flash/stream");
+    fmES.onmessage = ev => {
+      let m; try { m = JSON.parse(ev.data); } catch { return; }
+      if (m.line) fmAppend(m.line);
+      if (m.done){
+        fmES.close(); fmES = null; $("fmGo").disabled = false;
+        fmState(m.err ? "✗ " + m.err : "✓ 刷写完成，已恢复采集", !!m.err);
+        setTimeout(pollStatus, 500);
+      }
+    };
+  }).catch(e=>{ fmState("✗ " + e, true); $("fmGo").disabled = false; });
+};
 
 function selectDev(name){
   selDev = name;

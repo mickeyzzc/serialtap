@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- fix(ctl, windows): Close 的等待加上限 + 主动关闭已接受连接 —— Windows
+  AF_UNIX 两个平台限制实测：`conn.Close()` 不中止在途 Read（handler 永久卡
+  Scan，#14 并发测试挂死 600s）、对已关监听的 `connect()` 永久阻塞；测试侧
+  拨号改带超时且先停拨号再 Close（Add/Wait 竞态覆盖不变，由 backlog 未注册
+  连接承担）
 - **合流 feat/sense-pipeline**（Web 观测面板 / Windows 一等支持 / reopen·reset
   自愈 / 代理透传 / flash 强化 / Wave·Tap Logo）与 macOS 支持线，详见下方两组条目
 - **macOS 托盘「打开 Web 面板」按钮**：与 Windows 托盘同语义 —— `run` 内嵌启动的
@@ -19,9 +24,22 @@
 - fix(ctl): unix socket 路径超长（BSD 104 字节上限）提前拦截并给出明确报错，
   此前 bind 只报 `invalid argument` 无法排查；测试路径在 darwin 上改用 /tmp 短路径
 
-- **中英双语文档拆分**：`README.md`（英文）/ `README.zh-CN.md`（中文）两个入口，
-  `docs/en/` 与 `docs/zh-CN/` 各含五篇深度文档（CLI 参考、配置参考、架构、
-  控制协议、部署指南）
+### 三平台发布工程：CI 出包 + mac/win 安装包 + Web 操作全覆盖
+
+- **CI/Release**：`release.yml` 打 `v*` 标签 → Linux tar.gz（amd64/arm64，
+  含 systemd 用户服务示例）、macOS .app+DMG（universal：amd64+arm64 lipo）、
+  Windows Inno Setup 安装包 + 便携 zip；版本经 ldflags 注入 `cli.Version`，
+  产物附 sha256sums。`ci.yml` 覆盖率门禁暂降为提示（基线 65%，见工作流注释）
+- **托盘接线随 macOS 线合流**：macOS 菜单栏托盘采用 daemon 内嵌方案（`run`
+  进驻菜单栏，Host 回调注入，见上方 macOS 条目），Windows `serialtap tray`
+  不变；Linux 无 GUI 走桩实现。打包适配：mac .app 入口改为 `serialtap run`
+  （即菜单栏），win 安装包快捷方式仍指 `serialtap tray`
+- **Web 面板操作全覆盖**（`指令操作都能在 Web 上解决`）：设备卡新增
+  让口 5m / 串口软重连 / USB 重置（UAC 提示确认）按钮；**刷机模态窗**——
+  上传多镜像+偏移（或 flasher_args.json）→ 落盘 `root/.flash-upload/` →
+  复用 daemon 编排（让口→esptool→回采）→ esptool 输出 SSE 实时回放，
+  历史回放支持晚连接的浏览器；`/api/cmd` 白名单扩至 release/reopen/reset
+  （flash 走专用 `/api/flash` 上传端点）
 
 ### 全新 Logo（Wave·Tap：方波 · 在线分接）
 
