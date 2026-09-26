@@ -4,11 +4,16 @@
 
 ## 安装
 
-### 预编译二进制（推荐）
+三平台发布产物由 CI 在打 `v*` 标签时自动构建（附 `sha256sums.txt`），
+从 [Releases](https://github.com/mickeyzzc/serialtap/releases) 页下载：
 
-从 [Releases](https://github.com/mickeyzzc/serialtap/releases) 页下载
-（`serialtap-linux-amd64` 或 `serialtap-linux-arm64`，附 `sha256sums.txt`；
-`v*` tag 自动构建）：
+| 平台 | 产物 | 安装 |
+|---|---|---|
+| Windows | `serialtap-setup-<版本>.exe`（Inno 安装包）+ 便携版 zip | 安装包按用户安装免管理员；开始菜单/桌面「serialtap 托盘」直进托盘，装完勾选即启动。便携版解压即用 |
+| macOS | `serialtap-<版本>.dmg`（universal：amd64+arm64） | 拖入"应用程序"；双击 = 菜单栏托盘（LSUIElement，不占 Dock） |
+| Linux | `serialtap-linux-<版本>-<arch>.tar.gz`（amd64/arm64） | 含 binary + README + systemd 用户服务示例 + INSTALL.md |
+
+Linux 命令行安装示例：
 
 ```bash
 curl -LO https://github.com/mickeyzzc/serialtap/releases/download/v0.1.0/serialtap-linux-amd64
@@ -19,8 +24,8 @@ chmod +x serialtap-linux-amd64
 
 ### 源码构建
 
-要求：Go **1.27+**。其余什么都不用 —— 依赖全部 vendor、无 CGO，完全离线
-可构建：
+要求：Go **1.27+**。其余什么都不用 —— 依赖全部 vendor；Linux/Windows
+无 CGO，完全离线可构建（macOS 托盘版需 clang，见下）：
 
 ```bash
 git clone https://github.com/mickeyzzc/serialtap && cd serialtap
@@ -33,8 +38,8 @@ make build        # 或: go build .
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o serialtap .
 ```
 
-守护进程仅支持 Linux（设备身份建立在 sysfs 与 `/dev/serial/by-path` 之上）。
-其他平台可编译，但 `run`/`list` 会显式报错。
+macOS 托盘版本地构建需要 Xcode Command Line Tools（clang，CGO 默认开）；
+`CGO_ENABLED=0` 构建得到无托盘的无头版（枚举/采集不受影响）。
 
 ## 串口权限
 
@@ -109,6 +114,25 @@ loginctl enable-linger "$USER"
 系统级 unit 也可以（改路径、给服务用户加串口组），但用户级是实测过的
 部署形态。
 
+## Windows 常驻
+
+- **安装包形态（推荐）**：setup 装好后「serialtap 托盘」快捷方式启动
+  `serialtap tray`（托盘与守护经控制 socket 通信，托盘菜单可一键拉起
+  守护）。开机自启用任务计划程序：登录时触发，动作指向
+  `serialtap.exe tray`，工作目录任意
+- **开发调试**：终端直接 `serialtap run`，或用 Web 面板
+  （http://127.0.0.1:8801/）完成暂停/让口/软重连/USB 重置/上传刷机等
+  全部操作。COM 口无需任何权限配置
+
+## macOS 常驻
+
+- **.app 形态（推荐）**：DMG 拖入"应用程序"，双击即 `serialtap run`
+  （内嵌菜单栏托盘，LSUIElement 不占 Dock）
+- **launchd agent**：写 `~/Library/LaunchAgents/com.mickeyzzc.serialtap.plist`
+  （`ProgramArguments` 指向二进制与 `run`，`RunAtLoad=true`），
+  `launchctl load` 生效——开机自启用
+- 无需串口权限组
+
 ## 磁盘用量管理
 
 - `rotate_max_mb`（默认 64）封顶单文件；轮转加 `.001`、`.002`… 后缀
@@ -129,7 +153,7 @@ loginctl enable-linger "$USER"
 | `找不到 esptool` / `找不到 addr2line` | ESP-IDF 环境不在 PATH。`source ~/esp/esp-idf/export.sh`，或用 `--esptool` / `--addr2line`（或配置 `esptool_cmd`、环境变量 `ESP_ADDR2LINE`）指到二进制。 |
 | `flash` 报 `端口让出超时` | 采集器 10 秒内没能关掉端口 —— 查守护日志（`journalctl --user -u serialtap`）；楔死的 fd 通常重插即愈。 |
 | 安静板子的日志一直是空的 | 合法现象。只有确定板子周期性输出才开 `silent_reopen_s` —— 否则等于自造复位循环。 |
-| 两只同型号板子，日志进了同一个目录 | 同型号适配器 by-id 分不出来，只能按枚举顺序加 `-2` 后缀。要稳定命名，在 `names` 里按序列号/MAC 匹配（ESP32-S3 USB-JTAG 的 by-id 内嵌 MAC）—— 见[配置参考](configuration.md#设备命名)。 |
+| 两只同型号板子，日志进了同一个目录 | 同型号适配器 by-id 分不出来，后到者自动加身份派生的 4 位散列后缀（跨重启不变）。要语义命名，在 `names` 里按序列号/MAC 匹配（ESP32-S3 USB-JTAG 的 by-id 内嵌 MAC）—— 见[配置参考](configuration.md#设备命名)。 |
 
 ## 升级
 

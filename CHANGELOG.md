@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **文档全面双语化 + 三平台对齐**：`README.md` 重写为全英文（与
+  `README.zh-CN.md` 成对，顶部语言互链）；`docs/en/` 与 `docs/zh-CN/`
+  五对文档（architecture/cli-reference/configuration/control-protocol/
+  deployment）同步到当前特性——三平台支持（删除"仅 Linux"残留）、
+  安装包（win Inno/mac DMG/linux tar.gz）、Web 面板操作全覆盖与浏览器
+  刷机、flash 多台默认拒绝门禁与 `--retries/--dry-run/--all` 全量 flag、
+  身份派生命名后缀（取代旧的 `-2` 枚举后缀描述）、配置补
+  `web_addr`/`flash_timeout_s`/`proxy_tap_exclude` 三字段、控制协议移植
+  SSH 隧道远程刷写章节与 Windows Python 直连示例；`docs/` 根下三个旧版
+  文档改为迁移跳转存根；CONTRIBUTING 更新包表（+web/tray）、CI 矩阵、
+  版本注入说明，并确立"双语成对维护"规则
+
 - fix(ctl, windows): Close 的等待加上限 + 主动关闭已接受连接 —— Windows
   AF_UNIX 两个平台限制实测：`conn.Close()` 不中止在途 Read（handler 永久卡
   Scan，#14 并发测试挂死 600s）、对已关监听的 `connect()` 永久阻塞；测试侧

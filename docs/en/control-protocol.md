@@ -3,16 +3,18 @@
 [English](control-protocol.md) | [简体中文](../zh-CN/control-protocol.md)
 
 The daemon (`serialtap run`) serves a local unix stream socket that the CLI
-subcommands `status` / `pause` / `resume` / `release` / `flash` speak. You can
-speak it too — for dashboards, CI jobs, or flashing scripts — from any
-language that can write a line to a socket.
+subcommands `status` / `pause` / `resume` / `release` / `flash` / `proxy` /
+`reopen` / `reset` speak (the web panel's operation buttons ride the same
+handler path). You can speak it too — for dashboards, CI jobs, or flashing
+scripts — from any language that can write a line to a socket.
 
 ## Transport
 
 - **Path resolution** (first non-empty wins): `run --sock` flag → config
-  `control_socket` → `$XDG_RUNTIME_DIR/serialtap.sock` →
-  `/tmp/serialtap-<uid>.sock`. Clients accept `--sock` the same way,
-  defaulting to the same resolution.
+  `control_socket` → platform default. Linux/macOS:
+  `$XDG_RUNTIME_DIR/serialtap.sock` → `/tmp/serialtap-<uid>.sock`;
+  Windows: `%LOCALAPPDATA%\serialtap\serialtap.sock` (AF_UNIX, Win10 1803+).
+  Clients accept `--sock` the same way, defaulting to the same resolution.
 - **Permissions**: the socket file is created mode `0600` — only the same
   user may connect.
 - **Framing**: one JSON object per line (UTF-8, `\n`-terminated), in both
@@ -110,8 +112,12 @@ continuous seconds. Fails if the pattern matches no collector.
 Per matched device, sequentially: suspend collector → run esptool → resume.
 Streams `flash-log` responses (one per esptool output line, `\r`-split for
 progress bars), then one final `flash-done` with `ok` reflecting the outcome.
-On esptool failure the collector is still resumed. Multiple matches flash one
-by one — send an anchored pattern (`^board$`) to flash exactly one.
+On esptool failure the collector is still resumed. **A pattern matching
+several devices is refused by default** with the names listed
+(`all:true` opts into one-by-one execution); send an anchored pattern
+(`^board$`) to flash exactly one. The CLI client additionally retries
+failures (default 3 attempts × 5 s); at the protocol level each request is
+one complete orchestration.
 
 ### `proxy`
 
@@ -158,3 +164,36 @@ echo '{"cmd":"flash","pattern":"^board-a$","spec":{"bins":[{"path":"build/app.bi
 # ...
 # {"ok":true,"event":"flash-done"}
 ```
+
+Windows has no socat; use Python (or simply the `serialtap status` and
+friends subcommands):
+
+```powershell
+python -c "import socket,json; s=socket.socket(socket.AF_UNIX); s.connect(r'$env:LOCALAPPDATA\serialtap\serialtap.sock'); s.sendall(b'{\"cmd\":\"status\"}\n'); print(s.recv(65536).decode())"
+```
+
+## Remote usage (SSH tunnel)
+
+The classic setup: boards hang off a bench machine or Raspberry Pi that
+captures around the clock, and you flash from your laptop. The ctl channel
+is a unix socket, so an SSH local forward covers it with zero extra code:
+
+```bash
+# on the laptop (Linux/macOS): map the remote socket to a local path
+ssh -nN -L /tmp/serialtap-remote.sock:/run/user/1000/serialtap.sock user@bench &
+
+serialtap status --sock /tmp/serialtap-remote.sock
+serialtap flash '^board-a$' --args-file build/flasher_args.json --sock /tmp/serialtap-remote.sock
+```
+
+Caveats:
+
+- **Image and args-file paths resolve on the daemon side (the remote
+  machine)** — put the artifacts where the daemon can read them (or pass a
+  build directory accessible there) before sending the flash request
+- Confirm the remote socket path with `serialtap status` on the remote host
+  (`$XDG_RUNTIME_DIR/serialtap.sock` or `/tmp/serialtap-<uid>.sock`)
+- Windows OpenSSH clients have incomplete unix-socket local-forward support;
+  use ssh from WSL, or expose a TCP port on the remote side via
+  `socat TCP-LISTEN:7332,fork UNIX-CONNECT:...` (trusted networks only, no
+  authentication)

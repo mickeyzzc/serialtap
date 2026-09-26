@@ -4,12 +4,17 @@
 
 ## Install
 
-### Prebuilt binary (recommended)
+Release artifacts are built by CI on `v*` tags (with `sha256sums.txt`) —
+grab them from the
+[Releases](https://github.com/mickeyzzc/serialtap/releases) page:
 
-Grab a binary from the
-[Releases](https://github.com/mickeyzzc/serialtap/releases) page
-(`serialtap-linux-amd64` or `serialtap-linux-arm64`, plus `sha256sums.txt`;
-built automatically on `v*` tags):
+| Platform | Artifact | Install |
+|---|---|---|
+| Windows | `serialtap-setup-<version>.exe` (Inno installer) + portable zip | Installer is per-user, no admin needed; the Start-menu/desktop "serialtap tray" shortcut goes straight to the tray, optional launch-on-finish. Portable zip: unpack and run |
+| macOS | `serialtap-<version>.dmg` (universal: amd64+arm64) | Drag to Applications; double-click = menu-bar tray (LSUIElement, no Dock icon) |
+| Linux | `serialtap-linux-<version>-<arch>.tar.gz` (amd64/arm64) | Contains the binary + README + a systemd user-service example + INSTALL.md |
+
+Linux command-line example:
 
 ```bash
 curl -LO https://github.com/mickeyzzc/serialtap/releases/download/v0.1.0/serialtap-linux-amd64
@@ -20,8 +25,9 @@ chmod +x serialtap-linux-amd64
 
 ### Build from source
 
-Requirements: Go **1.27+**. Nothing else — all dependencies are vendored, no
-CGO, so it builds fully offline:
+Requirements: Go **1.27+**. Nothing else — all dependencies are vendored;
+Linux/Windows builds need no CGO and work fully offline (the macOS tray
+build needs clang, see below):
 
 ```bash
 git clone https://github.com/mickeyzzc/serialtap && cd serialtap
@@ -34,9 +40,9 @@ Cross-compile the same way, e.g. for an ARM box:
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o serialtap .
 ```
 
-The daemon requires Linux (device identity is built on sysfs and
-`/dev/serial/by-path`). Other platforms compile but `run`/`list` refuse with
-an explicit error.
+Building the macOS tray locally needs Xcode Command Line Tools (clang, CGO
+on by default); a `CGO_ENABLED=0` build is a headless, tray-less binary
+(enumeration/capture unaffected).
 
 ## Serial port permissions
 
@@ -114,6 +120,28 @@ loginctl enable-linger "$USER"
 A system-level unit works too if you prefer (adjust paths and add the serial
 group to the service user), but the user service is the tested setup.
 
+## Running on Windows
+
+- **Installer setup (recommended)**: after setup, the "serialtap tray"
+  shortcut launches `serialtap tray` (tray and daemon talk over the control
+  socket; the tray menu can start the daemon in one click). For autostart,
+  use Task Scheduler: trigger on logon, action pointing at
+  `serialtap.exe tray`, any working directory
+- **Development**: run `serialtap run` in a terminal, or just use the web
+  panel (http://127.0.0.1:8801/) for everything — pause/yield/soft
+  reconnect/USB reset/upload-and-flash. COM ports need no permission setup
+
+## Running on macOS
+
+- **.app (recommended)**: drag from the DMG into Applications;
+  double-click runs `serialtap run` with the menu-bar tray embedded
+  (LSUIElement, no Dock icon)
+- **launchd agent**: write
+  `~/Library/LaunchAgents/com.mickeyzzc.serialtap.plist`
+  (`ProgramArguments` pointing at the binary and `run`, `RunAtLoad=true`),
+  then `launchctl load` — starts at login
+- No serial permission groups needed
+
 ## Disk usage management
 
 - `rotate_max_mb` (default 64) caps each file; rotations suffix `.001`,
@@ -136,7 +164,7 @@ group to the service user), but the user service is the tested setup.
 | `找不到 esptool` / `找不到 addr2line` | The ESP-IDF environment isn't in PATH. `source ~/esp/esp-idf/export.sh`, or point `--esptool` / `--addr2line` (or config `esptool_cmd`, env `ESP_ADDR2LINE`) at the binaries. |
 | `flash` reports `端口让出超时` | The collector could not close the port in 10 s — check daemon logs (`journalctl --user -u serialtap`); a wedged fd usually clears after replug. |
 | Logs stay empty for a quiet board | That's legal. Only enable `silent_reopen_s` if the board is *guaranteed* to log periodically — otherwise you create a reset loop. |
-| Two identical boards, logs land in one directory | Same-model adapters can't be told apart by by-id; they get `-2` suffixes in enumeration order. For stable names, match on serial/MAC in `names` (ESP32-S3 USB-JTAG by-id embeds the MAC) — see [configuration.md](configuration.md#device-naming). |
+| Two identical boards, logs land in one directory | Same-model adapters can't be told apart by by-id; the later one gets an identity-derived 4-hex suffix (stable across restarts). For semantic names, match on serial/MAC in `names` (ESP32-S3 USB-JTAG by-id embeds the MAC) — see [configuration.md](configuration.md#device-naming). |
 
 ## Upgrading
 
