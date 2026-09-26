@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- fix(web): 面板设备卡/下拉全空、无法切换主板 —— renderCards 里残留一处
+  `querySelector('[data-a="view"]')` 空绑定（rebase 时卡片模板换掉了 view
+  按钮、JS 行遗留），null.onclick 赋值抛 TypeError 使渲染在第一张卡片处
+  中断，appendChild/syncDevSel 永不执行，异常又藏在 fetch 的 unhandled
+  rejection 里无任何提示。删残行；新增 `TestIndexHTMLWiring` 接线一致性
+  回归测试（index.html 里 JS 引用的每个 `[data-a=…]` 选择器与 `$("id")`
+  元素必须真实存在，防此类模板/JS 漂移再次静默白屏；已实证对修复前版本
+  报错）
+
 - **文档全面双语化 + 三平台对齐**：`README.md` 重写为全英文（与
   `README.zh-CN.md` 成对，顶部语言互链）；`docs/en/` 与 `docs/zh-CN/`
   五对文档（architecture/cli-reference/configuration/control-protocol/
