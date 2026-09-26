@@ -43,6 +43,8 @@ type DevState struct {
 	State         string `json:"state"`                    // collecting | paused | suspended | flashing
 	Proxy         string `json:"proxy,omitempty"`          // 透传会话客户端地址（空 = 无会话）
 	ProxyEndpoint string `json:"proxy_endpoint,omitempty"` // 透传监听端点（空 = 未开端点；注意与 Proxy 客户端地址区分）
+	Opens         int64  `json:"opens,omitempty"`          // 成功 open 次数（健康：1 = 从未断线重开）
+	LastData      int64  `json:"last_data,omitempty"`      // 最近读到字节的 UnixMilli（0 = 尚无数据）
 }
 
 // Response: 服务端响应（一行 JSON；flash 会流式多行）。

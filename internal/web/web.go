@@ -189,6 +189,9 @@ type deviceDTO struct {
 	EventsFile  string `json:"events_file,omitempty"`
 	EventsSize  int64  `json:"events_size"`
 	SerialBytes int64  `json:"serial_bytes"` // 设备目录全量日志总字节（估留存）
+
+	Opens    int64 `json:"opens,omitempty"`     // 成功 open 次数（健康：1 = 从未断线重开）
+	LastData int64 `json:"last_data,omitempty"` // 最近读到字节的 UnixMilli（0 = 尚无数据）
 }
 
 type snapshotDTO struct {
@@ -205,7 +208,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, d := range devs {
 		e := deviceDTO{Name: d.Name, Tty: d.Tty, Key: d.Key, State: d.State,
-			Proxy: d.Proxy, ProxyEndpoint: d.ProxyEndpoint}
+			Proxy: d.Proxy, ProxyEndpoint: d.ProxyEndpoint, Opens: d.Opens, LastData: d.LastData}
 		if dir, ok := s.deviceDir(d.Name); ok {
 			if f, sz, ok := latestFile(dir, "serial"); ok {
 				e.SerialFile, e.SerialSize = f, sz
