@@ -190,7 +190,6 @@ function renderCards(){
     // 整卡可点切换查看（操作按钮阻止冒泡，避免按"暂停"顺带换台）
     el.onclick = () => selectDev(d.name);
     el.querySelector(".name").onclick = e => { e.stopPropagation(); selectDev(d.name); };
-    el.querySelector('[data-a="view"]').onclick = e => { e.stopPropagation(); selectDev(d.name); };
     el.querySelector('[data-a="toggle"]').onclick = e => { e.stopPropagation(); cmd(
       d.state === "collecting" ? "pause" : "resume", "^" + d.name.replace(/[.*+?^${}()|[\]\\]/g,"\\$&") + "$"); };
     el.querySelector('[data-a="proxy"]').onclick = e => { e.stopPropagation();
