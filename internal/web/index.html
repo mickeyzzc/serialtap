@@ -13,6 +13,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 "Segoe UI",syst
 header{display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid var(--border)}
 header .logo{flex:none;display:block}
 header h1{font-size:17px;margin:0}
+.dim{color:var(--dim)}
 #toast{margin-left:auto;font-size:12px;color:var(--teal);opacity:0;transition:opacity .3s}
 #toast.show{opacity:1}
 header .dim{color:var(--dim);font-size:12px}
@@ -31,6 +32,12 @@ main{padding:16px 20px;max-width:1500px;margin:0 auto}
 .badge{font-size:11px;color:var(--teal)}
 .meta{color:var(--dim);font-size:12px;margin-top:6px;display:flex;gap:14px;flex-wrap:wrap}
 .meta b{color:var(--fg);font-weight:500}
+.health{display:flex;gap:12px;align-items:center;margin-top:6px;font-size:12px;color:var(--dim);flex-wrap:wrap}
+.health b{font-weight:600}
+.health .ok b{color:var(--green)}
+.health .warn b{color:var(--amber)}
+.health .bad b{color:var(--red)}
+.spark{background:#0a0e14;border-radius:6px;flex:1;min-width:90px;height:26px}
 .acts{margin-top:8px;display:flex;gap:6px;flex-wrap:wrap}
 button{background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:6px;
 padding:3px 10px;font-size:12px;cursor:pointer}
@@ -46,20 +53,53 @@ button.danger:hover{border-color:var(--red)}
 .tab.on{background:#21262d;color:var(--fg)}
 #log{height:340px;overflow-y:auto;padding:8px 12px;margin:0;font:12px/1.45 Consolas,monospace;
 white-space:pre-wrap;word-break:break-all;background:#0a0e14}
-#waveBox{display:flex;flex-direction:column;background:#0a0e14}
-.wavebar{display:flex;align-items:center;gap:8px;padding:8px 12px;flex-wrap:wrap}
-.wavebar input{background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:6px;
-padding:3px 8px;font:12px Consolas,monospace;min-width:220px;flex:1}
-#waveCv{width:100%;height:300px;display:block;cursor:crosshair}
+#logSearch{background:#0a0e14;color:var(--fg);border:1px solid var(--border);border-radius:6px;
+padding:2px 8px;font:12px Consolas,monospace;width:150px}
+#logSearch:focus{outline:none;border-color:var(--blue)}
+#logCount{font-size:11px;color:var(--dim)}
+#log mark{background:#6e4019;color:#ffdf9e;border-radius:2px;padding:0 1px}
 #events{height:340px;overflow-y:auto;padding:8px 12px;font:12px/1.5 Consolas,monospace}
+.hit{color:var(--amber)}
 .ev-dev{color:var(--teal);margin-top:6px}
 .ev-line{white-space:pre-wrap;word-break:break-all}
 .ev-line:has(.hit){color:var(--amber)}
 label.ck{font-size:12px;color:var(--dim);display:flex;gap:4px;align-items:center;cursor:pointer}
 select{background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:6px;font-size:12px;padding:2px 6px}
-#files a{color:var(--blue);text-decoration:none}
 #nodata{color:var(--dim);padding:20px;text-align:center}
 .hidden{display:none!important}
+
+/* —— 事件时间线 —— */
+#tl{padding:8px 12px 4px;font-size:11px}
+.tl-row{display:flex;align-items:center;gap:8px;margin-bottom:3px}
+.tl-dev{color:var(--teal);width:76px;flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tl-track{flex:1;position:relative;height:12px;background:#0a0e14;border-radius:6px}
+.tl-tick{position:absolute;top:1px;width:3px;height:10px;border-radius:1px}
+.tl-tick.err{background:var(--red)}
+.tl-tick.warn{background:var(--amber)}
+.tl-tick.life{background:var(--blue);opacity:.75}
+.tl-legend{color:var(--dim);margin:2px 0 4px;display:flex;gap:12px}
+.tl-legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+
+/* —— 波形示波器 —— */
+#waveBox{display:flex;flex-direction:column;background:#0a0e14}
+.wavebar{display:flex;align-items:center;gap:8px;padding:8px 12px;flex-wrap:wrap}
+.wavebar select{flex:none}
+#waveCv{width:100%;height:320px;display:block;cursor:crosshair}
+.adv{font-size:12px;color:var(--dim)}
+.adv summary{cursor:pointer;user-select:none}
+.adv input{background:#0a0e14;color:var(--fg);border:1px solid var(--border);border-radius:6px;
+padding:3px 8px;font:12px Consolas,monospace;min-width:240px;margin-top:6px}
+
+/* —— 多设备对比 —— */
+.cmp{margin-top:12px}
+.cmp summary{padding:8px 12px;cursor:pointer;font-weight:600;user-select:none}
+.cmp summary .dim{font-weight:400;margin-left:8px}
+#cmpRow{display:flex;gap:10px;padding:0 12px 12px;overflow-x:auto;flex-wrap:wrap}
+.cmp-dev{background:#0a0e14;border:1px solid var(--border);border-radius:8px;
+min-width:300px;flex:1;font:12px/1.4 Consolas,monospace}
+.cmp-dev .hd2{display:flex;gap:8px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--border);color:var(--teal)}
+.cmp-dev pre{margin:0;padding:8px 10px;height:180px;overflow-y:auto;white-space:pre-wrap;word-break:break-all}
+
 .modal{position:fixed;inset:0;background:rgba(3,6,12,.72);display:flex;align-items:center;justify-content:center;z-index:50}
 .mbox{background:var(--card);border:1px solid var(--border);border-radius:10px;width:min(680px,92vw);max-height:88vh;display:flex;flex-direction:column}
 .mhd{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border)}
@@ -92,14 +132,18 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
           <span class="tab" data-kind="events" id="tabEvents">事件流</span>
           <span class="tab" data-kind="wave" id="tabWave">波形</span>
         </span>
+        <input id="logSearch" placeholder="搜索/正则过滤…">
+        <span id="logCount"></span>
         <label class="ck"><input type="checkbox" id="autoscroll" checked>自动滚动</label>
         <button id="btnClear">清屏</button>
+        <button id="btnExportLog" title="导出当前缓冲为 .log 文件">导出</button>
+        <button id="btnExportWave" class="hidden" title="导出波形样本为 CSV">导出 CSV</button>
         <span class="dim" id="viewerDev" style="font-size:12px;color:var(--dim)"></span>
       </div>
       <pre id="log">选择左侧设备卡片查看…</pre>
       <div id="waveBox" class="hidden">
         <div class="wavebar">
-          <input id="waveRe" placeholder="提取正则：捕获组=通道，如 #S1 \d+ \d+ (-?\d+)；无组则全局命中各为一通道">
+          <span class="dim" style="font-size:12px">自动识别通道</span>
           <select id="waveWin" title="时间窗">
             <option value="15">15s</option>
             <option value="60" selected>60s</option>
@@ -109,15 +153,23 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
           <button id="waveFreeze">冻结</button>
           <button id="waveClear">清除</button>
           <span class="dim" id="waveInfo" style="font-size:11px"></span>
+          <details class="adv"><summary>自定义提取</summary>
+            <input id="waveRe" placeholder="正则：每个捕获组一个通道，如 #S1 \d+ \d+ (-?\d+)">
+          </details>
         </div>
         <canvas id="waveCv"></canvas>
       </div>
     </div>
     <div class="panel">
       <div class="hd"><span class="t">最近事件</span><span class="dim" style="font-size:11px">签名命中 · 生命周期 · 刷机</span></div>
+      <div id="tl"><div class="dim" style="padding:4px 0">暂无事件</div></div>
       <div id="events"></div>
     </div>
   </div>
+  <details class="panel cmp" id="cmpPanel" open>
+    <summary>多设备对比<span class="dim">各设备实时尾随并排（关闭即断开附加流）</span></summary>
+    <div id="cmpRow"></div>
+  </details>
 </main>
 
 <div id="flashModal" class="modal hidden">
@@ -143,11 +195,14 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
 const $ = id => document.getElementById(id);
 const esc = s => { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; };
 const fmtKB = n => n >= 1048576 ? (n/1048576).toFixed(1)+" MB" : (n/1024).toFixed(1)+" KB";
+const fmtAgo = ms => { if (!ms || ms < 0) return "—";
+  const s = Math.floor(ms/1000);
+  if (s < 90) return s+"s"; if (s < 5400) return Math.floor(s/60)+"m"; return Math.floor(s/3600)+"h"; };
 
-let status = {devices:[]}, prevSize = {}, rate = {};
+let status = {devices:[]}, prevSize = {}, rate = {}, rateHist = {};
 let selDev = null, selKind = "serial", es = null, logBuf = "";
 let cardSig = ""; // 卡片结构签名：不变则只就地更新数字，绝不重建 DOM —— 每秒全量重建会把进行中的点击吞掉
-const LOG_CAP = 256 * 1024;
+const LOG_CAP = 256 * 1024, SPARK_N = 120;
 
 function pollStatus(){
   fetch("/api/status").then(r=>r.json()).then(s=>{
@@ -158,10 +213,13 @@ function pollStatus(){
         ? d.serial_size - prevSize[d.name] : rate[d.name];
       rate[d.name] = r === undefined ? 0 : r;
       prevSize[d.name] = d.serial_size;
+      const h = rateHist[d.name] = rateHist[d.name] || [];
+      h.push(rate[d.name]); if (h.length > SPARK_N) h.shift();
     }
     // 尚未选中或选中的设备已拔出 → 自动选首台，日志区不空屏
     if (s.devices.length && (!selDev || !s.devices.some(d=>d.name === selDev))) selectDev(s.devices[0].name);
     else renderCards();
+    syncCmp();
   }).catch(()=>{ $("conn").textContent = "○ 守护进程不可达"; });
 }
 setInterval(pollStatus, 1000); pollStatus();
@@ -200,6 +258,11 @@ function renderCards(){
         <span>事件 <b class="v-esz"></b></span>
         ${d.proxy_endpoint ? `<span>端点 <b>${esc(d.proxy_endpoint)}</b></span>` : ""}
       </div>
+      <div class="health">
+        <span class="h-silent"><span class="dim">静默</span> <b>—</b></span>
+        <span class="h-reopen"><span class="dim">重开</span> <b>0</b></span>
+        <canvas class="spark" width="240" height="52"></canvas>
+      </div>
       <div class="acts">
         <button data-a="toggle">${d.state === "collecting" ? "⏸ 暂停" : "▶ 恢复"}</button>
         <button data-a="proxy">${d.proxy ? "停代理" : "开代理"}</button>
@@ -230,15 +293,42 @@ function renderCards(){
   syncDevSel();
 }
 
-// updateVolatile: 每秒仅刷新数字（写入速率/日志体积），DOM 节点不动。
+// updateVolatile: 每秒仅刷新数字（速率/体积/健康/迷你图），DOM 节点不动。
 function updateVolatile(){
+  const now = Date.now();
   for (const d of status.devices){
     const card = document.querySelector(`.card[data-dev="${CSS.escape(d.name)}"]`);
     if (!card) continue;
     card.querySelector(".v-rate").textContent = (rate[d.name]||0) + " B/s";
     card.querySelector(".v-ssz").textContent = fmtKB(d.serial_size);
     card.querySelector(".v-esz").textContent = fmtKB(d.events_size);
+    // 健康指标：静默时长（最近读到字节距今）与断线重开次数（opens-1）
+    const silent = d.last_data ? now - d.last_data : null;
+    const hs = card.querySelector(".h-silent"), hr = card.querySelector(".h-reopen");
+    hs.querySelector("b").textContent = fmtAgo(silent);
+    const reopen = Math.max(0, (d.opens||1) - 1);
+    hr.querySelector("b").textContent = reopen;
+    hs.className = "h-silent " + (silent === null ? "bad" : silent < 30000 ? "ok" : silent < 300000 ? "warn" : "bad");
+    hr.className = "h-reopen " + (reopen === 0 ? "ok" : reopen < 3 ? "warn" : "bad");
+    drawSpark(card.querySelector(".spark"), rateHist[d.name] || []);
   }
+}
+
+// drawSpark: 写入速率迷你图（2 分钟），峰谷一目了然。
+function drawSpark(cv, hist){
+  const ctx = cv.getContext("2d"), w = cv.width, h = cv.height;
+  ctx.clearRect(0, 0, w, h);
+  if (hist.length < 2) return;
+  const mx = Math.max(...hist, 1);
+  const grad = ctx.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, "rgba(57,210,192,.35)"); grad.addColorStop(1, "rgba(57,210,192,0)");
+  ctx.beginPath(); ctx.moveTo(0, h);
+  hist.forEach((v, i) => ctx.lineTo(i/(hist.length-1)*w, h - 3 - v/mx*(h-6)));
+  ctx.lineTo(w, h); ctx.closePath(); ctx.fillStyle = grad; ctx.fill();
+  ctx.beginPath();
+  hist.forEach((v, i) => { const x = i/(hist.length-1)*w, y = h - 3 - v/mx*(h-6);
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+  ctx.strokeStyle = "#39d2c0"; ctx.lineWidth = 1.5; ctx.stroke();
 }
 
 // syncDevSel: 日志区设备下拉与卡片选择双向同步。
@@ -340,95 +430,238 @@ for (const t of document.querySelectorAll(".tab"))
     for (const x of document.querySelectorAll(".tab")) x.classList.toggle("on", x===t);
     if (selDev) openStream(); };
 
-// —— 通用示波器（波形 tab）：提取正则把串口行变成通道样本，客户端 Canvas 绘制 ——
-// 守护进程零参与：数据源就是既有 serial SSE 流，解析/绘制全在浏览器。
+// —— 通用示波器（波形 tab）——
+// 零配置：自动识别遥测帧（首个 token 为帧型），key=value 记号成为命名通道，
+// 纯数字记号成为位置通道（十六进制块天然不是纯数字，自动排除）；多帧型时
+// 取近期最活跃的帧型。自定义正则仍是逃生门（高级项）。解析/绘制全在浏览器。
 let waveSamples = [], waveTail = "", waveRe = null, waveFrozen = false, waveFrozenAt = 0;
-const WAVE_COLORS = ["#2DD4BF","#4C8DFF","#F5A623","#FF5C5C","#7ED321","#B57EDC","#40C4E0","#FF8FB1"];
-const WAVE_MAX = 40000, WAVE_NUM = /-?\d+(?:\.\d+)?/g;
+let waveChNames = [], waveFrameStats = {}; // frameKey → 5s 窗口内的 {n, names, t}
+let waveHover = null; // {x} 画布像素
+const WAVE_COLORS = ["#2DD4BF","#58A6FF","#F5A623","#FF7B72","#7EE787","#D2A8FF"];
+const WAVE_MAX_CH = 6, WAVE_MAX = 60000, WAVE_NUM = /^-?\d+(?:\.\d+)?$/, WAVE_KV = /^([A-Za-z_][\w-]*)=(-?\d+(?:\.\d+)?)$/;
+
 function compileWave(){
   const src = $("waveRe").value.trim();
   waveRe = null;
-  if (!src){ $("waveInfo").textContent = "输入提取正则后开始绘制"; return; }
-  try { waveRe = new RegExp(src); $("waveInfo").textContent = ""; }
+  if (!src){ $("waveInfo").textContent = ""; return; }
+  try { waveRe = new RegExp(src); waveSamples = []; waveChNames = [];
+    $("waveInfo").textContent = "自定义提取已启用"; }
   catch(e){ $("waveInfo").textContent = "✗ 正则无效: " + e.message; }
 }
+// autoChannels: 一行 → {frame, ch:[{name, val}]}；无可提取数值返回 null。
+function autoChannels(body){
+  const toks = body.split(/\s+/);
+  if (toks.length < 2) return null;
+  const ch = [];
+  for (let i = 1; i < toks.length && ch.length < WAVE_MAX_CH; i++){
+    const kv = WAVE_KV.exec(toks[i]);
+    if (kv) ch.push({name: kv[1], val: parseFloat(kv[2])});
+    else if (WAVE_NUM.test(toks[i])) ch.push({name: "v"+i, val: parseFloat(toks[i])});
+  }
+  return ch.length ? {frame: toks[0], ch} : null;
+}
 function waveFeed(chunk){
-  if (!waveRe || waveFrozen) return;
+  if (waveFrozen) return;
   waveTail += chunk;
   const lines = waveTail.split("\n");
   waveTail = lines.pop(); // 末段可能是半行，跨 chunk 拼装
   const now = Date.now();
   for (const line of lines){
-    let vals = [];
-    // 剥掉面板加的 [时间戳] 前缀：提取正则对准板子原始行
+    // 剥掉面板加的 [时间戳] 前缀：提取对准板子原始行
     const body = line.replace(/^\[[^\]]*\]\s?/, "");
-    if (waveRe.source.indexOf("(") >= 0){
+    if (waveRe){
       const m = waveRe.exec(body);
-      if (m) for (let i = 1; i < m.length && vals.length < WAVE_COLORS.length; i++){
+      if (!m) continue;
+      const vals = [];
+      for (let i = 1; i < m.length && vals.length < WAVE_MAX_CH; i++){
         const v = parseFloat(m[i]); if (!Number.isNaN(v)) vals.push(v);
       }
+      if (!vals.length) continue;
+      if (waveChNames.length !== vals.length)
+        waveChNames = vals.map((_, i) => "ch" + (i+1));
+      waveSamples.push({t: now, v: vals});
     } else {
-      for (const m of body.match(WAVE_NUM) || []) {
-        if (vals.length >= WAVE_COLORS.length) break;
-        vals.push(parseFloat(m));
+      const fr = autoChannels(body);
+      if (!fr) continue;
+      const st = waveFrameStats[fr.frame] = waveFrameStats[fr.frame] || {n: 0, names: null, t: 0};
+      st.n++; st.t = now; st.names = fr.ch.map(c => c.name);
+      const best = dominantFrame(now);
+      if (!best) continue;
+      if (best !== (waveFrameStats.__cur || "")){
+        waveFrameStats.__cur = best;
+        waveChNames = waveFrameStats[best].names; waveSamples = [];
+      } else if (waveFrameStats[best].names.length !== waveChNames.length){
+        // 同帧型但通道数变化（行内数字个数漂移）：只更新标签，样本按自身长度画
+        waveChNames = waveFrameStats[best].names;
       }
+      waveSamples.push({t: now, v: fr.ch.map(c => c.val)});
     }
-    if (vals.length) waveSamples.push({t: now, v: vals});
   }
+  for (const k of Object.keys(waveFrameStats))
+    if (k !== "__cur" && now - waveFrameStats[k].t > 60000) delete waveFrameStats[k];
   if (waveSamples.length > WAVE_MAX) waveSamples = waveSamples.slice(-WAVE_MAX);
 }
+// dominantFrame: 近 5s 行数最多的帧型（抑制偶发行/心跳行）。
+function dominantFrame(now){
+  let best = null, bestN = 0;
+  for (const [k, st] of Object.entries(waveFrameStats)){
+    if (k === "__cur" || now - st.t > 5000) continue;
+    if (st.n > bestN){ bestN = st.n; best = k; }
+  }
+  return bestN >= 5 ? best : null;
+}
 function waveEnd(){ return waveFrozen ? waveFrozenAt : Date.now(); }
+
+// drawWave: 分通道泳道 + 每像素 min/max 包络（保波形不失真）+ 悬停十字线。
 function drawWave(){
   const box = $("waveBox");
   if (box.classList.contains("hidden")) return;
   const cv = $("waveCv"), ctx = cv.getContext("2d");
   const dpr = window.devicePixelRatio || 1;
   const w = cv.clientWidth, h = cv.clientHeight;
-  if (cv.width !== w*dpr || cv.height !== h*dpr){ cv.width = w*dpr; cv.height = h*dpr; }
+  if (!w) return;
+  if (cv.width !== Math.round(w*dpr) || cv.height !== Math.round(h*dpr)){
+    cv.width = Math.round(w*dpr); cv.height = Math.round(h*dpr);
+  }
   ctx.setTransform(dpr,0,0,dpr,0,0);
   ctx.clearRect(0,0,w,h);
-  // 网格
-  ctx.strokeStyle = "#1c2430"; ctx.lineWidth = 1;
-  for (let i = 0; i <= 5; i++){ const y = 10 + (h-20)*i/5; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
-
+  const AX = 20; // 底部时间轴高
   const winMs = (parseInt($("waveWin").value,10)||60) * 1000;
   const end = waveEnd(), start = end - winMs;
-  waveSamples = waveSamples.filter(s => s.t >= start - winMs); // 双窗冗余，防抖动
+  waveSamples = waveSamples.filter(s => s.t >= start - winMs);
   const vis = waveSamples.filter(s => s.t >= start);
-  const nCh = vis.reduce((m,s)=>Math.max(m,s.v.length),0);
-  const info = [];
+  const nCh = Math.min(WAVE_MAX_CH, Math.max(waveChNames.length,
+    vis.reduce((m,s)=>Math.max(m,s.v.length),0)));
+  const laneH = nCh ? (h - AX) / nCh : h - AX;
+
+  // 时间网格（每窗 1/6 一档，与底轴标签对齐）
+  ctx.font = "10px Consolas,monospace"; ctx.textBaseline = "top";
+  for (let i = 0; i <= 6; i++){
+    const x = Math.round(w*i/6) + .5;
+    ctx.strokeStyle = "rgba(48,54,61,.5)"; ctx.setLineDash([2,4]);
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h - AX); ctx.stroke();
+    ctx.setLineDash([]);
+    const lbl = "-" + Math.round(winMs/1000*(6-i)/6) + "s";
+    ctx.fillStyle = "#8b949e";
+    ctx.fillText(lbl, Math.min(Math.max(x+3, 2), w-28), h - AX + 4);
+  }
+
+  const hoverT = waveHover !== null ? start + waveHover/w*winMs : null;
+  let nearest = null;
+  if (hoverT !== null){
+    for (const s of vis) if (!nearest || Math.abs(s.t-hoverT) < Math.abs(nearest.t-hoverT)) nearest = s;
+  }
+  const infos = [];
   for (let ch = 0; ch < nCh; ch++){
-    let mn = Infinity, mx = -Infinity;
-    for (const s of vis) if (ch < s.v.length){ if (s.v[ch] < mn) mn = s.v[ch]; if (s.v[ch] > mx) mx = s.v[ch]; }
-    if (!Number.isFinite(mn)) continue;
-    if (mn === mx){ mn -= 1; mx += 1; }
-    const pad = (mx-mn)*0.08; mn -= pad; mx += pad;
-    let last = null, cur = null;
-    ctx.strokeStyle = WAVE_COLORS[ch % WAVE_COLORS.length]; ctx.lineWidth = 1.4; ctx.beginPath();
-    for (const s of vis){
-      if (ch >= s.v.length) { last = null; continue; }
-      const x = (s.t - start)/winMs * w;
-      const y = h - 10 - (s.v[ch]-mn)/(mx-mn)*(h-20);
+    const y0 = ch*laneH, name = waveChNames[ch] || ("ch"+(ch+1));
+    const color = WAVE_COLORS[ch % WAVE_COLORS.length];
+    // 泳道分隔线与名称
+    ctx.strokeStyle = "rgba(48,54,61,.9)";
+    ctx.beginPath(); ctx.moveTo(0, y0+.5); ctx.lineTo(w, y0+.5); ctx.stroke();
+    ctx.fillStyle = color; ctx.textBaseline = "top";
+    ctx.fillText(name, 6, y0+4);
+    // 通道 min/max（含 8% 余量）
+    let mn = Infinity, mx = -Infinity, cur = null;
+    for (const s of vis) if (ch < s.v.length){
+      if (s.v[ch] < mn) mn = s.v[ch]; if (s.v[ch] > mx) mx = s.v[ch];
       cur = s.v[ch];
-      if (last === null) ctx.moveTo(x,y); else ctx.lineTo(x,y);
-      last = {x,y};
     }
-    ctx.stroke();
-    info.push(`<span style="color:${WAVE_COLORS[ch%WAVE_COLORS.length]}">ch${ch+1} ${cur===null?"–":cur.toFixed(2)} <span style="opacity:.6">(${mn.toFixed(1)}~${mx.toFixed(1)})</span></span>`);
+    if (!Number.isFinite(mn)){ continue; }
+    if (mn === mx){ mn -= 1; mx += 1; }
+    const pad = (mx-mn)*.08; mn -= pad; mx += pad;
+    const yOf = v => y0 + laneH - 4 - (v-mn)/(mx-mn)*(laneH-12);
+    // 每像素列 min/max 降采样：包络填充 + 中心线
+    const cols = Math.max(1, Math.floor(w));
+    const colMin = new Float64Array(cols).fill(Infinity), colMax = new Float64Array(cols).fill(-Infinity), colCnt = new Float64Array(cols);
+    for (const s of vis){
+      if (ch >= s.v.length) continue;
+      const cx = Math.floor((s.t - start)/winMs * cols);
+      if (cx < 0 || cx >= cols) continue;
+      const v = s.v[ch];
+      if (v < colMin[cx]) colMin[cx] = v;
+      if (v > colMax[cx]) colMax[cx] = v;
+      colCnt[cx]++;
+    }
+    // 包络
+    ctx.beginPath();
+    let started = false;
+    for (let x = 0; x < cols; x++) if (colCnt[x]){
+      const y = yOf(colMax[x]);
+      started ? ctx.lineTo(x, y) : (ctx.moveTo(x, y), started = true);
+    }
+    for (let x = cols-1; x >= 0; x--) if (colCnt[x]) ctx.lineTo(x, yOf(colMin[x]));
+    ctx.closePath();
+    ctx.fillStyle = color + "22"; ctx.fill();
+    // 中心线（列均值）
+    ctx.beginPath(); started = false;
+    for (let x = 0; x < cols; x++) if (colCnt[x]){
+      const y = yOf((colMin[x]+colMax[x])/2);
+      started ? ctx.lineTo(x, y) : (ctx.moveTo(x, y), started = true);
+    }
+    ctx.strokeStyle = color; ctx.lineWidth = 1.5;
+    ctx.lineJoin = "round"; ctx.lineCap = "round"; ctx.stroke();
+    // 悬停读值
+    let hv = null;
+    if (nearest && ch < nearest.v.length) hv = nearest.v[ch];
+    ctx.fillStyle = "#e6edf3"; ctx.textBaseline = "top";
+    const rt = hv !== null ? hv.toFixed(2) : (cur === null ? "–" : cur.toFixed(2));
+    ctx.fillText(`${rt}  (${mn.toFixed(1)}~${mx.toFixed(1)})`, Math.min(w-150, 6 + ctx.measureText(name).width + 10), y0+4);
+    if (hv !== null){
+      const hx = (nearest.t - start)/winMs * w;
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(hx, yOf(hv), 3, 0, 7); ctx.fill();
+      infos.push({name, v: hv, color, hx});
+    }
+  }
+  if (nCh === 0){
+    ctx.fillStyle = "#8b949e"; ctx.font = "13px 'Segoe UI',sans-serif"; ctx.textBaseline = "middle";
+    ctx.fillText(waveRe ? "等待匹配的行…" : "等待可识别的遥测行（数字或 key=数值 记号）…", 16, (h-AX)/2);
+  }
+  // 十字线（最上层）
+  if (waveHover !== null && nearest){
+    ctx.strokeStyle = "rgba(230,237,243,.35)";
+    ctx.beginPath(); ctx.moveTo(waveHover+.5, 0); ctx.lineTo(waveHover+.5, h-AX); ctx.stroke();
+    ctx.fillStyle = "#e6edf3"; ctx.font = "10px Consolas,monospace"; ctx.textBaseline = "top";
+    const dt = (nearest.t - end)/1000;
+    ctx.fillText((dt >= 0 ? "" : "T-") + Math.abs(dt).toFixed(1) + "s", waveHover+5, h-AX-14);
   }
   const hzWin = vis.filter(s=>s.t >= end-5000).length;
-  $("waveInfo").innerHTML = (waveRe ? info.join(" · ") + (info.length? " · ":"") : "") +
+  $("waveInfo").innerHTML = (waveRe ? "自定义 · " : "自动(" + esc(waveFrameStats.__cur || "…") + ") · ") +
     `${(hzWin/5).toFixed(1)} Hz · ${vis.length} 样本` + (waveFrozen ? " · 已冻结" : "");
-  if (!vis.length && !waveRe) $("waveInfo").textContent = "输入提取正则后开始绘制";
 }
 setInterval(drawWave, 120);
+$("waveCv").addEventListener("mousemove", e => {
+  const r = e.target.getBoundingClientRect();
+  waveHover = e.clientX - r.left;
+  drawWave();
+});
+$("waveCv").addEventListener("mouseleave", () => { waveHover = null; drawWave(); });
 $("waveRe").oninput = compileWave;
 $("waveFreeze").onclick = () => {
   waveFrozen = !waveFrozen;
   if (waveFrozen) waveFrozenAt = Date.now();
   $("waveFreeze").textContent = waveFrozen ? "恢复" : "冻结";
 };
-$("waveClear").onclick = () => { waveSamples = []; waveTail = ""; };
+$("waveClear").onclick = () => { waveSamples = []; waveTail = ""; waveFrameStats = {}; waveChNames = []; };
+$("btnExportWave").onclick = () => {
+  if (!waveSamples.length){ toast("✗ 无样本可导出", false); return; }
+  const head = "t_ms," + (waveChNames.length ? waveChNames.join(",") : waveSamples[0].v.map((_,i)=>"ch"+(i+1)).join(","));
+  const csv = [head, ...waveSamples.map(s => s.t + "," + s.v.join(","))].join("\n");
+  download(`${selDev}-wave-${stamp()}.csv`, csv, "text/csv");
+};
+
+function stamp(){ const d = new Date(), p = n => String(n).padStart(2,"0");
+  return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; }
+function download(name, text, mime){
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], {type: mime || "text/plain"}));
+  a.download = name; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
+}
+$("btnExportLog").onclick = () => {
+  if (!logBuf){ toast("✗ 缓冲为空", false); return; }
+  download(`${selDev}-${selKind}-${stamp()}.log`, logBuf);
+};
 
 function openStream(){
   if (es) { es.close(); es = null; }
@@ -436,8 +669,12 @@ function openStream(){
   const wave = selKind === "wave";
   $("waveBox").classList.toggle("hidden", !wave);
   $("log").classList.toggle("hidden", wave);
+  $("logSearch").classList.toggle("hidden", wave);
+  $("logCount").classList.toggle("hidden", wave);
   $("autoscroll").parentElement.classList.toggle("hidden", wave);
   $("btnClear").classList.toggle("hidden", wave);
+  $("btnExportLog").classList.toggle("hidden", wave);
+  $("btnExportWave").classList.toggle("hidden", !wave);
   $("viewerDev").textContent = selDev ? selDev + " · " + (selKind==="serial"?"全量":selKind==="events"?"事件流":"波形") : "";
   if (!selDev) { $("log").textContent = "选择左侧设备卡片查看…"; return; }
   // 波形与全量共用 serial 流：波形模式也持续累积 logBuf，切回全量不断档
@@ -453,36 +690,145 @@ function openStream(){
   es.onerror = () => { /* EventSource 自动重连；面板保持最后内容 */ };
 }
 
+// —— 日志渲染与搜索：非空查询 = 过滤模式（正则优先，非法回退子串）+ 高亮 ——
+function logMatcher(){
+  const q = $("logSearch").value.trim();
+  if (!q) return null;
+  // /g 必须加：高亮循环靠 lastIndex 前进，非全局 exec 永远返回首个匹配 → 死循环冻页
+  try { const re = new RegExp(q, "gi");
+    return {re, test: l => { re.lastIndex = 0; return re.test(l); }}; }
+  catch { const s = q.toLowerCase(); return {re: null, test: l => l.toLowerCase().includes(s), lit: q}; }
+}
 function renderLog(){
   const el = $("log");
   const stick = $("autoscroll").checked &&
     el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  const matcher = logMatcher();
+  let lines = logBuf.split("\n"), hitCount = 0, total = lines.length;
+  if (matcher){
+    lines = lines.filter(l => !l || matcher.test(l));
+    hitCount = lines.filter(l => l && matcher.test(l)).length;
+    $("logCount").textContent = `${hitCount}/${total} 行`;
+  } else $("logCount").textContent = "";
   if (selKind === "events") {
-    // 事件流：命中签名/错误级行高亮（esc 防 HTML 注入）
-    el.innerHTML = logBuf.split("\n").map(l => {
+    el.innerHTML = lines.map(l => {
       const safe = esc(l);
       return HIT.test(l) ? `<span class="hit">${safe}</span>` : safe;
     }).join("\n");
-  } else {
-    el.textContent = logBuf;
-  }
+  } else if (matcher) {
+    el.innerHTML = lines.map(l => {
+      if (!l) return "";
+      if (!matcher.test(l)) return esc(l);
+      if (matcher.re){
+        let out = "", last = 0, m, hits = 0; matcher.re.lastIndex = 0;
+        while ((m = matcher.re.exec(l)) && hits < 200){
+          out += esc(l.slice(last, m.index)) + "<mark>" + esc(m[0]) + "</mark>";
+          last = m.index + m[0].length;
+          hits++;
+          if (!m[0].length) matcher.re.lastIndex++;
+        }
+        return out + esc(l.slice(last));
+      }
+      const i = l.toLowerCase().indexOf(matcher.lit.toLowerCase());
+      return esc(l.slice(0,i)) + "<mark>" + esc(l.slice(i, i+matcher.lit.length)) + "</mark>" + esc(l.slice(i+matcher.lit.length));
+    }).join("\n");
+  } else el.textContent = logBuf;
   if (stick) el.scrollTop = el.scrollHeight;
 }
-$("btnClear").onclick = () => { logBuf = ""; $("log").textContent = ""; };
+$("logSearch").oninput = () => renderLog();
+$("btnClear").onclick = () => { logBuf = ""; $("log").textContent = ""; $("logCount").textContent = ""; };
 
 const HIT = /rst:0x|Guru|Backtrace|panic|abort|assert|watchdog|WDT/i;
+
+// —— 事件时间线：30 分钟窗口内每设备一行泳道，签名命中彩色刻度，悬停看原文 ——
+const TL_WIN = 30*60*1000;
+function tlClass(line){
+  if (/\[(reset-banner|guru-meditation|backtrace|panic|watchdog|abort|assert)\]/i.test(line)) return "err";
+  if (/\[(esp-log-error|lwip-accept-err|probe-failed)\]/i.test(line) || /error|fail/i.test(line)) return "warn";
+  if (/\[collector /.test(line)) return "life";
+  return "warn";
+}
 function pollEvents(){
   fetch("/api/events").then(r=>r.json()).then(list=>{
+    const now = Date.now(), tl = $("tl");
+    if (!list || !list.length || list.every(g => !g.lines || !g.lines.length)){
+      tl.innerHTML = '<div class="dim" style="padding:4px 0">暂无事件</div>';
+    } else {
+      let html = '<div class="tl-legend"><span><i style="background:var(--red)"></i>崩溃/复位</span>' +
+        '<span><i style="background:var(--amber)"></i>错误</span>' +
+        '<span><i style="background:var(--blue)"></i>生命周期</span>' +
+        '<span class="dim" style="margin-left:auto">近 30 分钟</span></div>';
+      for (const g of list){
+        const ticks = [];
+        for (const l of (g.lines || [])){
+          const m = /^\[(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})\.(\d{3})\]/.exec(l);
+          if (!m) continue;
+          const t = new Date(m[1] + "T" + m[2] + "." + m[3]).getTime();
+          const age = now - t;
+          if (age < 0 || age > TL_WIN) continue;
+          const x = Math.max(0, Math.min(99.5, (1 - age/TL_WIN)*100));
+          ticks.push(`<div class="tl-tick ${tlClass(l)}" style="left:${x}%" title="${esc(l.slice(1, 160))}"></div>`);
+        }
+        html += `<div class="tl-row"><span class="tl-dev">${esc(g.device)}</span><div class="tl-track">${ticks.join("")}</div></div>`;
+      }
+      tl.innerHTML = html;
+    }
     const el = $("events");
     if (!list || !list.length){ el.innerHTML = '<div class="dim" style="padding:12px">暂无事件</div>'; return; }
     el.innerHTML = list.map(g =>
       `<div class="ev-dev">▸ ${esc(g.device)}</div>` +
-      g.lines.map(l =>
+      (g.lines || []).slice(-30).map(l =>
         `<div class="ev-line${HIT.test(l)?" hit":""}">${esc(l)}</div>`).join("")
     ).join("");
   }).catch(()=>{});
 }
 setInterval(pollEvents, 5000); pollEvents();
+
+// —— 多设备对比：可折叠面板内每设备一路迷你尾随（关闭即断开附加流） ——
+let cmpES = {}, cmpBuf = {}, cmpSig = "";
+function syncCmp(){
+  const row = $("cmpRow"), open = $("cmpPanel").open;
+  const names = status.devices.map(d => d.name);
+  const sig = names.join("|") + (open ? "+open" : "");
+  if (sig === cmpSig) { if (open) updateCmpHeads(); return; }
+  cmpSig = sig;
+  for (const [dev, s] of Object.entries(cmpES)){ s.close(); delete cmpES[dev]; }
+  if (!open || !names.length){
+    row.innerHTML = !names.length ? '<div class="dim" style="padding:6px 0">暂无设备</div>' : "";
+    return;
+  }
+  row.innerHTML = "";
+  for (const d of status.devices){
+    const el = document.createElement("div");
+    el.className = "cmp-dev";
+    el.innerHTML = `<div class="hd2"><b>${esc(d.name)}</b><span class="dim" style="font:12px sans-serif">${esc(d.tty)}</span>` +
+      `<span class="cmp-rate dim" style="font:12px sans-serif;margin-left:auto"></span></div><pre></pre>`;
+    row.appendChild(el);
+    const buf = cmpBuf[d.name] = cmpBuf[d.name] || "";
+    const s = cmpES[d.name] = new EventSource(`/api/devices/${encodeURIComponent(d.name)}/live?kind=serial`);
+    s.onmessage = ev => {
+      let chunk; try { chunk = JSON.parse(ev.data); } catch { return; }
+      const b = (cmpBuf[d.name] = (cmpBuf[d.name] || "") + chunk);
+      cmpBuf[d.name] = b.length > 8192 ? b.slice(-8192) : b;
+      cmpAppend(d.name);
+    };
+    cmpAppend(d.name);
+  }
+}
+function cmpAppend(name){
+  const el = document.querySelector(`.cmp-dev:nth-child(${status.devices.findIndex(d=>d.name===name)+1}) pre`);
+  if (!el) return;
+  const lines = (cmpBuf[name] || "").split("\n");
+  el.textContent = lines.slice(-12).join("\n");
+  el.scrollTop = el.scrollHeight;
+}
+function updateCmpHeads(){
+  document.querySelectorAll(".cmp-dev").forEach((el, i) => {
+    const d = status.devices[i];
+    if (d) el.querySelector(".cmp-rate").textContent = (rate[d.name]||0) + " B/s";
+  });
+}
+$("cmpPanel").addEventListener("toggle", syncCmp);
 </script>
 </body>
 </html>

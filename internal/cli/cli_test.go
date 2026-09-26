@@ -75,6 +75,9 @@ func TestParseFlagsLeading(t *testing.T) {
 func TestLoadCfgMerged(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	// os.UserHomeDir() 在 Windows 上看 USERPROFILE 而非 HOME —— 只设 HOME
+	// 隔离不了真机上的 ~/.config/serialtap/config.json（CI 无该文件所以从未暴露）
+	t.Setenv("USERPROFILE", home)
 	cfg, err := loadCfgMerged("", "", 0)
 	if err != nil || cfg.Baud != 115200 || cfg.Root != "logs" {
 		t.Fatalf("默认配置错误: %+v err=%v", cfg, err)
