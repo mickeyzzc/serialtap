@@ -167,7 +167,12 @@ serialtap flash RE <镜像>[@<偏移>]... [--args-file F] [--esptool CMD] [--bau
 
 一条命令走完全程 —— 守护进程对每台命中设备**逐台**执行：挂起采集器并等
 端口关闭 → 运行 esptool（输出逐行流式回传）→ 恢复采集。任一时刻只有
-esptool 一方持有端口，绝不与采集器抢口。
+esptool 一方持有端口，绝不与采集器抢口。失败自动重试（Windows 上 USB-CDC
+设备复位后首次 open/SetCommState 常瞬时失败，esptool 自身不重试）。
+
+**多台门禁**：RE 为正则，匹配多台时**默认拒绝**并列出设备名（防误刷在测
+设备——多板同芯片时未锚定正则会把别的板拖进刷写序列）；确要逐台刷给
+`--all`；精确刷一台用锚定（如 `^board$`）。`reopen`/`reset` 同门禁。
 
 镜像指定（二选一）：
 
@@ -177,6 +182,9 @@ esptool 一方持有端口，绝不与采集器抢口。
   全部 `flash_files` 镜像（路径相对该文件目录解析，按偏移排序）。优先于
   位置参数镜像
 
+**镜像与 args 文件路径由守护进程一侧解析** —— 远程刷写（SSH 隧道）时务必
+用守护进程机器上的绝对路径。
+
 flags：
 
 | Flag | 含义 |
@@ -184,10 +192,18 @@ flags：
 | `--esptool CMD` | esptool 可执行文件。解析顺序：flag → 配置 `esptool_cmd` → PATH 上的 `esptool` → `esptool.py` |
 | `--baud N` | 刷写波特率。解析顺序：flag → 配置 `flash_baud` → esptool 默认 |
 | `--chip C` | 芯片类型（如 `esp32s3`）；省略 → 取 `flasher_args.json` 中的值，再省略则 esptool 自动识别 |
+| `--args-file F` | ESP-IDF `build/flasher_args.json`（与其余 bin 参数二选一，优先） |
+| `--dry-run` | 只预演：显示每台匹配设备将执行的 esptool 命令，不动端口 |
+| `--all` | 匹配多台时仍逐台执行（默认拒绝） |
+| `--retries N` | 失败重试总次数（含首次），默认 3；1 = 不重试 |
+| `--retry-wait D` | 重试间隔，默认 5s |
 | `--sock PATH` | 控制 socket 路径 |
 
 输出持续流式打印直到 `✓ 刷写完成`（或失败信息）；失败时采集器同样会恢复。
-多台命中逐台刷 —— 精确刷一台请锚定模式（`^board$`）。
+无终端场景可用 Web 面板的刷机窗（上传镜像 + SSE 进度），见 README。
+
+远程刷写（板子接在工位机/树莓派上、从笔记本发起）见
+[控制协议 · 远程使用（SSH 隧道）](control-protocol.md#远程使用ssh-隧道)。
 
 ## `reopen RE` —— 串口层软断开重连
 

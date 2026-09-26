@@ -1,213 +1,286 @@
 # serialtap
 
-**A zero-touch USB serial log collector for Linux, Windows & macOS.** Plug in a
+**A zero-touch USB serial middleware for Linux, Windows & macOS.** Plug in a
 device — serialtap detects it, opens the port once, and keeps timestamped logs
 rolling with an error-signature event stream. Built for ESP32 fleet debugging,
 works with any USB serial device (CH340/CH343/CP210x/FTDI/native USB-CDC…).
 
-单二进制 Go 程序：插上设备自动识别 → 持续采集 → 双通道日志（全量 + 错误事件）→
-离线分析（签名汇总 / Backtrace addr2line 解码）。macOS 上 `run` 默认进驻菜单栏
-托盘，图标即可暂停/恢复/打开日志/退出。
+A single Go binary: auto-detect on plug → continuous capture → dual-channel
+logs (full stream + error events) → offline analysis (signature tally /
+Backtrace addr2line decoding). The same daemon also proxies ports to TCP for
+business software, orchestrates esptool flashing without ever fighting it for
+the port, and serves a web panel where **every** operation — including
+uploading images and flashing — can be done from a browser.
 
 [![CI](https://github.com/mickeyzzc/serialtap/actions/workflows/ci.yml/badge.svg)](https://github.com/mickeyzzc/serialtap/actions/workflows/ci.yml)
 
-## 特性
+**English** | [简体中文](README.zh-CN.md)
 
-- **热插拔自动采集**：轮询发现 USB 串口（1s），每设备一个采集协程，插上即采、拔走即停
-- **macOS 菜单栏托盘**：`run` 在 mac 上默认进驻菜单栏 —— 实时设备状态、暂停/恢复
-  全部采集、打开日志目录、打开 Web 面板、退出（`--no-tray` 关闭；
-  Linux 不受影响，仍是纯静态二进制）
-- **身份稳定**：以 USB 物理口为设备身份（Linux by-path / macOS locationID）——
-  重枚举换 ttyUSB 号不影响；同型号适配器（by-id 无序列号的 CH340）也不撞车
-- **双通道日志**：`serial-日期.log` 全量（毫秒级逐行时间戳）+ `events-日期.log`
-  事件流（错误签名命中 + 采集器生命周期），按日 + 按大小轮转，保留期自动清理
-- **错误签名引擎**：内置 ESP-IDF 常见故障行（`rst:0x` 复位 banner、`E (` 错误级日志、
-  lwIP `accept (n)`、Guru Meditation、WDT、Backtrace…），正则可自由扩展
-- **Backtrace 解码**：`decode-backtrace` 提取地址帧交给 addr2line 翻译成
-  `源文件:行号`，自动发现 ESP-IDF 工具链
-- **刷写安全门**：`pause`/`resume` 暂停清单、`release` 临时让口（空闲自动回采）、
-  `flash` 代理刷固件（守护进程经 unix socket 控制通道编排：让口 → esptool → 回采，
-  防止 esptool 与常驻采集器抢口把 ESP32 楔进 ROM 下载模式）
-- **透明 USB 代理**：`proxy` 为设备开一个 127.0.0.1 TCP 端点，业务程序
-  （如 [homepulse](../homepulse) 感知引擎）经它直接读写板子串口 ——
-  对程序等同直连；端口不重开（无复位脉冲），采集照常（tap 模式双向日志），
-  可用 `proxy_tap_exclude` 剔除高频遥测行；单客户端语义，设备拔出/守护退出自动收口
-- **零丢失**：跨读取块行拼装，端口关闭时的残余半行以 `…partial` 标记落盘
-- **纯 Go 静态二进制**：无 CGO、无 libudev 依赖，vendor 已含全部依赖，
-  离线可构建，交叉编译即拷即用
-- **三平台**：Linux / macOS / Windows 全功能可用（平台差异见下节），
-  Windows 设备发现走注册表、控制通道走 AF_UNIX（Win10 1803+）
+## Features
 
-## 平台支持
+- **Hot-plug capture**: polls for USB serial ports (1 s), one collector
+  goroutine per device — starts logging on plug, stops on unplug
+- **Tray / menu bar**: on macOS `run` lives in the menu bar by default; on
+  Windows `serialtap tray` is a resident systray app — live device status,
+  per-device pause/resume, open logs, open the web panel (see below)
+- **Stable identity**: the physical USB port is the device identity (Linux
+  by-path / macOS locationID / Windows instance ID) — re-enumeration changing
+  ttyUSB numbers doesn't matter; same-model adapters without serial numbers
+  don't collide either
+- **Dual-channel logs**: `serial-DATE.log` full stream (millisecond per-line
+  timestamps) + `events-DATE.log` event stream (signature hits + collector
+  lifecycle), rotated by day and by size, retention swept automatically
+- **Error signature engine**: built-in ESP-IDF fault lines (`rst:0x` reset
+  banner, `E (` error-level logs, lwIP `accept (n)`, Guru Meditation, WDT,
+  Backtrace…), freely extensible with regexes
+- **Backtrace decoding**: `decode-backtrace` extracts address frames and
+  translates them via addr2line to `file:line`, auto-discovering the ESP-IDF
+  toolchain
+- **Flash safety gates**: `pause`/`resume` pause lists, `release` temporary
+  port yielding (auto re-acquire when idle), `flash` proxy-flashing — the
+  daemon orchestrates yield → esptool → re-acquire over the control socket so
+  esptool never races the resident collector (which can wedge an ESP32 into
+  ROM download mode); automatic retries absorb Windows CDC first-open failures
+- **Transparent USB proxy**: `proxy` opens a 127.0.0.1 TCP endpoint per device
+  — business software (e.g. a sense engine) reads/writes the board through it
+  as if directly attached; the port is never reopened (no reset pulse),
+  capture continues (bidirectional tap logging), high-rate telemetry lines can
+  be excluded via `proxy_tap_exclude`; single-client semantics, endpoints
+  close automatically on unplug/daemon exit
+- **Soft reconnect, two layers**: `reopen` (serial layer — close port, skip
+  backoff, reopen immediately) and `reset` (USB layer — Windows `pnputil`
+  device-node restart, a software replug) recover wedged ports/drivers
+  without touching the cable
+- **Zero loss**: lines are assembled across read chunks; a trailing partial
+  line at port close is flushed to disk marked `…partial`
+- **Web panel with full operations**: pause/resume, proxy start/stop, port
+  yield, soft reconnect, USB reset, and **image-upload flashing with live SSE
+  progress** — remote/terminal-less scenarios never need the CLI
+- **Pure Go static binary**: no CGO (except the opt-in macOS tray), no
+  libudev, everything vendored — builds offline, cross-compiles trivially
+- **Three platforms**: full functionality on Linux / macOS / Windows (see the
+  next section); Windows device discovery goes through the registry, the
+  control channel is AF_UNIX (Win10 1803+)
 
-| 能力 | Linux | macOS | Windows |
+## Platform support
+
+| Capability | Linux | macOS | Windows |
 |---|---|---|---|
 | run/attach/list/analyze/decode-backtrace | ✓ | ✓ | ✓ |
-| pause / resume / status / flash 代理刷写 | ✓ | ✓ | ✓（Win10 1803+） |
-| `reopen` 串口层软重连 | ✓ | ✓ | ✓ |
-| `reset` USB 层软重枚举 | ✗ | ✗ | ✓（pnputil，Win10+，需管理员/UAC） |
-| 设备身份（稳定 key） | by-path 物理口 | `cu.*` 设备名（位置/序列号编码） | USB 实例 ID（注册表） |
-| release 空闲自动回采 | ✓（/proc） | ✓（lsof） | ✗ —— 用 `--for` 限时回采或 `resume` 手动回采 |
-| 控制 socket 默认路径 | `$XDG_RUNTIME_DIR/serialtap.sock` → `/tmp/serialtap-<uid>.sock` | 同左（/tmp 回退） | `%LOCALAPPDATA%\serialtap\serialtap.sock` |
+| pause / resume / status / proxy / flash | ✓ | ✓ | ✓ (Win10 1803+) |
+| `reopen` serial-layer soft reconnect | ✓ | ✓ | ✓ |
+| `reset` USB-layer soft replug | ✗ | ✗ | ✓ (pnputil, Win10+, admin/UAC) |
+| Device identity (stable key) | by-path (physical port) | `cu.*` name (encodes location/serial) | USB instance ID (registry) |
+| release idle auto re-acquire | ✓ (/proc) | ✓ (lsof) | ✗ — use `--for` timed re-acquire or manual `resume` |
+| Default control socket | `$XDG_RUNTIME_DIR/serialtap.sock` → `/tmp/serialtap-<uid>.sock` | same (with /tmp fallback) | `%LOCALAPPDATA%\serialtap\serialtap.sock` |
 
-匹配正则（pause/release/flash/exclude/names）在各平台都作用于
-tty / 设备名 / key / by-id 四个字段，但**字段形态不同**：
-Linux 的 by-id 是 `usb-Espressif_USB_JTAG_...`，Windows 是 `USB\VID_303A&PID_1001\...`
-实例路径，macOS 是 `usbmodem2101` 一类设备名 —— 用 `serialtap list` 看实际值再写正则。
-内置 VID:PID 规则（ch340/ch343/esp32s3-jtag）三平台通用。
+Match regexes (pause/release/flash/exclude/names) apply to the
+tty / device name / key / by-id fields on every platform, but **the field
+shapes differ**: on Linux by-id looks like `usb-Espressif_USB_JTAG_...`, on
+Windows it's a `USB\VID_303A&PID_1001\...` instance path, on macOS a device
+name like `usbmodem2101` — run `serialtap list` to see the actual values
+before writing regexes. Built-in VID:PID rules (ch340/ch343/esp32s3-jtag) work
+on all three platforms.
 
-## Windows 托盘
+## Tray & menu bar
 
-`serialtap tray` 在系统托盘常驻，与守护进程只经控制 socket 通信（互不绑架，托盘退出不影响采集）：
-
-- **每台设备一个菜单项，勾选框即"接入开关"** —— 勾选 = 采集中，点击即暂停/恢复该设备
-- 设备子菜单：**查看串口日志**（系统默认编辑器打开最新全量日志）、**打开日志目录**
-- 全部暂停 / 全部恢复；守护进程未运行时菜单可一键启动（后台无窗口）
-- **打开 Web 面板**（一键进观测面板，见下节）
-- 悬停提示实时设备数；图标变灰 = 守护进程未连接
+- **macOS**: `run` embeds a menu-bar tray by default (`--no-tray` to disable) —
+  live device status, pause/resume all capture, open log directory, open the
+  web panel, quit. Requires a CGO build (Xcode Command Line Tools); a
+  `CGO_ENABLED=0` build simply runs headless
+- **Windows**: `serialtap tray` is a separate resident systray process talking
+  to the daemon only over the control socket (killing the tray never touches
+  capture):
+  - one menu item per device — the checkbox *is* the on/off switch; click to
+    pause/resume that device
+  - per-device submenu: **view serial log** (latest full log in the system
+    editor), **open log directory**
+  - pause all / resume all; one-click daemon start when it's not running
+  - **open web panel**; hover shows the live device count; grey icon =
+    daemon not connected
 
 ```powershell
-serialtap tray --root <日志根> --sock <控制socket>   # 与 run 的参数保持一致即可
+serialtap tray --root <log root> --sock <control socket>   # match run's flags
 ```
 
-## Web 观测面板
+Linux has no tray (systray needs libappindicator) — use the web panel instead.
 
-`serialtap run` 内置观测面板（默认 **http://127.0.0.1:8801/**，`--web off` 关闭），
-守护进程经手的一切可视化查看：
+## Web observation panel
 
-- **设备卡**：接入状态（collecting/paused/suspended/flashing）、代理会话徽标、
-  实时写入速率（由日志大小差分）、全量/事件日志体积与留存总量
-- **实时日志**：全量 / 事件流双 tab，SSE 尾随（700ms 增量推送，自动跟随
-  日轮转与大小轮转），自动滚动可暂停、可清屏；**设备下拉 + 点设备卡整卡
-  切换**要查看的板子（多板并存时从这里选 COM）
-- **最近事件**：签名命中（复位 banner、Guru Meditation、WDT…）+ 采集器
-  生命周期 + 代理刷机记录，跨设备分组，命中行高亮
-- **操作**：按设备暂停/恢复、代理开/停 —— 经与 ctl socket **同一条处理路径**
-  转发执行（面板不引入第二套控制逻辑；flash/release 等长操作仍走 CLI）
+`serialtap run` serves an observation panel (default
+**http://127.0.0.1:8801/**, `--web off` to disable) — everything the daemon
+sees, plus every operation:
 
-面板是只读展示 + 既有 ctl 操作的转发，**不做任何业务逻辑**（serialtap 定位
-不变）；仅监听本机回环，与 ctl socket 同信任域。
+- **Device cards**: state (collecting/paused/suspended/flashing), proxy-session
+  badge, live write rate (log-size delta), full/event log sizes and total
+  retention usage
+- **Live logs**: full/event dual tabs, SSE tailing (700 ms incremental pushes,
+  follows day and size rotation), pausable auto-scroll, clear screen; pick the
+  board via the device dropdown or by clicking a card (this is where you
+  select the COM with multiple boards attached)
+- **Recent events**: signature hits (reset banner, Guru Meditation, WDT…) +
+  collector lifecycle + proxy-flash history, grouped per device, matched lines
+  highlighted
+- **Operations — full coverage**: per-device pause/resume, proxy start/stop,
+  port yield (5 min), serial soft reconnect, USB reset (UAC confirm), and
+  **flashing from the browser** — upload images+offsets (or a
+  `flasher_args.json`) and watch esptool progress stream back over SSE. No CLI
+  needed for any of it.
 
-## 快速开始
+The panel is read-only display + forwarding of the existing ctl operations
+through the **same handler path** as the control socket — it introduces no
+second control logic and **no business logic** (serialtap stays a middleware);
+it listens on loopback only, same trust domain as the ctl socket.
+
+## Quick start
 
 ```bash
-# 方式一： Releases 页下载（打 v* 标签自动构建）
-#   Windows: serialtap-setup-<版本>.exe（安装包，开始菜单/桌面图标直进托盘）
-#            + 便携版 zip；macOS: .dmg（拖入应用程序，双击=菜单栏托盘）；
-#            Linux: tar.gz（binary + systemd 用户服务示例，amd64/arm64）
-# 方式二： 源码构建
+# Option 1: grab a build from the Releases page (built automatically on v* tags)
+#   Windows: serialtap-setup-<version>.exe (installer; Start-menu/desktop icon
+#            goes straight to the tray) + a portable zip
+#   macOS:   .dmg (drag to Applications; double-click = menu-bar tray)
+#   Linux:   tar.gz (binary + systemd user-service example, amd64/arm64)
+# Option 2: build from source
 git clone https://github.com/mickeyzzc/serialtap && cd serialtap
-make build                 # 或: go build .
-./serialtap list           # 看当前设备: tty / 名字 / VID:PID / by-id / 物理口
-./serialtap run            # 守护模式（macOS 默认带菜单栏托盘）
+make build                 # or: go build .
+./serialtap list           # see current devices: tty / name / VID:PID / by-id / port
+./serialtap run            # daemon mode (menu-bar tray on macOS by default)
 ```
 
-macOS 本地构建托盘版需要 clang（装 Xcode Command Line Tools 即可），
-`go build .` 默认 CGO 开；`CGO_ENABLED=0` 构建得到无托盘版（枚举/采集不受影响，
-发布的 Linux 二进制始终是无 CGO 纯静态）。
-Windows 上是 `serialtap.exe list`（设备形如 `COM3`）、单口采集 `serialtap attach COM3`。
+Building the macOS tray locally needs clang (Xcode Command Line Tools); plain
+`go build .` enables CGO there by default. `CGO_ENABLED=0` builds a
+tray-less binary (enumeration/capture unaffected); released Linux binaries
+are always CGO-free static builds. On Windows it's `serialtap.exe list`
+(devices look like `COM3`) and single-port capture is
+`serialtap attach COM3`.
 
-## 安装包与 CI
+## Installers & CI
 
-- **CI**（`.github/workflows/ci.yml`）：lint + 覆盖率报告 + 三平台（ubuntu/
-  windows/macos）全量测试 + 纯 Go 交叉编译冒烟（linux/windows；darwin 托盘
-  需 cgo，由 macos 原生任务覆盖）
-- **Release**（`.github/workflows/release.yml`，打 `v*` 标签触发）：
-  - **Windows 安装包**：Inno Setup（`packaging/windows/serialtap.iss`），
-    按用户安装免管理员；开始菜单/桌面「serialtap 托盘」= `serialtap tray`
-    （FreeConsole 无黑窗），装完勾选即启动；另出便携版 zip
-  - **macOS**：universal 二进制（amd64+arm64 lipo）→ `.app`（LSUIElement
-    隐藏 Dock，双击=菜单栏托盘）→ DMG（`packaging/macos/make-app.sh`，
-    图标由 `assets/logo/gen.py` 产物经 iconutil 生成）
-  - **Linux**：tar.gz 含 binary + README + systemd 用户服务示例 + INSTALL.md
-  - 版本号经 `-ldflags -X ...cli.Version=<tag>` 注入，产物附 sha256sums
-- **Web 面板操作全覆盖**：暂停/恢复、代理开停、让口（5 分钟）、串口软重连、
-  USB 重置、**上传镜像刷机**（多 bin+偏移或 flasher_args.json，esptool
-  进度 SSE 实时回放）—— 远程/无终端场景不需要 CLI
+- **CI** (`.github/workflows/ci.yml`): lint + coverage report + full test
+  matrix on ubuntu/windows/macos + pure-Go cross-compile smoke (linux/windows;
+  the darwin tray needs cgo and is covered by the native macOS job)
+- **Release** (`.github/workflows/release.yml`, triggered by a `v*` tag):
+  - **Windows installer**: Inno Setup (`packaging/windows/serialtap.iss`),
+    per-user install without admin; Start-menu/desktop "serialtap tray"
+    shortcut launches `serialtap tray` (FreeConsole, no black window);
+    optional launch-on-finish; plus a portable zip
+  - **macOS**: universal binary (amd64+arm64 lipo) → `.app` (LSUIElement
+    hides the Dock icon; double-click = menu-bar tray) → DMG
+    (`packaging/macos/make-app.sh`; the icon is generated from the
+    `assets/logo/` assets via iconutil)
+  - **Linux**: tar.gz with the binary + README + a systemd user-service
+    example + INSTALL.md
+  - versions are injected via `-ldflags -X ...cli.Version=<tag>`; artifacts
+    ship with sha256sums
+- The **Wave·Tap logo** (UART square wave + mid-bus tap — the universal
+  symbol of serial levels × serialtap's job, tapping the line) is used
+  everywhere: panel favicon/header, tray icons, installer assets.
+  `assets/logo/gen.py` regenerates every size from the SVG.
 
-## 命令
+## Commands
 
-| 命令 | 作用 |
+| Command | What it does |
 |---|---|
-| `run` | 守护模式。轮询发现 USB 串口，每设备一个采集协程；macOS 默认进驻菜单栏托盘（`--no-tray` 关闭） |
-| `attach TTY [--name N]` | 单口采集（手动围观/测试，可接 socat PTY） |
-| `list` | 列出当前设备与身份 |
-| `pause [RE]` / `resume [RE]` | 暂停/恢复采集（省略 = 全部） |
-| `release RE [--for 5m]` | **临时让出串口**给外部工具：默认端口空闲 3 秒自动回采，或限时自动回采 |
-| `flash RE <bin>[@0x10000]...` | **代理刷固件**：让口 → esptool → 自动回采，进度流式回传；失败自动重试（`--retries`，默认 3 次 × `--retry-wait` 5s——Windows 上 USB-CDC 设备复位后首次 open/SetCommState 常瞬时失败，esptool 自身不重试）；`--args-file build/flasher_args.json` 一键刷 IDF 全套；`--dry-run` 预演将执行的命令。RE 为正则，**匹配多台时默认拒绝**（防误刷在测设备——多板同芯片时未锚定正则会把别的板拖进刷写序列，列出匹配设备并要求锚定），确要逐台刷给 `--all`，精确刷一台用锚定（如 `^board$`）。远程刷写见[控制协议 · SSH 隧道](docs/ctl-protocol.md#远程使用ssh-隧道) |
-| `reopen RE [--all]` | **串口层软断开重连**：立即关口 → 跳过退避立即重开。端口疑似卡死（读空转/驱动状态怪异）时的快速自愈；不改变所有权与暂停语义（与 `release` 不同）。注意会打断进行中的透传会话（客户端重连即可），且 open/close 各带一拍复位脉冲（见[复位语义](#复位语义重要)——对 CH340/乐鑫原生 USB 口等于顺带软重启了板子）。多台门禁同 flash（`--all`） |
-| `reset RE [--all]` | **USB 层软拔插**：让口 → `pnputil /restart-device`（禁用+启用设备节点，等效软件层面的拔插）→ 用自身枚举器确认重枚举 → 回采。作用于设备的串口接口节点，JTAG 等兄弟接口不受影响。适用于设备在总线但驱动/端口僵死（打不开、僵尸句柄）。需管理员权限：非提权守护进程自动弹 UAC 提权重试（可取消）。**仅 Windows**；设备整个消失在总线上时无解（只能物理重插）。多台门禁同 flash（`--all`） |
-| `status` | 守护进程与设备实时状态（collecting/paused/suspended/flashing） |
-| `tray`（Windows/macOS） | 托盘常驻：接入状态、按设备暂停/恢复、打开日志，见下节（Linux 暂无：systray 需 libappindicator，用 Web 面板） |
-| `analyze LOG...` | 离线签名扫描：计数 / 首末时间 / 样本行汇总表 |
-| `decode-backtrace LOG` | `Backtrace:` 地址帧 addr2line 解码 |
+| `run` | Daemon mode. Polls for USB serial ports, one collector goroutine per device; menu-bar tray on macOS by default (`--no-tray` off) |
+| `attach TTY [--name N]` | Capture a single port in the foreground (manual watching/testing; can point at a socat PTY) |
+| `list` | List current devices and identities |
+| `pause [RE]` / `resume [RE]` | Pause/resume capture (omitted = all) |
+| `proxy RE [--stop]` | **Transparent USB proxy**: open a TCP endpoint per matched device — business software treats it as directly attached; capture continues meanwhile (`proxy_tap_exclude` keeps high-rate telemetry out of the full log) |
+| `release RE [--for 5m]` | **Temporarily yield a port** to an external tool: default re-acquires after 3 idle seconds, or after the given duration |
+| `flash RE <bin>[@0x10000]...` | **Proxy flashing**: yield → esptool → auto re-acquire, output streamed back; retries on failure (`--retries`, default 3 attempts × `--retry-wait` 5 s — Windows USB-CDC devices often fail the first open/SetCommState after a reset and esptool itself never retries); `--args-file build/flasher_args.json` flashes a whole IDF set; `--dry-run` previews the exact esptool commands. RE is a regex; **matching several devices is refused by default** (anti-misflash protection — an unanchored regex would drag other same-chip boards into the flash sequence; the device list is printed and an anchor demanded), `--all` flashes one-by-one on purpose, anchor (`^board$`) flashes exactly one. Remote flashing: see [control protocol · SSH tunnel](docs/en/control-protocol.md#remote-usage-ssh-tunnel) |
+| `reopen RE [--all]` | **Serial-layer soft reconnect**: close the port now → skip backoff → reopen now. Fast self-heal for wedged ports (idle-spinning reads, odd driver states); does not change ownership or pause semantics (unlike `release`). Interrupts live proxy sessions (clients just reconnect), and open/close each deliver a reset pulse (see [reset semantics](#reset-semantics-read-this) — on CH340/Espressif native USB this effectively soft-reboots the board). Multi-device gate as `flash` (`--all`) |
+| `reset RE [--all]` | **USB-layer soft replug** (Windows only): yield → `pnputil /restart-device` (disable+enable the device node, a software replug) → verify re-enumeration with the built-in enumerator → re-acquire. Targets the serial interface node; sibling JTAG interfaces are untouched. For devices present on the bus but wedged (won't open, zombie handles). Needs admin: an unelevated daemon auto-pops UAC to retry (cancellable). When the device has vanished from the bus entirely, only a physical replug helps. Multi-device gate as `flash` (`--all`) |
+| `status` | Live daemon and per-device state (collecting/paused/suspended/flashing) |
+| `tray` (Windows) | Resident systray: status, per-device pause/resume, open logs — see above (macOS has no separate `tray`; `run` embeds the menu bar) |
+| `analyze LOG...` | Offline signature tally: counts / first-last / sample-line summary |
+| `decode-backtrace LOG` | Decode `Backtrace:` address frames via addr2line |
+| `version` | Print the version |
 
-flags（`--root/--baud/--config/--poll-ms/--exclude/--sock`）可写在位置参数前后任意位置。
+Flags (`--root/--baud/--config/--poll-ms/--exclude/--sock`) may appear before
+or after positional arguments.
 
-## 文档
+## Documentation
 
-- [架构](docs/architecture.md) —— 包分层与依赖规则、采集器状态机、open-once-and-hold、
-  release/flash 编排、可测性 seam 一览
-- [配置参考](docs/configuration.md) —— 全部字段与默认值、设备命名链、PAUSED 文件、
-  内置签名表、日志轮转
-- [控制协议](docs/ctl-protocol.md) —— ctl socket 的 JSON 行协议完整语义（脚本化集成）
-- [贡献指南](CONTRIBUTING.md) —— 构建/测试/lint、TDD 与注入 seam、平台注意事项、发布流程
+- [Architecture](docs/en/architecture.md) — package layering and dependency
+  rules, collector state machine, open-once-and-hold, release/flash/reopen
+  orchestration, testability seams
+- [CLI reference](docs/en/cli-reference.md) — every command and flag
+- [Configuration](docs/en/configuration.md) — every field and default,
+  device-naming chain, PAUSED file, built-in signatures, log rotation
+- [Control protocol](docs/en/control-protocol.md) — the ctl socket's JSON
+  line protocol in full (scripting integration, SSH-tunnel remote use)
+- [Deployment](docs/en/deployment.md) — installers, systemd/launchd/Task
+  Scheduler, disk management
+- [Contributing](CONTRIBUTING.md) — build/test/lint, TDD and injection seams,
+  platform notes, release process
 
-## 复位语义（重要）
+## Reset semantics (read this)
 
-**open 和 close 串口设备都会给板子一拍复位脉冲**，包括 ESP32-S3 原生
-USB-JTAG 口（USB_SERIAL_JTAG 外设在硅内实现了与 CH340 一致的自动复位语义，
-实测 open 后 3ms 出现 `rst:0x15 (USB_UART_CHIP_RESET)`，close 后设备重启）。
-这是宿主侧 CDC 握手线行为，用户态无法避免。
+**Opening and closing a USB serial port both pulse the board's reset line**,
+including the ESP32-S3 native USB-JTAG port (the USB_SERIAL_JTAG peripheral
+implements the same auto-reset semantics as a CH340 in silicon; measured:
+`rst:0x15 (USB_UART_CHIP_RESET)` 3 ms after open, reboot after close). This
+is host-side CDC handshake-line behavior and cannot be avoided from userspace.
 
-因此 serialtap 的纪律是**每物理设备恰好 open 一次并长期持有**，绝不周期性重开：
+Hence serialtap's discipline: **open each physical device exactly once and
+hold it** — never reopen periodically:
 
-- 热插拔接入：设备刚上电，这一拍复位无感
-- `pause`（刷机前）：会复位设备 —— 无妨，esptool 本来就要复位
-- 静默看门狗（`silent_reopen_s`）**默认关**：只对保证有周期日志输出的设备
-  （如 30s 心跳）显式开启；否则合法的安静设备会被复位循环
-- `reopen`（串口层软重连）是**显式的手动例外**：使用者主动要求关口重开，
-  这一拍复位是特性的一部分（对 CH340/乐鑫原生 USB 口等于软重启板子），
-  而不是自动行为 —— 自动路径（断线重开循环）依旧遵守退避纪律
+- hot-plug attach: the device just powered up, the pulse is harmless
+- `pause` (before flashing): resets the board — fine, esptool was going to
+- the silent watchdog (`silent_reopen_s`) is **off by default**: enable it
+  only for devices guaranteed to emit periodic output (e.g. a 30 s
+  heartbeat), otherwise legitimately quiet boards end up in a reset loop
+- `reopen` (serial-layer soft reconnect) is an **explicit manual exception**:
+  the user asked for a close/reopen, so the pulse is part of the feature (on
+  CH340/Espressif native USB it amounts to soft-rebooting the board) — the
+  automatic paths (disconnect-reopen loops) still obey the backoff discipline
 
-## 日志布局
+## Log layout
 
 ```
-<root>/<设备名>/serial-YYYYMMDD.log     # 全量，每行 [YYYY-MM-DD HH:MM:SS.mmm] 前缀
-<root>/<设备名>/serial-YYYYMMDD.001.log # 超 rotate_max_mb 后轮转
-<root>/<设备名>/events-YYYYMMDD.log     # 事件流：签名命中 + 采集器生命周期
-<root>/PAUSED                            # 暂停清单（每行一个正则，mtime 热重载）
+<root>/<device>/serial-YYYYMMDD.log     # full stream, [YYYY-MM-DD HH:MM:SS.mmm] prefix per line
+<root>/<device>/serial-YYYYMMDD.001.log # rotated after rotate_max_mb
+<root>/<device>/events-YYYYMMDD.log     # event stream: signature hits + collector lifecycle
+<root>/PAUSED                           # pause list (one regex per line, hot-reloaded on mtime)
 ```
 
-## 设备命名
+## Device naming
 
-优先级：配置 `names`（by-id 正则）→ 内置规则（`ch340` / `ch343` / `esp32s3-jtag`）
-→ by-id 基名 → tty 名。同名设备（如两只乐鑫原生 USB-JTAG 都是
-`303a:1001` → 都叫 `esp32s3-jtag`）自动加**身份派生后缀** `-<token>`：
-token 是设备稳定身份（key/by-id，Windows 实例路径内嵌 MAC）的 4 位散列，
-同一块板无论第几个接入、跨守护重启后缀都一致；裸基名先到先得。
-**双板并存时请锚定后缀名**（如 `^esp32s3-jtag-1x2y$`），或用 by-id 里的
-序列号/MAC 在配置 `names` 里给板子起语义名（见 `config.example.json`）。
+Resolution order: config `names` (by-id regexes) → built-in rules
+(`ch340` / `ch343` / `esp32s3-jtag`) → by-id base name → tty name. When two
+live devices resolve to the same name (e.g. two Espressif native USB-JTAG
+both `303a:1001` → both `esp32s3-jtag`), an **identity-derived suffix**
+`-<token>` is appended: the token is a 4-hex hash of the device's stable
+identity (key/by-id; on Windows the instance path embeds the MAC), so the
+same board keeps the same suffix no matter when it attaches or how often the
+daemon restarts; the bare base name goes to whoever attached first.
+**With two identical boards attached, anchor the suffixed name** (e.g.
+`^esp32s3-jtag-1x2y$`), or give the boards semantic names via the serial/MAC
+in their by-id (config `names`, see `config.example.json`).
 
-配置文件默认路径 `~/.config/serialtap/config.json`（不存在则全默认值），
-所有字段见 `config.example.json` 与 `config.go`。
+The config file defaults to `~/.config/serialtap/config.json` (only loaded if
+present); see `config.example.json` and [configuration](docs/en/configuration.md)
+for every field.
 
-## macOS 说明
+## macOS notes
 
-- **设备身份**：Linux 走 sysfs by-path；macOS 解析 `ioreg`（IOKit 注册表）——
-  以 USB `locationID`（物理口）为 key，`usb-<vid>_<pid>[-<序列号>]` 为 by-id。
-  by-id 风格与 Linux 对齐，配置里的 `names` 规则可跨平台复用；ioreg 只在
-  端口集合变化（热插拔）时执行，稳态轮询零开销。只枚举 `/dev/cu.usb*`
-  （蓝牙/wlan-debug 等本机串口天然滤除；采集用 cu.*，tty.* 在 mac 上 open 会
-  等载波阻塞）
-- **菜单栏托盘**：默认 CGO 构建包含托盘（fyne.io/systray）：设备实时状态、
-  暂停/恢复全部、打开日志目录（Finder）、打开 Web 面板（默认
-  http://127.0.0.1:8801/，面板关闭自动隐藏该项）、退出。`run --no-tray`
-  走无头模式（SSH 远程 mac 场景）；`CGO_ENABLED=0` 构建自动无托盘
-- **控制 socket**：默认 `/tmp/serialtap-$UID.sock`（BSD 的 unix socket 路径
-  上限 104 字节，路径过长会明确报错）
+- **Device identity**: Linux uses sysfs by-path; macOS parses `ioreg` (the
+  IOKit registry) — the USB `locationID` (physical port) is the key, with
+  `usb-<vid>_<pid>[-<serial>]` as by-id. The by-id style matches Linux, so
+  `names` rules carry across platforms. ioreg runs only when the port set
+  changes (hot-plug), so steady-state polling costs nothing. Only
+  `/dev/cu.usb*` devices are enumerated (Bluetooth/wlan-debug ports are
+  filtered naturally; capture uses cu.* — opening tty.* on macOS blocks
+  waiting for carrier)
+- **Menu-bar tray**: the default CGO build includes the tray
+  (fyne.io/systray): live device status, pause/resume all, open log directory
+  (Finder), open web panel (default http://127.0.0.1:8801/, hidden
+  automatically when the panel is off), quit. `run --no-tray` runs headless
+  (SSH-remote macs); a `CGO_ENABLED=0` build has no tray automatically
+- **Control socket**: defaults to `/tmp/serialtap-$UID.sock` (BSD caps unix
+  socket paths at 104 bytes; overlong paths fail with a clear error)
 
-## 离线分析
+## Offline analysis
 
 ```bash
 ./serialtap analyze logs/esp32s3-jtag/serial-*.log
@@ -216,90 +289,109 @@ token 是设备稳定身份（key/by-id，Windows 实例路径内嵌 MAC）的 4
 
 ./serialtap decode-backtrace logs/esp32s3-jtag/serial-20260920.log
 # addr2line: ~/.espressif/tools/.../xtensa-esp32s3-elf-addr2line
-# elf:       由配置 elf_map 按设备名自动选取（也可 --elf 显式指定）
+# elf:       chosen via config elf_map by device name (or --elf explicitly)
 ```
 
-## systemd 部署（用户级服务）
+## Running as a service
+
+Linux (systemd user service):
 
 ```bash
 mkdir -p ~/.local/bin ~/.config/serialtap ~/.config/systemd/user
 cp serialtap ~/.local/bin/
-cp config.example.json ~/.config/serialtap/config.json   # 按需改 root/names/elf_map
+cp config.example.json ~/.config/serialtap/config.json   # adjust root/names/elf_map
 cp deploy/serialtap.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now serialtap
-journalctl --user -u serialtap -f          # 看运行日志
-loginctl enable-linger $USER               # 开机自启（不登录也跑）
+journalctl --user -u serialtap -f          # follow runtime logs
+loginctl enable-linger $USER               # start at boot without login
 ```
 
-串口权限：Linux 上用户需在 `uucp`（Arch）或 `dialout`（Debian 系）组。
+Serial permissions: on Linux the user must be in `uucp` (Arch) or `dialout`
+(Debian-family). macOS and Windows need no permission setup — see
+[deployment](docs/en/deployment.md) for the macOS launchd agent and the
+Windows installer/Task Scheduler paths.
 
-### macOS / Windows 常驻
+## Troubleshooting
 
-- **macOS**：用户级 launchd agent —— 写 `~/Library/LaunchAgents/com.mickeyzzc.serialtap.plist`
-  （`ProgramArguments` 指向二进制与 `run`，`RunAtLoad=true`），`launchctl load` 生效；
-  或终端里直接 `serialtap run`。无需串口权限组
-- **Windows**：开发调试直接在终端跑 `serialtap run`；开机自启用任务计划程序
-  （登录时启动，工作目录任意）。COM 口无需权限配置
+- **Proxy flash reports "port busy"**: usually another serialtap instance
+  (e.g. a demo daemon started from an old checkout) holds the port. Find it
+  with `Get-CimInstance Win32_Process -Filter "name='serialtap.exe'" | select ProcessId,CommandLine`
+  and end it; this daemon's collector takes the port back with its usual
+  backoff.
+- **Proxy endpoint connects but no device data arrives**: TCP dial returns
+  before accept/attachment completes, so device→client bytes emitted before
+  attachment aren't mirrored (client→device is kernel-buffered and
+  unaffected). Do an application-level handshake first (e.g. homepulse's
+  sense_start/ack) to avoid it.
+- **`open failed: ... device busy`** — the port is held by another process
+  (EBUSY; details in the events log). `lsof /dev/ttyUSB0` to find the holder,
+  or `release` the port properly.
+- **Startup refuses: control socket held by another serialtap instance** — a
+  live instance is running (anti-hijack protection). Check
+  `systemctl --user status serialtap`; for parallel instances give each a
+  different `control_socket` (`run --sock`) and log `root`.
+- **`flash`/`release`/`status` can't reach the daemon** — `serialtap run`
+  isn't running, or the socket path differs (resolution rules in the
+  [control protocol](docs/en/control-protocol.md); on Windows the default is
+  `%LOCALAPPDATA%\serialtap\`).
+- **Windows `release` says idle auto re-acquire unsupported** — expected:
+  Windows has no /proc/lsof holder detection. Use `release RE --for 5m`, or
+  `resume` after flashing.
+- **Regex matches no device** — field shapes differ per platform (see the
+  platform table); run `serialtap list` to see the real values.
+- **Device name carries a `-xxxx` hash suffix** — same-name collision
+  (same-model boards with serial-less by-id, e.g. two native USB-JTAG). The
+  suffix derives from the stable identity and survives restarts — anchor it
+  when two such boards are attached, or split them via config `names` on
+  by-id serial/MAC.
+- **Paused and never capturing** — `cat <root>/PAUSED` to see the list;
+  `serialtap resume` (no argument) clears everything.
+- **Board keeps rebooting** — check whether the `silent_reopen_s` watchdog is
+  on; it reset-loops legitimately quiet boards. Keep it at the default `0`.
+- **`analyze` doesn't see custom signatures** — known limitation: offline
+  scanning uses the built-in set only; `signatures_extra` affects the live
+  event stream only.
+- **Device plugged in but not captured** — user not in `dialout`/`uucp`
+  (Linux), or an `exclude` regex matches (check tty/by-id/name).
 
-## 故障排查
+## Development
 
-- **代理刷写报"端口忙"**：多半是另一个 serialtap 实例（比如旧检出目录里
-  起的 demo 守护）占着口。`Get-CimInstance Win32_Process -Filter "name='serialtap.exe'" | select ProcessId,CommandLine`
-  找到后结束它；本守护的采集器会按退避自动接管。
-- **代理端点连上但收不到设备数据**：TCP Dial 在 accept/挂接完成前就返回，
-  设备→客户端方向在挂接前的字节不镜像（客户端→设备方向有内核缓冲不受影响）。
-  应用层先握手（如 homepulse 的 sense_start/ack）即可规避。
-
-## 故障排查（原有条目）
-
-| 症状 | 处置 |
-|---|---|
-| `open failed: ... device busy` | 串口被其他进程占用（EBUSY），错误详情在 events 日志。`lsof /dev/ttyUSB0` 找占用者，或用 `release` 正规让口 |
-| 启动报"控制 socket 已被另一个 serialtap 实例占用" | 已有活实例在跑（防抢占保护）。查 `systemctl --user status serialtap`；确要并行实例，配不同 `control_socket`（`run --sock`）与不同日志 `root` |
-| `flash`/`release`/`status` 连不上守护进程 | `serialtap run` 未运行，或 socket 路径不对（解析规则见[控制协议](docs/ctl-protocol.md)；Windows 默认在 `%LOCALAPPDATA%\serialtap\`） |
-| Windows 上 `release` 报"不支持空闲自动回采" | 预期行为：Windows 无 /proc/lsof 占用检测。用 `release RE --for 5m` 限时回采，或刷完后 `resume` |
-| 正则匹配不到设备 | 各平台的 tty/key/by-id 形态不同（见"平台支持"节），先 `serialtap list` 看实际字段值 |
-| 设备名带 `-xxxx` 散列后缀 | 同名设备撞车（同型号板 by-id 无序列号，如两只原生 USB-JTAG）。后缀从设备稳定身份派生、跨重启不变——双板并存请锚定后缀名，或用配置 `names` 按 by-id 序列号/MAC 细分命名 |
-| `pause` 后一直不采集 | `cat <root>/PAUSED` 看清单内容；`serialtap resume`（无参）清空全部 |
-| 板子反复重启 | 检查是否开了 `silent_reopen_s` 看门狗 —— 合法安静的设备会被它复位循环，保持默认 `0` |
-| `analyze` 看不到自定义签名 | 已知限制：离线扫描只统计内置签名表，`signatures_extra` 仅影响在线事件流 |
-| 插上设备却没被采集 | 用户不在 `dialout`（Debian 系）/`uucp`（Arch）组；或被 `exclude` 正则命中（检查 tty/by-id/名字） |
-
-## 开发
-
-详见[贡献指南](CONTRIBUTING.md)与[架构文档](docs/architecture.md)。
+See [contributing](CONTRIBUTING.md) and the [architecture doc](docs/en/architecture.md).
 
 ```bash
 make test      # go test -race
-make cover     # 覆盖率（CI 有 80% 门禁）
-make lint      # golangci-lint（配置见 .golangci.yml）
+make cover     # coverage (CI gates at 80%)
+make lint      # golangci-lint (config in .golangci.yml)
 make fmt       # gofmt
 ```
 
-代码结构（`internal/` 分包，依赖单向、边界清晰）：
+Code layout (`internal/` packages, one-way dependencies, clean boundaries):
 
 ```
-main.go                    # 薄入口（仅 os.Exit(cli.Run(...))）
-internal/cli/              # 子命令分发与 flag 解析（编排层）
-internal/config/           # 配置定义与加载
-internal/device/           # 设备发现与稳定身份（Linux sysfs/by-path、Windows 注册表、macOS cu.* 命名）
-internal/collector/        # 单设备采集器（open-once-and-hold、可注入 Port seam）
-internal/logstore/         # 双通道日志写入 / 轮转 / 保留期清理
-internal/signature/        # 错误签名引擎
-internal/pause/            # 刷写暂停清单
-internal/daemon/           # 热插拔守护循环（枚举 diff + 起停采集器 + release/flash 编排）
-internal/flash/            # 代理刷固件（esptool 编排 + flasher_args.json 解析）
-internal/ctl/              # 控制 unix socket（JSON 行协议）
-internal/tray/             # 托盘/菜单栏（darwin+cgo 实现，其余平台无 GUI 桩）
-internal/analyze/          # 离线分析（签名汇总 + addr2line 解码）
-internal/testutil/         # 跨包测试助手（假串口等）
+main.go                    # thin entry (os.Exit(cli.Run(...)) only)
+internal/cli/              # subcommand dispatch & flag parsing (orchestration)
+internal/config/           # config definition & loading
+internal/device/           # discovery & stable identity (Linux sysfs/by-path, Windows registry, macOS ioreg)
+internal/collector/        # per-device collector (open-once-and-hold, injectable Port seam)
+internal/logstore/         # dual-channel log writing / rotation / retention sweep
+internal/signature/        # error signature engine
+internal/pause/            # flash pause list
+internal/daemon/           # hot-plug daemon loop (enumerate diff + collector lifecycle + release/flash/reopen/reset orchestration)
+internal/flash/            # proxy flashing (esptool orchestration + flasher_args.json parsing)
+internal/ctl/              # control unix socket (JSON line protocol)
+internal/web/              # observation & operations panel (SSE live tail, flash upload, cmd forwarding)
+internal/tray/             # tray/menu bar (darwin+cgo embedded in run; Windows systray process; stubs elsewhere)
+internal/analyze/          # offline analysis (signature tally + addr2line decoding)
+internal/testutil/         # cross-package test helpers (fake serial ports, …)
 ```
 
-- TDD 开发，假端口注入驱动采集器全链路离线测试 + socat PTY 端到端
-- 依赖已 `go mod vendor`：`go.bug.st/serial`（arduino-cli 同款串口库，纯 Go）
+- TDD; fake-port injection drives the full collector chain offline + socat
+  PTY end-to-end
+- Dependencies vendored: `go.bug.st/serial` (the arduino-cli serial library,
+  pure Go)
 - Go 1.27+
 
 ## License
 
-GPL-3.0-or-later，见 [LICENSE](LICENSE)。
+GPL-3.0-or-later — see [LICENSE](LICENSE).

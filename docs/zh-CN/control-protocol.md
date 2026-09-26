@@ -3,15 +3,17 @@
 [English](../en/control-protocol.md) | [简体中文](control-protocol.md)
 
 守护进程（`serialtap run`）提供一个本地 unix 流式 socket，CLI 子命令
-`status` / `pause` / `resume` / `release` / `flash` 都走它。你也可以直接
-说这门协议 —— 做仪表盘、CI 任务或刷写脚本 —— 任何能往 socket 写一行的
+`status` / `pause` / `resume` / `release` / `flash` / `proxy` / `reopen` /
+`reset` 都走它（Web 面板的操作按钮也经同一条处理路径）。你也可以直接说
+这门协议 —— 做仪表盘、CI 任务或刷写脚本 —— 任何能往 socket 写一行的
 语言都行。
 
 ## 传输
 
 - **路径解析**（取第一个非空）：`run --sock` 参数 → 配置 `control_socket`
-  → `$XDG_RUNTIME_DIR/serialtap.sock` → `/tmp/serialtap-<uid>.sock`。
-  客户端同样接受 `--sock`，默认走同一套解析。
+  → 平台默认。Linux/macOS：`$XDG_RUNTIME_DIR/serialtap.sock` →
+  `/tmp/serialtap-<uid>.sock`；Windows：`%LOCALAPPDATA%\serialtap\serialtap.sock`
+  （AF_UNIX，Win10 1803+）。客户端同样接受 `--sock`，默认走同一套解析。
 - **权限**：socket 文件以 mode `0600` 创建 —— 仅同用户可连。
 - **帧**：双向每行一个 JSON 对象（UTF-8、`\n` 结尾）。
 - **会话**：一条连接可发多个请求，按序应答。`flash` 在最终响应前会流式
@@ -102,8 +104,10 @@ tty 连续 3 秒无其他进程持有之后。模式命中不到任何采集器�
 
 对每台命中设备依次：挂起采集器 → 跑 esptool → 恢复。流式回传 `flash-log`
 响应（esptool 每输出一行一条，`\r` 分行让进度条透过来），最后一条
-`flash-done` 的 `ok` 反映整体结果。esptool 失败时采集器同样恢复。多台命中
-逐台刷 —— 要精确刷一台发锚定模式（`^board$`）。
+`flash-done` 的 `ok` 反映整体结果。esptool 失败时采集器同样恢复。**匹配
+多台时默认拒绝**并列出设备名（`all:true` 才逐台执行）；要精确刷一台发
+锚定模式（`^board$`）。CLI 客户端另有失败自动重试（默认 3 次 × 5s），协议
+层每次请求即一次完整编排。
 
 ### `proxy`
 
@@ -147,3 +151,32 @@ echo '{"cmd":"flash","pattern":"^board-a$","spec":{"bins":[{"path":"build/app.bi
 # ...
 # {"ok":true,"event":"flash-done"}
 ```
+
+Windows 没有 socat，用 Python（或直接用 `serialtap status` 等子命令）：
+
+```powershell
+python -c "import socket,json; s=socket.socket(socket.AF_UNIX); s.connect(r'$env:LOCALAPPDATA\serialtap\serialtap.sock'); s.sendall(b'{\"cmd\":\"status\"}\n'); print(s.recv(65536).decode())"
+```
+
+## 远程使用（SSH 隧道）
+
+板子接在工位机/树莓派上常驻采集、从笔记本远程刷写的场景：ctl 是 unix
+socket，用 SSH 把远端 socket 转发到本地即可，零额外代码：
+
+```bash
+# 笔记本上（Linux/macOS）：把远端 socket 映到本地路径
+ssh -nN -L /tmp/serialtap-remote.sock:/run/user/1000/serialtap.sock user@bench &
+
+serialtap status --sock /tmp/serialtap-remote.sock
+serialtap flash '^board-a$' --args-file build/flasher_args.json --sock /tmp/serialtap-remote.sock
+```
+
+注意事项：
+
+- **镜像与 args 文件路径在守护进程一侧（远端机器）解析** —— 先把产物放到
+  远端（或用远端可访问的构建目录），再发 flash 请求
+- 远端 socket 路径用 `serialtap status` 在远端确认
+  （`$XDG_RUNTIME_DIR/serialtap.sock` 或 `/tmp/serialtap-<uid>.sock`）
+- Windows 客户端的 OpenSSH 对 unix socket 本地转发支持不完整；可用 WSL
+  里的 ssh，或远端暴露 TCP 端口经 `socat TCP-LISTEN:7332,fork
+  UNIX-CONNECT:...` 中转（仅限可信网络，无认证）

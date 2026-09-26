@@ -2,9 +2,10 @@
 
 [English](../en/architecture.md) | [简体中文](architecture.md)
 
-serialtap 是一个 Linux 守护进程，把"一台主机上插着一堆 USB 串口板"变成
-"一个目录下持续采集、带时间戳、可轮转的日志" —— 并且从不与其他工具抢串口。
-本文说明它是怎么建的，更重要的是那些麻烦的地方*为什么*长这样。
+serialtap 是一个 Linux / macOS / Windows 三平台守护进程，把"一台主机上插着
+一堆 USB 串口板"变成"一个目录下持续采集、带时间戳、可轮转的日志" —— 并且
+从不与其他工具抢串口。本文说明它是怎么建的，更重要的是那些麻烦的地方
+*为什么*长这样。
 
 ## 包结构
 
@@ -15,14 +16,16 @@ main.go                    薄入口：os.Exit(cli.Run(...))
    │
 internal/cli/              子命令分发、flag 解析、命令编排
    ├── internal/config/        配置结构体 + JSON 加载
-   ├── internal/device/        设备发现 + 稳定身份（by-path key、by-id 命名、sysfs VID:PID）
-   ├── internal/daemon/        热插拔循环：枚举 diff、起停采集器、release/flash 编排
-   │     ├── internal/collector/   每设备一协程：open-once-and-hold、行拼装、挂起/恢复
+   ├── internal/device/        设备发现 + 稳定身份（Linux sysfs by-path / Windows 注册表 / macOS ioreg）
+   ├── internal/daemon/        热插拔循环：枚举 diff、起停采集器、release/flash/reopen/reset 编排
+   │     ├── internal/collector/   每设备一协程：open-once-and-hold、行拼装、挂起/恢复/手动重开
    │     ├── internal/logstore/    双通道文件、轮转、保留期清理
    │     ├── internal/signature/   错误签名引擎
    │     ├── internal/flash/       esptool 命令构建/执行、flasher_args.json 解析
    │     └── internal/pause/       PAUSED 文件 + 模式状态
-   ├── internal/ctl/           控制 unix socket 服务端/客户端（JSON 行）
+   ├── internal/ctl/           控制 socket 服务端/客户端（JSON 行；Windows 走 AF_UNIX）
+   ├── internal/web/           观测与操作面板（SSE 实时尾随、刷机上传、命令转发）
+   ├── internal/tray/          托盘/菜单栏（darwin+cgo 内嵌于 run；Windows systray 进程；其余平台桩）
    └── internal/analyze/       离线：签名汇总 + addr2line 解码
 
 internal/testutil/          跨包测试助手（假串口、等待/读文件等）
@@ -46,19 +49,28 @@ internal/testutil/          跨包测试助手（假串口、等待/读文件等
   出错/暂停/挂起时：落盘半行、关端口、退避、重试
 ```
 
-## 稳定身份：by-path，而不是 by-id 或 tty 名
+## 稳定身份：物理口，而不是 by-id 或 tty 名
 
 tty 编号按枚举顺序分配 —— 设备重插或邻居消失都会变。by-id 只有在适配器
 有序列号时才稳定：两只同型号 CH340 的 by-id 字节级相同，光靠 by-id 分不出
 同型号的两块板。
 
-因此 serialtap 以 **by-path**（物理 USB 口）作为设备 key。设备身份在重枚举
-后不变，插在不同口的两只同型号适配器是两个不同的 key。by-id 仍作*展示/命名*
-身份（人类可读，可能内嵌序列号/MAC）。设备发现要求 by-path 条目存在，这同时
-滤掉了非 USB 串口（主板 `ttyS*`）。
+因此 serialtap 以**物理 USB 口**作为设备 key，三平台各有一条发现路径：
 
-VID:PID 从 sysfs 读取：从 `/sys/class/tty/<tty>/device` 向上最多走 4 层，
-找到含 `idVendor`/`idProduct` 的目录。
+| 平台 | key 来源 | by-id 形态 |
+|---|---|---|
+| Linux | sysfs `/dev/serial/by-path` | `usb-Espressif_USB_JTAG_...` |
+| Windows | 注册表 USB 实例 ID（复合设备走 `&MI_00` 接口子键下的 PortName） | `USB\VID_303A&PID_1001\...` 实例路径（内嵌 MAC） |
+| macOS | `ioreg` 解析 USB `locationID` | `usb-<vid>_<pid>[-<序列号>]`（风格与 Linux 对齐） |
+
+设备身份在重枚举后不变，插在不同口的两只同型号适配器是两个不同的 key。
+by-id 仍作*展示/命名*身份（人类可读，可能内嵌序列号/MAC），配置 `names`
+规则因此可跨平台复用。Linux 上设备发现要求 by-path 条目存在，这同时滤掉了
+非 USB 串口（主板 `ttyS*`）；Windows 只认注册表里的 USB 串口；macOS 只枚举
+`/dev/cu.usb*`。
+
+Linux 的 VID:PID 从 sysfs 读取：从 `/sys/class/tty/<tty>/device` 向上最多
+走 4 层，找到含 `idVendor`/`idProduct` 的目录。
 
 ## 复位语义（open-once-and-hold）
 
@@ -118,15 +130,41 @@ VID:PID 从 sysfs 读取：从 `/sys/class/tty/<tty>/device` 向上最多走 4 �
 3. **flash** —— 守护进程对每台命中设备串起上述原语，逐台执行：
    `Suspend`（10 秒预算）→ 标记 `flashing` → 运行 esptool（其 stdout 与
    stderr 经控制 socket 流式回传；`\r` 也算行界，进度条能透过来）→
-   `Resume`。esptool 失败时采集器同样恢复。
+   `Resume`。esptool 失败时采集器同样恢复；客户端失败自动重试（默认
+   3 次 × 5s，吸收 Windows CDC 复位后首开瞬时失败）。正则匹配多台时
+   **默认拒绝并列出设备名**（防误刷在测设备），`--all` 才逐台执行。
 
 `resume`（控制命令）一次清掉匹配的 PAUSED 条目*并*撤销未到期的 release。
 
+## proxy / reopen / reset：透传与两层自愈
+
+- **proxy（透明透传）**：挂起独占（不关采集逻辑）→ 为设备建 127.0.0.1
+  TCP 端点双向转发 → 期间采集照常（tap 模式双向落全量日志，可按行正则
+  剔除高频遥测）。端点所有权语义：owner 停止时 sharer 会话保留所需状态；
+  设备拔出/守护退出自动收口。
+- **reopen（串口层自愈）**：立即关口 → 采集循环读错误退出 → **跳过退避**
+  立即重开。手动例外路径（见复位语义），多台门禁同 flash。
+- **reset（USB 层自愈，仅 Windows）**：让口 → `pnputil /restart-device`
+  重启设备串口接口节点（等效软件拔插）→ 用自身枚举器确认重枚举 → 回采。
+  需管理员：非提权守护进程自动弹 UAC 重试；pnputil 失败时退出码可能仍
+  为 0（实测 Win11），成败判定用输出标记 + 枚举复核，不信任 exit code。
+
+## Web 面板
+
+`internal/web` 与 ctl 走**同一条处理路径**：面板按钮 → `/api/cmd`（白名单
+与 ctl 同源）→ daemon 方法，不引入第二套控制逻辑。观测侧用 SSE 尾随
+日志（增量推送、自动跟随轮转）；刷机走专用 `/api/flash` 上传端点
+（多镜像+偏移或 flasher_args.json → 落盘 `root/.flash-upload/` → 复用
+daemon 编排 → esptool 输出 SSE 实时回放 + 历史回放）。面板只监听本机
+回环，与 ctl socket 同信任域；**不做任何业务逻辑**。
+
 ## 控制 socket
 
-unix 流式 socket，双向每行一个 JSON 对象；见
-[控制协议](control-protocol.md)。socket 权限 0600 —— 仅同用户。有活实例
-持有 socket 时第二个 `serialtap run` 拒绝启动；崩溃残留的死文件自动清理。
+unix 流式 socket（Windows 走 AF_UNIX，Win10 1803+），双向每行一个 JSON
+对象；见[控制协议](control-protocol.md)。socket 权限 0600 —— 仅同用户。
+默认路径三平台不同（Linux `$XDG_RUNTIME_DIR` → `/tmp` 回退；Windows
+`%LOCALAPPDATA%\serialtap\serialtap.sock`）。有活实例持有 socket 时第二个
+`serialtap run` 拒绝启动；崩溃残留的死文件自动清理。
 
 ## 测试策略
 
@@ -141,8 +179,19 @@ unix 流式 socket，双向每行一个 JSON 对象；见
 
 ## 平台支持
 
-设备身份建立在 sysfs 与 `/dev/serial/by-path` 之上，所以守护（`run`/`list`）
-与端口持有者检测**仅 Linux** —— 非 Linux 平台显式报错，而不是返回空设备表。
-代码可交叉编译到任何平台（CI 构建 darwin/windows 作冒烟检查），`attach`/
-`analyze`/`decode-backtrace` 也无 Linux 特有依赖，但官方支持与发布二进制
-仅 Linux amd64/arm64。
+三平台全功能一等公民：设备发现各走原生来源（Linux sysfs / Windows 注册表 /
+macOS ioreg），控制通道统一 unix socket（Windows 为 AF_UNIX，Win10 1803+）。
+平台差异集中在少数能力上（详见 README 的平台支持表）：
+
+- `reset`（USB 层软重枚举）仅 Windows —— 依赖 `pnputil` 重启设备节点
+- release 的空闲自动回采依赖端口持有者检测（Linux `/proc/*/fd`、macOS
+  `lsof`）；Windows 无对应机制，用 `--for` 限时回采或 `resume` 手动回采
+- 托盘形态不同：macOS `run` 内嵌菜单栏（darwin+cgo）；Windows 用独立的
+  `serialtap tray` 进程；Linux 无 GUI 桩，用 Web 面板
+- 发布产物（`v*` 标签触发 CI）：Linux tar.gz（amd64/arm64）、macOS
+  universal .app+DMG、Windows Inno 安装包 + 便携 zip
+
+Windows 侧的工程结论（实测沉淀）：AF_UNIX 上 `conn.Close()` 不中止在途
+`Read`、对已关监听的 `connect()` 会永久阻塞 —— ctl 服务端 Close 需要
+主动断开已接受连接 + 限时兜底；CDC 设备复位后首次 open/SetCommState
+常瞬时失败 —— flash 客户端带重试吸收。
