@@ -24,7 +24,6 @@ jobs:
           go-version-file: go.mod
       - name: Test with coverage gate (80%)
         run: |
-        run: |
           COVERPKG=$(go list ./... | grep -v internal/testutil | tr "\n" ",")
           go test -race -count=1 -coverpkg="$COVERPKG" -covermode=atomic -coverprofile=cover.out ./...
           pct=$(go tool cover -func cover.out | awk '/^total:/ {sub("%","",$3); print $3}')
