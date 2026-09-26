@@ -170,6 +170,9 @@ flags（`--root/--baud/--config/--poll-ms/--exclude/--sock`）可写在位置参
 - [CLI 参考](docs/zh-CN/cli-reference.md) —— 全部命令与 flag
 - [配置参考](docs/zh-CN/configuration.md) —— 全部字段与默认值、设备命名链、
   PAUSED 文件、内置签名表、日志轮转
+- [波形观测指南](docs/zh-CN/waveform-guide.md) —— 面板示波器从零到会读图：
+  自动识别原理、自定义提取正则教程（模板+实时试跑）、读图方法与案例
+  （面板右上角 ? 内置精简版帮助页）
 - [控制协议](docs/zh-CN/control-protocol.md) —— ctl socket 的 JSON 行协议完整
   语义（脚本化集成、SSH 隧道远程使用）
 - [部署指南](docs/zh-CN/deployment.md) —— 安装包、systemd/launchd/任务计划、
