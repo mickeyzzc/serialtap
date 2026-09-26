@@ -207,6 +207,10 @@ or after positional arguments.
 - [CLI reference](docs/en/cli-reference.md) — every command and flag
 - [Configuration](docs/en/configuration.md) — every field and default,
   device-naming chain, PAUSED file, built-in signatures, log rotation
+- [Waveform guide](docs/en/waveform-guide.md) — the panel oscilloscope from
+  zero to reading charts: auto-detection, custom-extraction regex tutorial
+  (templates + live preview), interpretation methods and examples (the panel's
+  ? button carries a condensed in-app help page)
 - [Control protocol](docs/en/control-protocol.md) — the ctl socket's JSON
   line protocol in full (scripting integration, SSH-tunnel remote use)
 - [Deployment](docs/en/deployment.md) — installers, systemd/launchd/Task

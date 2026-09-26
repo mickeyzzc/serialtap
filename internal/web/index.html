@@ -85,10 +85,20 @@ select{background:#21262d;color:var(--fg);border:1px solid var(--border);border-
 .wavebar{display:flex;align-items:center;gap:8px;padding:8px 12px;flex-wrap:wrap}
 .wavebar select{flex:none}
 #waveCv{width:100%;height:320px;display:block;cursor:crosshair}
-.adv{font-size:12px;color:var(--dim)}
-.adv summary{cursor:pointer;user-select:none}
-.adv input{background:#0a0e14;color:var(--fg);border:1px solid var(--border);border-radius:6px;
-padding:3px 8px;font:12px Consolas,monospace;min-width:240px;margin-top:6px}
+#waveMode{cursor:pointer}
+.tpls{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.tpl{font:12px Consolas,monospace;color:var(--teal)}
+#xtrPreview{height:200px;overflow-y:auto;margin:6px 0 0;padding:8px 10px;font:12px/1.5 Consolas,monospace;
+white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
+.hbody h3{font-size:14px;margin:18px 0 6px;color:var(--teal)}
+.hbody h3:first-child{margin-top:0}
+.hbody p{font-size:13px;margin:6px 0}
+.hbody code,.hbody pre{font:12px Consolas,monospace;background:#0a0e14;border-radius:6px;padding:1px 5px}
+.hbody pre{padding:8px 10px;overflow-x:auto;margin:6px 0}
+.hbody table{border-collapse:collapse;font-size:12px;margin:6px 0}
+.hbody td,.hbody th{border:1px solid var(--border);padding:3px 8px;text-align:left}
+.hbody .dim{font-size:12px}
+.hbody a{color:var(--blue)}
 
 /* —— 多设备对比 —— */
 .cmp{margin-top:12px}
@@ -118,6 +128,7 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
   <h1>serialtap · 观测面板</h1>
   <span class="dim" id="root">—</span>
   <span class="dim" id="conn"></span>
+  <button id="btnHelp" title="帮助 · 教程（波形/提取/面板功能）">?</button>
   <span id="toast"></span>
 </header>
 <main>
@@ -143,7 +154,7 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
       <pre id="log">选择左侧设备卡片查看…</pre>
       <div id="waveBox" class="hidden">
         <div class="wavebar">
-          <span class="dim" style="font-size:12px">自动识别通道</span>
+          <span class="chip" id="waveMode" title="点击配置提取策略">自动</span>
           <select id="waveWin" title="时间窗">
             <option value="15">15s</option>
             <option value="60" selected>60s</option>
@@ -153,9 +164,7 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
           <button id="waveFreeze">冻结</button>
           <button id="waveClear">清除</button>
           <span class="dim" id="waveInfo" style="font-size:11px"></span>
-          <details class="adv"><summary>自定义提取</summary>
-            <input id="waveRe" placeholder="正则：每个捕获组一个通道，如 #S1 \d+ \d+ (-?\d+)">
-          </details>
+          <button id="btnXtr" title="自动识别不合意时，用正则定义通道：模板 + 实时试跑">高级提取…</button>
         </div>
         <canvas id="waveCv"></canvas>
       </div>
@@ -190,6 +199,91 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
     </div>
   </div>
 </div>
+<div id="xtrModal" class="modal hidden">
+  <div class="mbox">
+    <div class="mhd"><b>高级提取策略</b> <span class="dim" style="font-size:12px">自动识别不合意时，用正则精确定义通道</span>
+      <button id="xtrClose" style="margin-left:auto">关闭</button></div>
+    <div class="mbody">
+      <label>常用模板（点击填入，可再改）</label>
+      <div class="tpls">
+        <button class="tpl" data-re="#S1 \d+ \d+ (-?\d+)">#S1 取 RSSI</button>
+        <button class="tpl" data-re="(-?\d+(?:\.\d+)?)">行内第一个数字</button>
+        <button class="tpl" data-re="-?\d+(?:\.\d+)?">行内全部数字</button>
+        <button class="tpl" data-re="t=([\d.]+)\s+h=([\d.]+)">t=/h= 双通道</button>
+      </div>
+      <label>提取正则 —— 每个 <b>捕获组</b>（一对括号）= 一个通道；正则不带捕获组时，行内全部命中各为一通道（≤6）。
+        面板加的 [时间戳] 前缀已自动剥离，正则对准板子原始行写。</label>
+      <input id="xtrRe" size="46" placeholder="例：#S1 \d+ \d+ (-?\d+)">
+      <div id="xtrErr" style="color:var(--red);font-size:12px;margin-top:4px"></div>
+      <label>实时试跑 —— 对当前设备最近 20 行原始日志逐行提取</label>
+      <pre id="xtrPreview">（输入正则后这里显示每行提取出的通道值）</pre>
+      <div class="mrow">
+        <button id="xtrApply">应用并绘制</button>
+        <button id="xtrAuto">恢复自动识别</button>
+        <span class="dim" style="font-size:12px" id="xtrState"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="helpModal" class="modal hidden">
+  <div class="mbox" style="width:min(860px,94vw)">
+    <div class="mhd"><b>帮助 · 教程</b> <span class="dim" style="font-size:12px">波形观测 · 提取策略 · 面板功能</span>
+      <button id="helpClose" style="margin-left:auto">关闭</button></div>
+    <div class="mbody hbody">
+      <h3>三步上手</h3>
+      <p>① 左侧点选设备卡片 → ② 点「波形」tab → ③ 看图。无需任何配置：
+      面板自动识别遥测行并把数字变成通道画出来。想锁定某几路时才需要
+      「高级提取…」，写不了正则也照样能用自动模式。</p>
+
+      <h3>自动识别是怎么工作的</h3>
+      <p>板子通常按固定格式周期输出一行遥测（如 <code>#S1 1117 27762 -49 09fb0e…</code>）。
+      面板按<b>行首记号</b>（帧型，如 <code>#S1</code>）给行分组，取近 5 秒最活跃的帧型绘制，偶发的心跳/握手行自动让位。行内：</p>
+      <table>
+        <tr><th>记号形态</th><th>通道</th><th>例</th></tr>
+        <tr><td><code>key=数字</code></td><td>命名通道（用 key 当名字）</td><td><code>t=23.4</code> → 通道 t</td></tr>
+        <tr><td>纯数字</td><td>位置通道（v2、v3…按记号次序）</td><td><code>-49</code> → 通道 v3</td></tr>
+        <tr><td>十六进制块 / 文本</td><td>自动排除</td><td><code>09fb0e02…</code></td></tr>
+      </table>
+
+      <h3>自定义提取（高级）</h3>
+      <p>三种典型场景：只要其中一路（如只看 RSSI）；量纲差异想精确分组；行格式特殊自动识别不理想。
+      点「高级提取…」→ 挑模板或手写正则 → 看<b>实时试跑</b>确认每行提出什么 → 应用。</p>
+      <table>
+        <tr><th>想看什么</th><th>正则</th><th>说明</th></tr>
+        <tr><td>#S1 行的 RSSI（第 3 个数）</td><td><code>#S1 \d+ \d+ (-?\d+)</code></td><td>一个捕获组 = 一个通道</td></tr>
+        <tr><td>温度 + 湿度双通道</td><td><code>t=([\d.]+)\s+h=([\d.]+)</code></td><td>两个捕获组 = 两个通道</td></tr>
+        <tr><td>行内第一个数字</td><td><code>(-?\d+(?:\.\d+)?)</code></td><td>捕获组包裹要取的值</td></tr>
+        <tr><td>行内全部数字</td><td><code>-?\d+(?:\.\d+)?</code></td><td>无捕获组 → 命中各为一通道</td></tr>
+      </table>
+      <p class="dim">要点：正则对准板子<b>原始行</b>（面板的 [时间戳] 前缀已剥离）；<code>\d</code> 数字、
+      <code>[\d.]</code> 数字或小数点、<code>( )</code> 捕获组、<code>-?</code> 可选负号。试跑区左边是提取值、
+      右边是原文，确认无误再应用。</p>
+
+      <h3>怎么读波形</h3>
+      <p><b>每个通道一条泳道</b>，互不挤压：左上角是通道名、当前值和区间（min~max，含余量）——
+      泳道内曲线贴顶说明触到区间上沿。曲线是<b>每像素 min/max 包络 + 中心线</b>：高频数据下
+      包络的"毛边"是真实的波动幅度，中心线是趋势。<b>Hz</b> 是采样速率（每秒多少行命中）。
+      <b>悬停</b>出十字线：跨所有泳道同时读该时刻各通道值，底部显示时间偏移。
+      <b>冻结</b>停采样定格画面（窗口停在冻结时刻），<b>清除</b>清空缓冲，时间窗 15s~30min 可选。</p>
+      <p class="dim">读图示例：RSSI 泳道缓慢漂移是信道变化；骤降常是干扰或距离变化；计数类通道（v1/v2）
+      呈斜线属正常——它单调递增，斜率不变=流速稳定，斜率突变=丢行或重启。</p>
+
+      <h3>面板其它功能速览</h3>
+      <p>设备卡：<b>静默 Xs</b>（最近读到数据距今，超 30s 变黄、超 5min 变红）、<b>重开 N</b>（断线重开次数，
+      ≥3 变红）、写入速率迷你图（2 分钟）。日志区：搜索框支持正则（写错自动当子串）+ 高亮 + 计数；
+      「导出」下载当前缓冲，「波形」tab 下导出 CSV。事件面板：30 分钟时间线，红=崩溃/复位、黄=错误、
+      蓝=生命周期，悬停看原文。底部：多设备对比面板并排尾随。所有操作按钮与命令行走同一条守护控制
+      通道，行为一致。</p>
+
+      <h3>延伸阅读</h3>
+      <p>完整文档在 GitHub 仓库（双语）：<a href="https://github.com/mickeyzzc/serialtap/blob/main/docs/zh-CN/waveform-guide.md" target="_blank">波形观测指南</a> ·
+      <a href="https://github.com/mickeyzzc/serialtap/blob/main/README.zh-CN.md" target="_blank">README</a> ·
+      <a href="https://github.com/mickeyzzc/serialtap/blob/main/docs/zh-CN/cli-reference.md" target="_blank">CLI 参考</a></p>
+    </div>
+  </div>
+</div>
+
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
@@ -434,19 +528,61 @@ for (const t of document.querySelectorAll(".tab"))
 // 零配置：自动识别遥测帧（首个 token 为帧型），key=value 记号成为命名通道，
 // 纯数字记号成为位置通道（十六进制块天然不是纯数字，自动排除）；多帧型时
 // 取近期最活跃的帧型。自定义正则仍是逃生门（高级项）。解析/绘制全在浏览器。
-let waveSamples = [], waveTail = "", waveRe = null, waveFrozen = false, waveFrozenAt = 0;
+let waveSamples = [], waveTail = "", waveRe = null, waveReG = null, waveFrozen = false, waveFrozenAt = 0;
 let waveChNames = [], waveFrameStats = {}; // frameKey → 5s 窗口内的 {n, names, t}
 let waveHover = null; // {x} 画布像素
 const WAVE_COLORS = ["#2DD4BF","#58A6FF","#F5A623","#FF7B72","#7EE787","#D2A8FF"];
 const WAVE_MAX_CH = 6, WAVE_MAX = 60000, WAVE_NUM = /^-?\d+(?:\.\d+)?$/, WAVE_KV = /^([A-Za-z_][\w-]*)=(-?\d+(?:\.\d+)?)$/;
 
-function compileWave(){
-  const src = $("waveRe").value.trim();
-  waveRe = null;
-  if (!src){ $("waveInfo").textContent = ""; return; }
-  try { waveRe = new RegExp(src); waveSamples = []; waveChNames = [];
-    $("waveInfo").textContent = "自定义提取已启用"; }
-  catch(e){ $("waveInfo").textContent = "✗ 正则无效: " + e.message; }
+function compileWave(){} // 由「高级提取」弹窗驱动（applyXtr），不再有内联输入框
+
+// applyXtr: 应用自定义提取正则（空 = 恢复自动识别）。无效正则返回 false 不动状态。
+function applyXtr(src){
+  let re = null, reG = null;
+  if (src){
+    try { re = new RegExp(src); reG = new RegExp(src, "g"); }
+    catch { return false; }
+  }
+  waveRe = re; waveReG = reG;
+  waveSamples = []; waveChNames = []; waveFrameStats = {};
+  return true;
+}
+// xtrTest: 对最近 20 行原始日志逐行试跑当前输入，应用前先看见每行提出什么。
+function xtrTest(){
+  const src = $("xtrRe").value.trim();
+  $("xtrErr").textContent = "";
+  const pv = $("xtrPreview");
+  if (!src){ pv.textContent = "（输入正则后这里显示每行提取出的通道值）"; return; }
+  let re, reG;
+  try { re = new RegExp(src); reG = new RegExp(src, "g"); }
+  catch(e){ $("xtrErr").textContent = "✗ 正则无效: " + e.message; pv.textContent = ""; return; }
+  const hasGroups = re.source.indexOf("(") >= 0;
+  const lines = logBuf.split("\n").filter(l => l.trim()).slice(-20);
+  const rows = [];
+  let hit = 0;
+  for (const l of lines){
+    const body = l.replace(/^\[[^\]]*\]\s?/, "");
+    let vals = [];
+    if (hasGroups){
+      const m = re.exec(body);
+      if (m) for (let i = 1; i < m.length && vals.length < 8; i++){
+        const v = parseFloat(m[i]); if (!Number.isNaN(v)) vals.push(v);
+      }
+    } else {
+      for (const mm of body.match(reG) || []){
+        if (vals.length >= 8) break;
+        const v = parseFloat(mm); if (!Number.isNaN(v)) vals.push(v);
+      }
+    }
+    if (vals.length) hit++;
+    const left = vals.length ? vals.map(v => v.toFixed(2)).join("  ") : "(不匹配)";
+    const right = body.length > 58 ? body.slice(0, 58) + "…" : body;
+    rows.push(left + "  ← " + right);
+  }
+  const chInfo = hasGroups
+    ? "捕获组 " + (re.source.match(/\(/g) || []).length + " 个 → 同数通道"
+    : "无捕获组 → 行内命中各为一通道";
+  pv.textContent = chInfo + "，命中 " + hit + "/" + lines.length + " 行\n\n" + rows.join("\n");
 }
 // autoChannels: 一行 → {frame, ch:[{name, val}]}；无可提取数值返回 null。
 function autoChannels(body){
@@ -470,11 +606,17 @@ function waveFeed(chunk){
     // 剥掉面板加的 [时间戳] 前缀：提取对准板子原始行
     const body = line.replace(/^\[[^\]]*\]\s?/, "");
     if (waveRe){
-      const m = waveRe.exec(body);
-      if (!m) continue;
-      const vals = [];
-      for (let i = 1; i < m.length && vals.length < WAVE_MAX_CH; i++){
-        const v = parseFloat(m[i]); if (!Number.isNaN(v)) vals.push(v);
+      let vals = [];
+      if (waveRe.source.indexOf("(") >= 0){
+        const m = waveRe.exec(body);
+        if (m) for (let i = 1; i < m.length && vals.length < WAVE_MAX_CH; i++){
+          const v = parseFloat(m[i]); if (!Number.isNaN(v)) vals.push(v);
+        }
+      } else {
+        for (const mm of body.match(waveReG) || []){
+          if (vals.length >= WAVE_MAX_CH) break;
+          const v = parseFloat(mm); if (!Number.isNaN(v)) vals.push(v);
+        }
       }
       if (!vals.length) continue;
       if (waveChNames.length !== vals.length)
@@ -626,6 +768,7 @@ function drawWave(){
     ctx.fillText((dt >= 0 ? "" : "T-") + Math.abs(dt).toFixed(1) + "s", waveHover+5, h-AX-14);
   }
   const hzWin = vis.filter(s=>s.t >= end-5000).length;
+  $("waveMode").textContent = waveRe ? "自定义" : "自动";
   $("waveInfo").innerHTML = (waveRe ? "自定义 · " : "自动(" + esc(waveFrameStats.__cur || "…") + ") · ") +
     `${(hzWin/5).toFixed(1)} Hz · ${vis.length} 样本` + (waveFrozen ? " · 已冻结" : "");
 }
@@ -636,7 +779,23 @@ $("waveCv").addEventListener("mousemove", e => {
   drawWave();
 });
 $("waveCv").addEventListener("mouseleave", () => { waveHover = null; drawWave(); });
-$("waveRe").oninput = compileWave;
+// —— 高级提取弹窗与帮助页接线 ——
+$("btnXtr").onclick = $("waveMode").onclick = () => {
+  $("xtrRe").value = waveRe ? waveRe.source : "";
+  $("xtrModal").classList.remove("hidden");
+  xtrTest();
+};
+$("xtrClose").onclick = () => $("xtrModal").classList.add("hidden");
+for (const b of document.querySelectorAll(".tpl"))
+  b.onclick = () => { $("xtrRe").value = b.dataset.re; xtrTest(); };
+$("xtrRe").oninput = xtrTest;
+$("xtrApply").onclick = () => {
+  if (!applyXtr($("xtrRe").value.trim())){ xtrTest(); return; } // 无效正则：试跑区标红，不关窗
+  $("xtrModal").classList.add("hidden");
+};
+$("xtrAuto").onclick = () => { applyXtr(""); $("xtrModal").classList.add("hidden"); };
+$("btnHelp").onclick = () => $("helpModal").classList.remove("hidden");
+$("helpClose").onclick = () => $("helpModal").classList.add("hidden");
 $("waveFreeze").onclick = () => {
   waveFrozen = !waveFrozen;
   if (waveFrozen) waveFrozenAt = Date.now();
