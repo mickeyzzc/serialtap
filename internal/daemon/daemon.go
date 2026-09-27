@@ -170,13 +170,24 @@ func (d *daemon) reloadPause() {
 	d.pauseMTime = time.Time{}
 }
 
-// Shutdown: 停止全部采集器并等待退出（不留泄漏 goroutine）。
+// Shutdown: 停止全部采集器并等待退出。等待有上限（30s）——2026-09-27 出现过
+// 一次关闭序列僵死（采集器已停、进程 0 CPU 楔住 30+ 分钟），兜底：超时放弃
+// 等待、继续退出路径，宁可带病退出也不永久楔死。
 func (d *daemon) Shutdown() {
 	d.proxyCloseAll()
 	for _, c := range d.collectors {
 		c.Stop()
 	}
-	d.wg.Wait()
+	done := make(chan struct{})
+	go func() {
+		d.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		d.logf("[watch] Shutdown 兜底：采集器 30s 未全部退出，放弃等待继续退出")
+	}
 }
 
 // Collectors: 当前活跃采集器数量（巡检/测试用）。
