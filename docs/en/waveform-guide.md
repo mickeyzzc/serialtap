@@ -14,9 +14,13 @@ carries a condensed version of the same content.
 2. Click the **波形** (waveform) tab
 3. Watch — no configuration needed
 
-The panel auto-detects telemetry lines and plots the numbers. "高级提取…"
-(advanced extraction) is only for when the automatic channels aren't what you
-want — and it has a live preview, so you see what you'll get before applying.
+Waveforms map one-to-one to devices: the blue label on the waveform toolbar is
+the current device name, and **every device is sampled continuously in the
+background** — switch away and back, and nothing is lost. The panel
+auto-detects telemetry lines and plots the numbers. "高级提取…" (advanced
+extraction) is only for when the automatic channels aren't what you want (the
+extraction regex is remembered per device) — and it has a live preview, so you
+see what you'll get before applying.
 
 ## How auto-detection works
 
