@@ -332,3 +332,33 @@ func TestTrayHost(t *testing.T) {
 	}
 	_ = h.OpenLogs() // 平台相关（open 命令），覆盖即可不断言
 }
+
+func TestBoardAndAtArgErrors(t *testing.T) {
+	board := func(action string) func([]string) error {
+		return func(a []string) error { return cmdBoard(a, action) }
+	}
+	// 参数不足：四个 board 子命令 + at
+	for _, c := range []struct {
+		name string
+		fn   func([]string) error
+		args []string
+	}{
+		{"info", board("info"), nil},
+		{"partitions", board("partitions"), nil},
+		{"nvs", board("nvs"), nil},
+		{"dump 缺文件", board("dump"), []string{"re", "0x1", "0x2"}},
+		{"at 缺命令", cmdAt, []string{"re"}},
+	} {
+		if err := c.fn(c.args); err == nil {
+			t.Fatalf("%s：参数不足必须报错", c.name)
+		}
+	}
+	// 守护进程不可达：ctlSend 失败路径（socket 指向不存在路径）
+	sock := filepath.Join(t.TempDir(), "no.sock")
+	if err := board("info")([]string{"--sock", sock, "someDevice"}); err == nil {
+		t.Fatal("info 无守护应报错")
+	}
+	if err := cmdAt([]string{"--sock", sock, "someDevice", "AT+GMR"}); err == nil {
+		t.Fatal("at 无守护应报错")
+	}
+}
