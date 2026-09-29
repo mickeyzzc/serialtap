@@ -137,6 +137,11 @@ Windows 上是 `serialtap.exe list`（设备形如 `COM3`）、单口采集 `ser
 | `flash RE <bin>[@0x10000]...` | **代理刷固件**：让口 → esptool → 自动回采，进度流式回传；失败自动重试（`--retries`，默认 3 次 × `--retry-wait` 5s——Windows 上 USB-CDC 设备复位后首次 open/SetCommState 常瞬时失败，esptool 自身不重试）；`--args-file build/flasher_args.json` 一键刷 IDF 全套；`--dry-run` 预演将执行的命令。RE 为正则，**匹配多台时默认拒绝**（防误刷在测设备——多板同芯片时未锚定正则会把别的板拖进刷写序列，列出匹配设备并要求锚定），确要逐台刷给 `--all`，精确刷一台用锚定（如 `^board$`）。远程刷写见[控制协议 · SSH 隧道](docs/ctl-protocol.md#远程使用ssh-隧道) |
 | `reopen RE [--all]` | **串口层软断开重连**：立即关口 → 跳过退避立即重开。端口疑似卡死（读空转/驱动状态怪异）时的快速自愈；不改变所有权与暂停语义（与 `release` 不同）。注意会打断进行中的透传会话（客户端重连即可），且 open/close 各带一拍复位脉冲（见[复位语义](#复位语义重要)——对 CH340/乐鑫原生 USB 口等于顺带软重启了板子）。多台门禁同 flash（`--all`） |
 | `reset RE [--all]` | **USB 层软拔插**：让口 → `pnputil /restart-device`（禁用+启用设备节点，等效软件层面的拔插）→ 用自身枚举器确认重枚举 → 回采。作用于设备的串口接口节点，JTAG 等兄弟接口不受影响。适用于设备在总线但驱动/端口僵死（打不开、僵尸句柄）。需管理员权限：非提权守护进程自动弹 UAC 提权重试（可取消）。**仅 Windows**；设备整个消失在总线上时无解（只能物理重插）。多台门禁同 flash（`--all`） |
+| `info RE` | **芯片信息**：让口 → esptool flash_id（芯片/MAC/flash 容量）→ 回采。与 flash 同编排（opMu 互斥、多台默认拒绝、`--all` 逐台）；**读操作也会让目标板复位**（esptool download 模式进出） |
+| `partitions RE` | **分区表读取并解析**（0x8000 legacy 二进制格式：类型/子类型/偏移/大小/标签） |
+| `nvs RE [--show-secrets]` | **NVS 提取解析**：自动定位 nvs 分区 → 读取 → 解析命名空间/键/类型/值。凭据形键（pass/token/secret/seed/key）默认掩码 `****`，`--show-secrets` 明文（注意终端留痕）；事件审计只记动作与地址，**绝不记值**。IDF v6 自带 nvs_parser CLI 已失效，本解析器按 nvs_types.hpp 布局实现并经真机 dump 对账 |
+| `dump RE <addr> <size> <file>` | **任意 flash 区域原始导出**（如 `dump cam 0x9000 0x6000 nvs.bin`）。产物权限 0600——可能含明文凭据，勿提交仓库 |
+| `at RE "AT+..." [--wait 3s]` | **控制台命令注入**：经 proxy 透传通道写入并回显响应（写入以 `>` 前缀落档审计，采集全程不打断）。`--wait` 窗口内回显完整串口流，响应行以 `+`/`OK`/`ERROR` 开头；可一次注入多条依序执行 |
 | `status` | 守护进程与设备实时状态（collecting/paused/suspended/flashing） |
 | `tray`（Windows/macOS） | 托盘常驻：接入状态、按设备暂停/恢复、打开日志，见下节（Linux 暂无：systray 需 libappindicator，用 Web 面板） |
 | `analyze LOG...` | 离线签名扫描：计数 / 首末时间 / 样本行汇总表 |

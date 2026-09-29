@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### 新增：主板操作台（读侧全覆盖 + 控制台注入）
+
+- `serialtap nvs RE [--show-secrets]` —— NVS 提取解析：自动定位分区、解析命名
+  空间/键/类型/值；凭据键默认掩码（`--show-secrets` 明文）。esp-idf v6 自带
+  nvs_parser CLI 已失效，内置解析器按 nvs_types.hpp 布局实现、真机 dump 对账
+  （命名空间定义 = ns0/u8 条目、变长值在 span 后续槽、span 槽不作为条目）。
+- `serialtap partitions RE` —— 分区表读取解析；`serialtap info RE` —— 芯片/
+  MAC/flash 容量；`serialtap dump RE <addr> <size> <file>` —— 任意区域原始
+  导出（0600）。三者与 flash 同编排纪律：让口 → esptool → 回采，opMu 互斥、
+  多台默认拒绝；读操作同样会让板复位（download 模式进出）。
+- `serialtap at RE "AT+..." [--wait]` —— 经 proxy 透传注入控制台命令并回显
+  响应，采集不打断、写入落档审计。
+- 安全边界：NVS 值绝不进事件审计；dump 产物 0600 并提示勿提交；测试 fixture
+  全合成（零真实凭据）。
+
 - fix(ctl, windows): Close 的等待加上限 + 主动关闭已接受连接 —— Windows
   AF_UNIX 两个平台限制实测：`conn.Close()` 不中止在途 Read（handler 永久卡
   Scan，#14 并发测试挂死 600s）、对已关监听的 `connect()` 永久阻塞；测试侧
