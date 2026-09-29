@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -181,7 +182,7 @@ func TestExecNVSAndDump(t *testing.T) {
 	if err != nil || fi.Size() != 0x1000 {
 		t.Fatalf("dump 产物异常: %v %v", fi, err)
 	}
-	if fi.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
 		t.Fatalf("dump 产物权限必须 0600: %v", fi.Mode())
 	}
 }
@@ -274,6 +275,9 @@ func TestParseNVSEdges(t *testing.T) {
 // TestEsptoolReaderWithFakeTool: 假 esptool 脚本按地址参数回吐不同镜像，
 // 覆盖 EsptoolReader → RunExec → 临时文件全链路（含 info 分支的流式输出）。
 func TestEsptoolReaderWithFakeTool(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sh 假工具仅 POSIX；Windows 侧由 esptool.exe 真机验收覆盖")
+	}
 	dir := t.TempDir()
 	tbl := partEntry(1, 0x02, 0x9000, 0x1000, "nvs")
 	pad := make([]byte, PartTableSize-32)
