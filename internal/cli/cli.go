@@ -16,7 +16,11 @@ import (
 	"syscall"
 	"time"
 
+	"bufio"
+	"net"
+
 	"github.com/mickeyzzc/serialtap/internal/analyze"
+	"github.com/mickeyzzc/serialtap/internal/board"
 	"github.com/mickeyzzc/serialtap/internal/collector"
 	"github.com/mickeyzzc/serialtap/internal/config"
 	"github.com/mickeyzzc/serialtap/internal/ctl"
@@ -60,6 +64,17 @@ func usage() {
                                          （端口疑似卡死时自愈；会打断透传会话，客户端重连即可）
   serialtap reset RE [--all]             USB 层软拔插：让口 → pnputil 重启设备节点 → 回采
                                          （设备在总线但驱动/端口僵死时；需管理员——非提权守护自动弹 UAC）
+  serialtap info RE                      芯片信息（esptool flash_id：芯片/MAC/flash 容量）
+      [--esptool CMD] [--chip C] [--baud N] [--all]
+  serialtap partitions RE                读取并解析分区表（0x8000）
+      [--esptool CMD] [--chip C] [--baud N] [--all]
+  serialtap nvs RE                       提取并解析 NVS 分区（凭据键默认掩码 ****）
+      [--show-secrets] [--esptool CMD] [--chip C] [--baud N] [--all]
+  serialtap dump RE <addr> <size> <file> 任意 flash 区域原始导出（产物可能含明文凭据，勿提交）
+      [--esptool CMD] [--chip C] [--baud N] [--all]
+      （info/partitions/nvs/dump 均经 esptool 让口执行——目标板会复位）
+  serialtap at RE "AT+..." [--wait 3s]   向设备控制台注入 AT 命令并回显响应
+                                         （经 proxy 透传通道；写入以 > 前缀落档审计）
   serialtap status                       查看守护进程与设备实时状态
   serialtap version
 
@@ -130,6 +145,16 @@ func Run(args []string) int {
 		err = cmdReopen(args[1:])
 	case "reset":
 		err = cmdReset(args[1:])
+	case "info":
+		err = cmdBoard(args[1:], "info")
+	case "partitions":
+		err = cmdBoard(args[1:], "partitions")
+	case "nvs":
+		err = cmdBoard(args[1:], "nvs")
+	case "dump":
+		err = cmdBoard(args[1:], "dump")
+	case "at":
+		err = cmdAt(args[1:])
 	case "pause":
 		err = cmdPauseSocket(args[1:], true)
 	case "resume":
@@ -276,6 +301,19 @@ func cmdRun(args []string) error {
 				return
 			}
 			respond(ctl.Response{OK: true, Event: "flash-done"})
+		case "board":
+			if req.Board == nil {
+				respond(ctl.Response{OK: false, Error: "board 请求缺 spec"})
+				return
+			}
+			err := d.Board(req.Pattern, req.All, *req.Board, func(line string) {
+				respond(ctl.Response{OK: true, Event: "board-log", Line: line})
+			})
+			if err != nil {
+				respond(ctl.Response{OK: false, Event: "board-done", Error: err.Error()})
+				return
+			}
+			respond(ctl.Response{OK: true, Event: "board-done"})
 		case "reopen":
 			n, err := d.Reopen(req.Pattern, req.All)
 			if err != nil {
@@ -857,4 +895,127 @@ func cmdPauseSocket(args []string, pauseMode bool) error {
 	}
 	// 守护不在（连接失败）→ 文件直改（历史行为）
 	return cmdPauseCLI(args, pauseMode)
+}
+
+// cmdBoard: info/partitions/nvs/dump 的通用客户端——组装 board.Spec 经
+// ctl 发给守护进程，board-log 逐行回显，board-done 定成败。
+func cmdBoard(args []string, action string) error {
+	fs := flag.NewFlagSet(action, flag.ExitOnError)
+	sock := fs.String("sock", "", "控制 socket 路径")
+	cfgPath := fs.String("config", "", "配置文件 JSON")
+	esptool := fs.String("esptool", "", "esptool 命令（默认 PATH 自动发现或配置）")
+	baud := fs.Int("baud", 0, "波特率")
+	chip := fs.String("chip", "", "芯片类型（如 esp32s3，省略自动识别）")
+	all := fs.Bool("all", false, "模式匹配多台设备时仍逐台执行（默认拒绝，防误伤在测设备）")
+	showSecrets := fs.Bool("show-secrets", false, "nvs: 凭据键明文显示（默认掩码 ****）")
+	pos := parseFlags(fs, args)
+	need := map[string]int{"info": 1, "partitions": 1, "nvs": 1, "dump": 4}[action]
+	if len(pos) < need {
+		return fmt.Errorf("用法: %s <设备正则>%s", action,
+			map[string]string{"dump": " <addr> <size> <输出文件>"}[action])
+	}
+	cfg, err := loadCfgMerged(*cfgPath, "", 0)
+	if err != nil {
+		return err
+	}
+	spec := board.Spec{Action: action, ShowSecrets: *showSecrets}
+	if *esptool != "" {
+		spec.Esptool = *esptool
+	} else if cfg.Esptool != "" {
+		spec.Esptool = cfg.Esptool
+	}
+	if *baud > 0 {
+		spec.Baud = *baud
+	} else if cfg.FlashBaud > 0 {
+		spec.Baud = cfg.FlashBaud
+	}
+	spec.Chip = *chip
+	if action == "dump" {
+		spec.Addr, spec.Size, spec.OutPath = pos[1], pos[2], pos[3]
+	}
+	var boardErr error
+	err = ctlSend(*sock, ctl.Request{Cmd: "board", Pattern: pos[0], All: *all, Board: &spec},
+		func(r ctl.Response) bool {
+			switch r.Event {
+			case "board-log":
+				fmt.Println(r.Line)
+				return false
+			case "board-done":
+				if !r.OK {
+					boardErr = fmt.Errorf("操作失败: %s", r.Error)
+				}
+				return true
+			default:
+				if !r.OK {
+					boardErr = fmt.Errorf("%s", r.Error)
+					return true
+				}
+				return false
+			}
+		})
+	if boardErr != nil {
+		return boardErr
+	}
+	return err
+}
+
+// cmdAt: 经 proxy 透传通道向设备控制台注入 AT 命令并回显响应。
+// 写入走 collector 的端口写入口（> 前缀落档审计），采集全程不打断；
+// 响应在 --wait 窗口内逐行回显（AT 应答行通常以 +/OK/ERROR 开头）。
+func cmdAt(args []string) error {
+	fs := flag.NewFlagSet("at", flag.ExitOnError)
+	sock := fs.String("sock", "", "控制 socket 路径")
+	wait := fs.Duration("wait", 3*time.Second, "响应等待窗口")
+	pos := parseFlags(fs, args)
+	if len(pos) < 2 {
+		return fmt.Errorf(`用法: at <设备正则> "AT+WIFI?"（可多条依序注入）`)
+	}
+	pattern, cmds := pos[0], pos[1:]
+
+	var endpoint string
+	if err := ctlSend(*sock, ctl.Request{Cmd: "proxy", Pattern: pattern},
+		func(r ctl.Response) bool {
+			if !r.OK {
+				return true
+			}
+			endpoint = r.Endpoint
+			return true
+		}); err != nil {
+		return err
+	}
+	if endpoint == "" {
+		return fmt.Errorf("代理端点未建立（设备不在线？）")
+	}
+	defer func() {
+		_ = ctlSend(*sock, ctl.Request{Cmd: "proxy", Pattern: pattern, Action: "stop"}, func(ctl.Response) bool { return true })
+	}()
+
+	conn, err := net.DialTimeout("tcp", endpoint, 3*time.Second)
+	if err != nil {
+		return fmt.Errorf("连接透传端点失败: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	deadline := time.Now().Add(*wait)
+	for _, cmd := range cmds {
+		if _, werr := conn.Write([]byte(cmd + "\r\n")); werr != nil {
+			return fmt.Errorf("写入失败: %w", werr)
+		}
+		fmt.Printf("> %s\n", cmd)
+		deadline = time.Now().Add(*wait)
+	}
+	_ = conn.SetReadDeadline(deadline)
+	sc := bufio.NewScanner(conn)
+	sc.Buffer(make([]byte, 0, 4*1024), 64*1024)
+	for sc.Scan() {
+		line := strings.TrimRight(sc.Text(), "\r")
+		if line != "" {
+			fmt.Println(line)
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		_ = conn.SetReadDeadline(deadline)
+	}
+	return nil
 }

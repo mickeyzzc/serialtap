@@ -3,11 +3,13 @@ package cli
 import (
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mickeyzzc/serialtap/internal/collector"
 	"github.com/mickeyzzc/serialtap/internal/config"
@@ -131,6 +133,29 @@ func TestCtlSubcommandsAgainstLiveServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// at 命令的真实回声端点（假 proxy 响应指向它）
+	atLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = atLn.Close() })
+	go func() {
+		for {
+			conn, err := atLn.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer func() { _ = c.Close() }()
+				buf := make([]byte, 256)
+				_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
+				if _, err := c.Read(buf); err == nil {
+					_, _ = c.Write([]byte("+GMR: fake-fw\r\nOK\r\n"))
+				}
+			}(conn)
+		}
+	}()
+
 	go srv.Serve(func(req ctl.Request, respond func(ctl.Response)) {
 		switch req.Cmd {
 		case "status":
@@ -158,8 +183,15 @@ func TestCtlSubcommandsAgainstLiveServer(t *testing.T) {
 				respond(ctl.Response{OK: true, Line: "1"})
 				return
 			}
-			respond(ctl.Response{OK: true, Endpoint: "127.0.0.1:7100",
+			respond(ctl.Response{OK: true, Endpoint: atLn.Addr().String(),
 				Device: "luatos", DeviceKey: "k1"})
+		case "board":
+			if req.Board == nil || req.Pattern == "" {
+				respond(ctl.Response{OK: false, Error: "bad board"})
+				return
+			}
+			respond(ctl.Response{OK: true, Event: "board-log", Line: "fake-board-line"})
+			respond(ctl.Response{OK: true, Event: "board-done"})
 		case "reopen", "reset":
 			if req.Pattern == "" {
 				respond(ctl.Response{OK: false, Error: "no pattern"})
@@ -187,6 +219,22 @@ func TestCtlSubcommandsAgainstLiveServer(t *testing.T) {
 	// flash bin@offset
 	if code := Run([]string{"flash", "luatos", "/dev/null@0x10000", "--sock", sock}); code != 0 {
 		t.Fatalf("flash 失败: %d", code)
+	}
+	// board 四子命令（假协议端：board-log/board-done 流式处理）
+	for _, sub := range [][]string{
+		{"info", "luatos"},
+		{"partitions", "luatos"},
+		{"nvs", "luatos", "--show-secrets"},
+		{"dump", "luatos", "0x8000", "0x1000", "/dev/null"},
+	} {
+		args := append(sub, "--sock", sock)
+		if code := Run(args); code != 0 {
+			t.Fatalf("%s 失败: %d", sub[0], code)
+		}
+	}
+	// at：经假 proxy 端点注入并回显
+	if code := Run([]string{"at", "luatos", "AT+GMR", "--wait", "1s", "--sock", sock}); code != 0 {
+		t.Fatalf("at 失败: %d", code)
 	}
 	// flash 参数校验失败（无 bin 无 args-file）
 	if code := Run([]string{"flash", "luatos", "--sock", sock}); code != 1 {
@@ -331,4 +379,34 @@ func TestTrayHost(t *testing.T) {
 		t.Fatal("Quit 应回调退出钩子")
 	}
 	_ = h.OpenLogs() // 平台相关（open 命令），覆盖即可不断言
+}
+
+func TestBoardAndAtArgErrors(t *testing.T) {
+	board := func(action string) func([]string) error {
+		return func(a []string) error { return cmdBoard(a, action) }
+	}
+	// 参数不足：四个 board 子命令 + at
+	for _, c := range []struct {
+		name string
+		fn   func([]string) error
+		args []string
+	}{
+		{"info", board("info"), nil},
+		{"partitions", board("partitions"), nil},
+		{"nvs", board("nvs"), nil},
+		{"dump 缺文件", board("dump"), []string{"re", "0x1", "0x2"}},
+		{"at 缺命令", cmdAt, []string{"re"}},
+	} {
+		if err := c.fn(c.args); err == nil {
+			t.Fatalf("%s：参数不足必须报错", c.name)
+		}
+	}
+	// 守护进程不可达：ctlSend 失败路径（socket 指向不存在路径）
+	sock := filepath.Join(t.TempDir(), "no.sock")
+	if err := board("info")([]string{"--sock", sock, "someDevice"}); err == nil {
+		t.Fatal("info 无守护应报错")
+	}
+	if err := cmdAt([]string{"--sock", sock, "someDevice", "AT+GMR"}); err == nil {
+		t.Fatal("at 无守护应报错")
+	}
 }

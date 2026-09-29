@@ -195,6 +195,16 @@ are always CGO-free static builds. On Windows it's `serialtap.exe list`
 | `analyze LOG...` | Offline signature tally: counts / first-last / sample-line summary |
 | `decode-backtrace LOG` | Decode `Backtrace:` address frames via addr2line |
 | `version` | Print the version |
+| `info RE` | **芯片信息**：让口 → esptool flash_id（芯片/MAC/flash 容量）→ 回采。与 flash 同编排（opMu 互斥、多台默认拒绝、`--all` 逐台）；**读操作也会让目标板复位**（esptool download 模式进出） |
+| `partitions RE` | **分区表读取并解析**（0x8000 legacy 二进制格式：类型/子类型/偏移/大小/标签） |
+| `nvs RE [--show-secrets]` | **NVS 提取解析**：自动定位 nvs 分区 → 读取 → 解析命名空间/键/类型/值。凭据形键（pass/token/secret/seed/key）默认掩码 `****`，`--show-secrets` 明文（注意终端留痕）；事件审计只记动作与地址，**绝不记值**。IDF v6 自带 nvs_parser CLI 已失效，本解析器按 nvs_types.hpp 布局实现并经真机 dump 对账 |
+| `dump RE <addr> <size> <file>` | **任意 flash 区域原始导出**（如 `dump cam 0x9000 0x6000 nvs.bin`）。产物权限 0600——可能含明文凭据，勿提交仓库 |
+| `at RE "AT+..." [--wait 3s]` | **控制台命令注入**：经 proxy 透传通道写入并回显响应（写入以 `>` 前缀落档审计，采集全程不打断）。`--wait` 窗口内回显完整串口流，响应行以 `+`/`OK`/`ERROR` 开头；可一次注入多条依序执行 |
+| `status` | 守护进程与设备实时状态（collecting/paused/suspended/flashing） |
+| `tray`（Windows/macOS） | 托盘常驻：接入状态、按设备暂停/恢复、打开日志，见下节（Linux 暂无：systray 需 libappindicator，用 Web 面板） |
+| `analyze LOG...` | 离线签名扫描：计数 / 首末时间 / 样本行汇总表 |
+| `decode-backtrace LOG` | `Backtrace:` 地址帧 addr2line 解码 |
+
 
 Flags (`--root/--baud/--config/--poll-ms/--exclude/--sock`) may appear before
 or after positional arguments.

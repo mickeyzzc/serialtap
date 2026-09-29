@@ -252,6 +252,12 @@ func Run(esptool, tty string, s Spec, timeout time.Duration, output func(line st
 			return err
 		}
 	}
+	return RunExec(esptool, args, timeout, output)
+}
+
+// RunExec: 执行任意 esptool argv（不含本体路径），流式输出语义同 Run。
+// board 包的读侧操作（info/分区/NVS/dump）共用此执行骨架。
+func RunExec(esptool string, args []string, timeout time.Duration, output func(line string)) error {
 	ctx := context.Background()
 	var cancel context.CancelFunc
 	if timeout > 0 {
@@ -286,11 +292,11 @@ func Run(esptool, tty string, s Spec, timeout time.Duration, output func(line st
 	go scan(stderr)
 	<-done
 	<-done
-	err = cmd.Wait()
+	werr := cmd.Wait()
 	if ctx.Err() == context.DeadlineExceeded {
 		return fmt.Errorf("esptool 超时（%s）被强制终止 —— 请检查设备连接或调大 flash_timeout_s", timeout)
 	}
-	return err
+	return werr
 }
 
 // splitCRLF: 以 \r 或 \n 任一为行界。
