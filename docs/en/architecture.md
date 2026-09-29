@@ -2,10 +2,11 @@
 
 [English](architecture.md) | [简体中文](../zh-CN/architecture.md)
 
-serialtap is a Linux daemon that turns "a pile of USB serial boards on one
-host" into "a directory of continuously captured, timestamped, rotatable logs"
-— without ever fighting other tools for the ports. This document explains how
-it is built and, more importantly, *why* the tricky parts are the way they are.
+serialtap is a daemon for Linux, macOS and Windows that turns "a pile of USB
+serial boards on one host" into "a directory of continuously captured,
+timestamped, rotatable logs" — without ever fighting other tools for the
+ports. This document explains how it is built and, more importantly, *why*
+the tricky parts are the way they are.
 
 ## Package layout
 
@@ -16,14 +17,16 @@ main.go                    thin entry: os.Exit(cli.Run(...))
    │
 internal/cli/              subcommand dispatch, flag parsing, command orchestration
    ├── internal/config/        config struct + JSON loading
-   ├── internal/device/        discovery + stable identity (by-path key, by-id naming, sysfs VID:PID)
-   ├── internal/daemon/        hot-plug loop: enumerate diff, start/stop collectors, release/flash orchestration
-   │     ├── internal/collector/   per-device goroutine: open-once-and-hold, line assembly, suspend/resume
+   ├── internal/device/        discovery + stable identity (Linux sysfs by-path / Windows registry / macOS ioreg)
+   ├── internal/daemon/        hot-plug loop: enumerate diff, start/stop collectors, release/flash/reopen/reset orchestration
+   │     ├── internal/collector/   per-device goroutine: open-once-and-hold, line assembly, suspend/resume/manual reopen
    │     ├── internal/logstore/    dual-channel files, rotation, retention sweep
    │     ├── internal/signature/   error-signature engine
    │     ├── internal/flash/       esptool command building/execution, flasher_args.json parsing
    │     └── internal/pause/       PAUSED file + pattern state
-   ├── internal/ctl/           control unix socket server/client (JSON lines)
+   ├── internal/ctl/           control socket server/client (JSON lines; AF_UNIX on Windows)
+   ├── internal/web/           observation & operations panel (SSE live tail, flash upload, cmd forwarding)
+   ├── internal/tray/          tray/menu bar (darwin+cgo embedded in run; Windows systray process; stubs elsewhere)
    └── internal/analyze/       offline: signature tally + addr2line decoding
 
 internal/testutil/          cross-package test helpers (fake serial ports, wait/read helpers)
@@ -47,22 +50,33 @@ Collector goroutine (per device):
   on error/pause/suspend: flush partial line, close port, back off, retry
 ```
 
-## Stable identity: by-path, not by-id or tty name
+## Stable identity: the physical port, not by-id or tty name
 
 tty numbers are assigned in enumeration order — they change whenever a device
 is replugged or a neighbor disappears. by-id is stable *only if the adapter
 has a serial number*: two identical CH340s have byte-identical by-id strings,
 so by-id alone cannot tell two same-model boards apart.
 
-serialtap therefore keys devices by **by-path** — the physical USB port. A
-device's identity survives re-enumeration, and two identical adapters in two
-different ports are two different keys. by-id remains the *display/naming*
-identity (it is human-readable and can embed serials/MACs). Device discovery
-requires a by-path entry to exist, which also filters out non-USB serial ports
-(mainboard `ttyS*`).
+serialtap therefore keys devices by the **physical USB port**, with one
+discovery path per platform:
 
-VID:PID are read from sysfs by walking up from `/sys/class/tty/<tty>/device`
-(at most 4 levels) to the directory holding `idVendor`/`idProduct`.
+| Platform | key source | by-id shape |
+|---|---|---|
+| Linux | sysfs `/dev/serial/by-path` | `usb-Espressif_USB_JTAG_...` |
+| Windows | registry USB instance ID (composite devices resolve PortName under the `&MI_00` interface subkey) | `USB\VID_303A&PID_1001\...` instance path (embeds the MAC) |
+| macOS | USB `locationID` parsed from `ioreg` | `usb-<vid>_<pid>[-<serial>]` (style aligned with Linux) |
+
+A device's identity survives re-enumeration, and two identical adapters in two
+different ports are two different keys. by-id remains the *display/naming*
+identity (it is human-readable and can embed serials/MACs), which is why
+config `names` rules carry across platforms. On Linux, discovery requires a
+by-path entry to exist, which also filters out non-USB serial ports
+(mainboard `ttyS*`); Windows only accepts USB serial ports from the registry;
+macOS only enumerates `/dev/cu.usb*`.
+
+On Linux, VID:PID are read from sysfs by walking up from
+`/sys/class/tty/<tty>/device` (at most 4 levels) to the directory holding
+`idVendor`/`idProduct`.
 
 ## Reset semantics: open-once-and-hold
 
@@ -137,17 +151,54 @@ port safely:
    time: `Suspend` (10 s budget) → mark `flashing` → run esptool (its stdout
    and stderr are streamed back over the control socket; `\r` counts as a
    line boundary so progress bars come through) → `Resume`. On esptool
-   failure the collector is still resumed.
+   failure the collector is still resumed; the client retries automatically
+   (default 3 attempts × 5 s, absorbing Windows CDC first-open flakiness).
+   A pattern matching several devices is **refused by default** with the
+   device names listed (anti-misflash protection); `--all` opts into
+   one-by-one execution.
 
 `resume` (control command) clears matching PAUSED entries *and* revokes
 outstanding releases in one shot.
 
+## proxy / reopen / reset: passthrough and two layers of self-heal
+
+- **proxy (transparent passthrough)**: suspend the exclusive hold (capture
+  logic keeps running) → open a 127.0.0.1 TCP endpoint per device bridging
+  both directions → capture continues meanwhile (tap mode mirrors both
+  directions into the full log; per-line regexes can keep high-rate telemetry
+  out). Endpoint ownership semantics: what sharer sessions need survives the
+  owner stopping; endpoints close automatically on unplug/daemon exit.
+- **reopen (serial-layer self-heal)**: close the port now → the collector
+  loop exits on read error → reopen **skipping the backoff**. This is the
+  manual exception path (see reset semantics); multi-device gate as `flash`.
+- **reset (USB-layer self-heal, Windows only)**: yield the port → restart
+  the device's serial interface node via `pnputil /restart-device` (a
+  software replug) → verify re-enumeration with the built-in enumerator →
+  resume. Needs admin: an unelevated daemon pops UAC to retry; pnputil can
+  exit 0 even on failure (measured on Win11), so success is decided by
+  output markers + an enumeration re-check, never the exit code.
+
+## Web panel
+
+`internal/web` rides the **same handler path** as ctl: panel buttons →
+`/api/cmd` (allowlist shared with ctl) → daemon methods — no second control
+logic. Observation uses SSE log tailing (incremental pushes, follows
+rotation); flashing goes through the dedicated `/api/flash` upload endpoint
+(images+offsets or a flasher_args.json → stored under `root/.flash-upload/`
+→ the same daemon orchestration → esptool output streamed back over SSE with
+history replay). The panel listens on loopback only, same trust domain as
+the ctl socket, and **contains no business logic**.
+
 ## Control socket
 
-A unix stream socket carrying one JSON object per line (both directions); see [control-protocol.md](control-protocol.md). The socket is
-mode 0600 — same-user only. A second `serialtap run` refuses to start while a
-live instance holds the socket; a stale file from a crash is cleaned up
-automatically.
+A unix stream socket (AF_UNIX on Windows, Win10 1803+) carrying one JSON
+object per line in both directions; see
+[control-protocol.md](control-protocol.md). The socket is mode 0600 —
+same-user only. Default paths differ per platform (Linux
+`$XDG_RUNTIME_DIR` → `/tmp` fallback; Windows
+`%LOCALAPPDATA%\serialtap\serialtap.sock`). A second `serialtap run` refuses
+to start while a live instance holds the socket; a stale file from a crash
+is cleaned up automatically.
 
 ## Testing strategy
 
@@ -166,9 +217,25 @@ automatically.
 
 ## Platform support
 
-Device identity is built on sysfs and `/dev/serial/by-path`, so the daemon
-(`run`/`list`) and port-holder detection are **Linux-only** — non-Linux
-platforms get an explicit error, not an empty device list. The code
-cross-compiles anywhere (CI builds darwin/windows as a smoke check), and
-`attach`/`analyze`/`decode-backtrace` have no Linux-specific needs, but
-official support and released binaries are Linux amd64/arm64 only.
+All three platforms are first-class: device discovery goes through native
+sources (Linux sysfs / Windows registry / macOS ioreg) and the control
+channel is a unix socket everywhere (AF_UNIX on Windows, Win10 1803+). The
+platform differences concentrate in a few capabilities (see the platform
+table in the README):
+
+- `reset` (USB-layer soft replug) is Windows-only — it depends on `pnputil`
+  restarting the device node
+- release's idle auto re-acquisition depends on port-holder detection
+  (Linux `/proc/*/fd`, macOS `lsof`); Windows has no equivalent, so use
+  `--for` timed re-acquisition or a manual `resume` there
+- tray shapes differ: macOS embeds the menu bar in `run` (darwin+cgo);
+  Windows uses the separate `serialtap tray` process; Linux has a GUI-less
+  stub and relies on the web panel
+- release artifacts (CI on `v*` tags): Linux tar.gz (amd64/arm64), macOS
+  universal .app+DMG, Windows Inno installer + portable zip
+
+Windows engineering conclusions (measured): on AF_UNIX, `conn.Close()` does
+not abort an in-flight `Read` and `connect()` to a closed listener blocks
+forever — the ctl server's Close actively disconnects accepted connections
+with a bounded wait; USB-CDC devices often fail the first
+open/SetCommState after a reset — the flash client retries to absorb it.

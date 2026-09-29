@@ -34,9 +34,12 @@ serialtap is configured by a single JSON file. An annotated example ships in
 | `names` | [{match, name}] | `[]` | by-id regex → device directory name rules. See below. |
 | `signatures_extra` | [string] | `[]` | Additional event-signature regexes. See below. |
 | `elf_map` | {name: path} | `{}` | Device name → firmware `.elf`, used by `decode-backtrace`. See below. |
-| `control_socket` | string | `""` | Control unix socket path. Empty = `$XDG_RUNTIME_DIR/serialtap.sock`, falling back to `/tmp/serialtap-<uid>.sock`. The `run --sock` flag overrides it. |
+| `control_socket` | string | `""` | Control socket path. Empty = platform default: on Linux/macOS `$XDG_RUNTIME_DIR/serialtap.sock` (fallback `/tmp/serialtap-<uid>.sock`), on Windows `%LOCALAPPDATA%\serialtap\serialtap.sock`. The `run --sock` flag overrides it. |
+| `web_addr` | string | `""` | Web panel listen address. Empty = `127.0.0.1:8801`; `"off"` disables. The `run --web` flag overrides it. |
 | `esptool_cmd` | string | `""` | esptool executable for `flash`. Empty = auto-discover (`esptool` then `esptool.py` on PATH). `--esptool` flag wins over this. |
 | `flash_baud` | int | `0` | Baud rate for `flash`. `0` = esptool's default. `--baud` flag wins over this. |
+| `flash_timeout_s` | int | `0` | Per-device flash timeout in seconds (on timeout esptool is killed and capture resumed). `0` = no timeout. |
+| `proxy_tap_exclude` | string | `""` | Per-line regex kept out of the full log during proxy sessions (e.g. `^#S1 ` to drop high-rate telemetry). Empty = log everything. |
 
 ## Device naming
 
@@ -56,7 +59,12 @@ Every device gets a directory name under `root`. Resolution order:
 
 The name is sanitized to `[A-Za-z0-9-_.]` (other characters become `-`,
 truncated to 64 chars). If two live devices resolve to the same name, the
-second gets a `-2` suffix (`ch340-2`), `-3`, etc.
+later one gets an **identity-derived suffix** `-<token>`: a 4-hex-character
+hash of the device's stable identity (key/by-id; on Windows the instance
+path embeds the MAC) — so the same board keeps the same suffix no matter
+when it attaches or how often the daemon restarts, and the bare base name
+goes to whoever attached first. With two such boards attached, anchor the
+suffixed name (e.g. `^esp32s3-jtag-1x2y$`).
 
 **Telling identical boards apart:** same-model adapters often share an
 identical by-id (CH340 exposes no serial number), so distinguish them by

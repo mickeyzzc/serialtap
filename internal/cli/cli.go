@@ -5,6 +5,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/http"
+	_ "net/http/pprof" // pprof 诊断口（DefaultServeMux 注册，见 cmdRun）
 	"os"
 	"os/exec"
 	"os/signal"
@@ -348,6 +350,17 @@ func cmdRun(args []string) error {
 	webSrv := web.Start(cfg.WebAddr, cfg.Root, d.Status, webCmd, stdoutLog,
 		web.WithFlasher(d.Flash))
 	defer webSrv.Close()
+
+	// pprof 诊断口（可选）：SERIALTAP_PPROF=127.0.0.1:8802 时另开一个只听
+	// 回环的独立 HTTP 端口。与面板分离 —— 退出序列/守护挂死时它仍然存活，
+	// goroutine dump（/debug/pprof/goroutine?debug=2）是死锁现场的第一证据
+	// （2026-09-27 守护僵死无栈可查的教训）。
+	if pprofAddr := os.Getenv("SERIALTAP_PPROF"); pprofAddr != "" {
+		go func() {
+			stdoutLog("[pprof] 诊断口: http://%s/debug/pprof/", pprofAddr)
+			_ = http.ListenAndServe(pprofAddr, nil) // DefaultServeMux 已由 pprof init 注册
+		}()
+	}
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)

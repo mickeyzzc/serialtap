@@ -31,9 +31,12 @@ serialtap 用一个 JSON 文件配置。仓库根目录带了一份带注释的�
 | `names` | [{match, name}] | `[]` | by-id 正则 → 设备目录名规则。见下。 |
 | `signatures_extra` | [string] | `[]` | 追加的事件签名正则。见下。 |
 | `elf_map` | {name: path} | `{}` | 设备名 → 固件 `.elf`，`decode-backtrace` 用。见下。 |
-| `control_socket` | string | `""` | 控制 unix socket 路径。空 = `$XDG_RUNTIME_DIR/serialtap.sock`，回退 `/tmp/serialtap-<uid>.sock`。`run --sock` 参数优先。 |
+| `control_socket` | string | `""` | 控制 socket 路径。空 = 平台默认：Linux/macOS `$XDG_RUNTIME_DIR/serialtap.sock`（回退 `/tmp/serialtap-<uid>.sock`），Windows `%LOCALAPPDATA%\serialtap\serialtap.sock`。`run --sock` 参数优先。 |
+| `web_addr` | string | `""` | Web 观测面板监听地址。空 = `127.0.0.1:8801`；`"off"` = 关闭。`run --web` 参数优先。 |
 | `esptool_cmd` | string | `""` | `flash` 用的 esptool 可执行文件。空 = 自动发现（PATH 上 `esptool` → `esptool.py`）。`--esptool` 参数优先。 |
 | `flash_baud` | int | `0` | `flash` 的波特率。`0` = esptool 默认。`--baud` 参数优先。 |
+| `flash_timeout_s` | int | `0` | 单台设备刷写超时（秒；超时杀 esptool 并回采）。`0` = 不限时。 |
+| `proxy_tap_exclude` | string | `""` | 透传会话期间不落全量日志的行正则（如 `^#S1 ` 剔除高频遥测）。空 = 全落。 |
 
 ## 设备命名
 
@@ -51,7 +54,10 @@ serialtap 用一个 JSON 文件配置。仓库根目录带了一份带注释的�
 3. by-id 基名，再不行取 tty 名
 
 名字会规范化为 `[A-Za-z0-9-_.]`（其他字符变 `-`，截断 64 字符）。两台在线
-设备解析出同名时，第二台自动加 `-2` 后缀（`ch340-2`）、`-3`……
+设备解析出同名时，后到者自动加**身份派生后缀** `-<token>`：token 是设备
+稳定身份（key/by-id，Windows 实例路径内嵌 MAC）的 4 位十六进制散列——
+同一块板无论第几个接入、跨守护重启后缀都一致；裸基名先到先得。双板并存时
+请锚定后缀名（如 `^esp32s3-jtag-1x2y$`）。
 
 **区分同型号板子：** 同型号适配器的 by-id 往往完全相同（CH340 不暴露序列号），
 只能靠物理口区分（与改名无关）。Espressif 原生 USB-JTAG 的 by-id 内嵌 MAC ——

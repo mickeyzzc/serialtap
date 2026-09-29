@@ -179,6 +179,14 @@ One command for the full cycle — the daemon, per matched device **in
 sequence**: suspend collector and wait for the port to close → run esptool
 (streaming its output back line by line) → resume capture. Only one
 collector-side port is open at a time, so esptool never races the collector.
+Failures retry automatically (Windows USB-CDC devices often fail the first
+open/SetCommState after a reset, and esptool itself never retries).
+
+**Multi-device gate**: RE is a regex; matching several devices is **refused
+by default** with the device names listed (anti-misflash protection — an
+unanchored regex drags other same-chip boards into the flash sequence). Pass
+`--all` to flash one-by-one on purpose; anchor the pattern (`^board$`) to
+flash exactly one. `reopen`/`reset` use the same gate.
 
 Image specification (either form):
 
@@ -188,6 +196,10 @@ Image specification (either form):
   `flash_files` images are flashed (paths resolved relative to the file's
   directory, sorted by offset). Takes precedence over positional images
 
+**Image and args-file paths resolve on the daemon side** — for remote
+flashing (SSH tunnel) always pass absolute paths that exist on the daemon's
+machine.
+
 Flags:
 
 | Flag | Meaning |
@@ -195,12 +207,20 @@ Flags:
 | `--esptool CMD` | esptool executable. Resolution: flag → config `esptool_cmd` → `esptool` on PATH → `esptool.py` |
 | `--baud N` | flash baud rate. Resolution: flag → config `flash_baud` → esptool default |
 | `--chip C` | chip type (e.g. `esp32s3`); omitted → taken from `flasher_args.json` if present, else esptool auto-detect |
+| `--args-file F` | ESP-IDF `build/flasher_args.json` (either this or positional images; takes precedence) |
+| `--dry-run` | preview only: print the esptool command each matched device would run, without touching ports |
+| `--all` | execute one-by-one even when several devices match (default: refuse) |
+| `--retries N` | total attempts including the first, default 3; 1 = no retry |
+| `--retry-wait D` | wait between attempts, default 5s |
 | `--sock PATH` | control socket path |
 
 Output streams through until the final completion line (`✓ 刷写完成，已恢复采集`
 — yes, the binary speaks Chinese) or the failure message; on failure the
-collector is still resumed. Multiple matches flash one by one — anchor the
-pattern (`^board$`) to flash exactly one board.
+collector is still resumed. Terminal-less scenarios can use the web panel's
+flash window (image upload + SSE progress) instead — see the README.
+
+Remote flashing (board on a bench machine/Raspberry Pi, driven from a
+laptop): see [control protocol · remote usage (SSH tunnel)](control-protocol.md#remote-usage-ssh-tunnel).
 
 ## `reopen RE` — serial-layer soft reconnect
 

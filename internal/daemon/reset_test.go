@@ -13,6 +13,7 @@ import (
 
 	"github.com/mickeyzzc/serialtap/internal/collector"
 	"github.com/mickeyzzc/serialtap/internal/config"
+	"github.com/mickeyzzc/serialtap/internal/ctl"
 	"github.com/mickeyzzc/serialtap/internal/device"
 	"github.com/mickeyzzc/serialtap/internal/testutil"
 )
@@ -68,6 +69,42 @@ func TestReopenCyclesPortImmediately(t *testing.T) {
 	if ev := testutil.ReadFile(t, evFile); strings.Contains(ev, "port lost") {
 		t.Fatalf("软重连不应走 port lost 退避路径: %s", ev)
 	}
+}
+
+// Status 暴露健康指标：opens 随重开递增；last_data 在读到数据后贴近当前时刻。
+func TestStatusHealthMetrics(t *testing.T) {
+	root := t.TempDir()
+	fakePorts(t)
+	devs := []device.DeviceInfo{{Tty: "/dev/ttyFAKE", Key: "kA", Name: "fakeA"}}
+	d, err := newMutableDaemon(t, root, func() []device.DeviceInfo {
+		return append([]device.DeviceInfo(nil), devs...)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(d.Shutdown)
+	d.Tick()
+
+	var first ctl.DevState
+	testutil.WaitFor(t, 3*time.Second, func() bool {
+		st := d.Status()
+		if len(st) != 1 {
+			return false
+		}
+		first = st[0]
+		return first.Opens == 1
+	}, "首次 open 后 opens 应为 1")
+	now := time.Now().UnixMilli()
+	if ld := first.LastData; ld == 0 || ld < now-10_000 || ld > now+1_000 {
+		t.Fatalf("last_data 应贴近当前时刻: %d (now=%d)", ld, now)
+	}
+
+	if _, err := d.Reopen("^fakeA$", false); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WaitFor(t, 3*time.Second, func() bool {
+		return d.Status()[0].Opens == 2
+	}, "软重连后 opens 应为 2")
 }
 
 // reopen/reset 与 flash 同款多设备门禁：未锚定匹配多台默认拒绝并列名，

@@ -191,6 +191,7 @@ func (d *daemon) Status() []ctl.DevState {
 		out = append(out, ctl.DevState{
 			Name: c.DeviceName(), Tty: c.Tty(), Key: c.Key(), State: state,
 			Proxy: c.ProxyAddr(), ProxyEndpoint: d.proxyEndpointOf(k),
+			Opens: c.Opens(), LastData: c.LastDataMs(),
 		})
 	}
 	return out

@@ -77,6 +77,9 @@ type Collector struct {
 	curPort   Port        // "inconsistently typed" panic；多测试假端口混用即触发）
 	reopenReq atomic.Bool // 串口层软重连请求（置位后本循环退出即跳过退避重开）
 
+	openCount atomic.Int64 // 成功 open 次数（健康指标：1 = 从未断线重开）
+	lastData  atomic.Int64 // 最近一次读到字节的 UnixMilli（0 = 尚无数据）
+
 	// 透传桥状态（见 proxy.go）
 	proxyMu    sync.Mutex     // 保护 proxyConn
 	proxyConn  net.Conn       // 当前代理客户端（单客户端，nil = 无会话）
@@ -98,6 +101,12 @@ func NewCollector(dev device.DeviceInfo, cfg config.Config, w *logstore.DeviceWr
 
 // Tty: 该采集器持有的串口路径。
 func (c *Collector) Tty() string { return c.dev.Tty }
+
+// Opens: 累计成功 open 次数（含首开）。1 = 从未断线重开；面板健康指标。
+func (c *Collector) Opens() int64 { return c.openCount.Load() }
+
+// LastDataMs: 最近一次读到字节的 UnixMilli（0 = 尚无数据）。面板静默指标。
+func (c *Collector) LastDataMs() int64 { return c.lastData.Load() }
 
 // DeviceName: 设备名（即日志目录名）。
 func (c *Collector) DeviceName() string { return c.dev.Name }
@@ -243,6 +252,7 @@ func (c *Collector) collectOnce() (collectExit, error) {
 	// 传裸数字会成纳秒级忙轮询）
 	_ = port.SetReadTimeout(time.Second)
 	c.event("serial opened (%d baud)", c.cfg.Baud)
+	c.openCount.Add(1)
 
 	var asm lineAssembler
 	buf := make([]byte, 4096)
@@ -276,6 +286,7 @@ func (c *Collector) collectOnce() (collectExit, error) {
 			continue
 		}
 		lastRX = time.Now()
+		c.lastData.Store(lastRX.UnixMilli())
 		c.proxyOut(buf[:n]) // 透传：原始字节镜像给代理客户端（无客户端时零开销）
 		for _, line := range asm.feed(buf[:n]) {
 			if c.proxyTapDrop(line) {

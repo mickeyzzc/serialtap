@@ -109,6 +109,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache") // 面板升级后浏览器别再端出旧页面
 	_, _ = w.Write(indexHTML)
 }
 
@@ -148,12 +149,15 @@ func logSortKey(kind, name string) (string, int, bool) {
 
 // latestFile: dir 下 kind-YYYYMMDD[.NNN].log 的最新者（轮转语义：
 // 同日内后缀越大越新 —— 写满基础文件后写入 .001/.002…）。
+// 注意 size 不能取目录枚举的 Info()：Windows 对正在写入的文件返回滞后的
+// 缓存大小（可数分钟不动），SSE 靠它差分判断新数据会被饿死 —— 获胜者
+// 单独 os.Stat 取真实大小（按路径 Stat 是准的，已实测）。
 func latestFile(dir, kind string) (string, int64, bool) {
 	ents, err := os.ReadDir(dir)
 	if err != nil {
 		return "", 0, false
 	}
-	best, bestDay, bestSfx, size := "", "", -1, int64(0)
+	best, bestDay, bestSfx := "", "", -1
 	for _, e := range ents {
 		n := e.Name()
 		if e.IsDir() || !strings.HasPrefix(n, kind+"-") || !strings.HasSuffix(n, ".log") {
@@ -165,13 +169,16 @@ func latestFile(dir, kind string) (string, int64, bool) {
 		}
 		if day > bestDay || (day == bestDay && sfx > bestSfx) {
 			best, bestDay, bestSfx = n, day, sfx
-			size = 0
-			if fi, err := e.Info(); err == nil {
-				size = fi.Size()
-			}
 		}
 	}
-	return best, size, best != ""
+	if best == "" {
+		return "", 0, false
+	}
+	fi, err := os.Stat(filepath.Join(dir, best))
+	if err != nil {
+		return best, 0, true
+	}
+	return best, fi.Size(), true
 }
 
 // deviceDTO: 面板设备载荷 = ctl.DevState + 日志目录富化（最新文件与大小，
@@ -189,6 +196,9 @@ type deviceDTO struct {
 	EventsFile  string `json:"events_file,omitempty"`
 	EventsSize  int64  `json:"events_size"`
 	SerialBytes int64  `json:"serial_bytes"` // 设备目录全量日志总字节（估留存）
+
+	Opens    int64 `json:"opens,omitempty"`     // 成功 open 次数（健康：1 = 从未断线重开）
+	LastData int64 `json:"last_data,omitempty"` // 最近读到字节的 UnixMilli（0 = 尚无数据）
 }
 
 type snapshotDTO struct {
@@ -205,7 +215,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, d := range devs {
 		e := deviceDTO{Name: d.Name, Tty: d.Tty, Key: d.Key, State: d.State,
-			Proxy: d.Proxy, ProxyEndpoint: d.ProxyEndpoint}
+			Proxy: d.Proxy, ProxyEndpoint: d.ProxyEndpoint, Opens: d.Opens, LastData: d.LastData}
 		if dir, ok := s.deviceDir(d.Name); ok {
 			if f, sz, ok := latestFile(dir, "serial"); ok {
 				e.SerialFile, e.SerialSize = f, sz
@@ -283,7 +293,8 @@ func (s *Server) serveFiles(w http.ResponseWriter, dir string) {
 			continue
 		}
 		fe := fileEntry{Name: e.Name()}
-		if fi, err := e.Info(); err == nil {
+		// 同 latestFile：目录枚举的 Info() 在 Windows 上大小滞后，按路径 Stat
+		if fi, err := os.Stat(filepath.Join(dir, e.Name())); err == nil {
 			fe.Size, fe.MTime = fi.Size(), fi.ModTime().UnixMilli()
 		}
 		out = append(out, fe)

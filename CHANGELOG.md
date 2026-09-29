@@ -2,6 +2,76 @@
 
 ## Unreleased
 
+- feat(web): **高级提取工作台 + 面板内置帮助页 + 波形观测指南** ——
+  自动识别覆盖不了的场景给用户一条体面的高级路径：
+  - **高级提取弹窗**（原折叠输入框升级）：常用模板一键填入（#S1 取
+    RSSI / 行内第一个数字 / 行内全部数字 / t=h= 双通道）；**实时试跑**
+    —— 对当前设备最近 20 行原始日志逐行提取，左边通道值右边原文，
+    应用前先看见会得到什么；正则即时校验标红；「恢复自动识别」随时
+    退回。无捕获组正则升级为全局命中各为一通道（与自动模式语义一致）
+  - **内置帮助页**（面板右上角 ?）：三步上手 / 自动识别原理 /
+    自定义正则教程 / 读图教程 / 功能速览 / 延伸文档链接
+  - **双语文档**《波形观测指南》（docs/{zh-CN,en}/waveform-guide.md）：
+    自动识别规则表、正则速查表与场景教程、泳道/包络/中心线/量程的读图
+    方法与案例（RSSI 漂移、计数斜率、温度台阶）、常见问题排查表
+  - 修复：applyXtr 引用未声明变量 waveReG（strict mode 抛 ReferenceError，
+    自定义模式状态已切但弹窗不关）
+
+- feat(web): **面板观测大礼包** —— 六项新能力 + 波形示波器零学习成本化：
+  - **波形零配置自动识别**：不再需要写正则——自动按"帧型"（行首记号，如
+    `#S1`）分帧，取近期最活跃帧型；`key=数值` 记号成为命名通道、纯数字
+    记号成为位置通道（十六进制幅值块天然不是纯数字，自动排除）。
+    自定义正则收进「自定义提取」折叠项作为逃生门
+  - **波形美化**：通道改独立泳道（各自动量程、名/当前值/区间标注），
+    每像素 min/max 包络降采样（高频不失真）+ 渐变填充 + 中心线，
+    时间轴刻度网格，悬停十字线跨泳道读值
+  - **设备健康指标**：卡片显示「静默 Xs」（最近读到字节距今，变色分级）
+    与「重开 N」（断线重开次数）；守护链路新增 collector `Opens()/LastDataMs()`
+    → ctl.DevState `opens`/`last_data` → `/api/status`（TestStatusHealthMetrics）
+  - **写入速率迷你图**：每卡片 2 分钟 B/s sparkline（突发/静默/崩溃循环
+    一眼可见，客户端环形缓冲）
+  - **日志搜索**：正则（非法自动回退子串）过滤 + `<mark>` 高亮 + 命中
+    计数（`2285/2370 行`）；修复开发中发现的非全局 exec 死循环冻页
+  - **导出**：当前日志缓冲导出 .log；波形样本导出 CSV（表头带通道名）
+  - **事件时间线**：最近 30 分钟每设备一行泳道，签名命中按崩溃/错误/
+    生命周期着色，悬停看原文
+  - **多设备对比面板**：可折叠，每设备一路迷你实时尾随并排（关闭即
+    断开附加 SSE 流）
+  - fix(cli,test): TestLoadCfgMerged 在 Windows 真机误读用户真实配置 ——
+    os.UserHomeDir() 看 USERPROFILE 而非 HOME，测试补设 USERPROFILE 隔离
+    （CI 无用户配置文件所以从未暴露）
+  - 顺手补 `.hit` 命中行颜色规则（旧面板该 span 从未有过样式）
+
+- feat(web): **波形观测图（通用示波器）** —— 日志区新增第三 tab「波形」：
+  用户给提取正则（每个捕获组 = 一个通道；无捕获组则全局命中各为一通道，
+  ≤8 路），面板把串口流变成滚动波形 —— 多通道各色、按通道归一化自动量程、
+  时间窗 15s/60s/5min/30min、冻结/恢复、清除、实时 Hz 与 min~max 读数；
+  供数前剥掉面板时间戳前缀（提取正则对准板子原始行）。**纯客户端实现**：
+  数据源就是既有 serial SSE 流，解析/绘制全在浏览器 Canvas，守护进程零
+  改动（serialtap 保持零业务逻辑——只观测、不解释）
+
+- fix(web): 面板设备卡/下拉全空、无法切换主板 —— renderCards 里残留一处
+  `querySelector('[data-a="view"]')` 空绑定（rebase 时卡片模板换掉了 view
+  按钮、JS 行遗留），null.onclick 赋值抛 TypeError 使渲染在第一张卡片处
+  中断，appendChild/syncDevSel 永不执行，异常又藏在 fetch 的 unhandled
+  rejection 里无任何提示。删残行；新增 `TestIndexHTMLWiring` 接线一致性
+  回归测试（index.html 里 JS 引用的每个 `[data-a=…]` 选择器与 `$("id")`
+  元素必须真实存在，防此类模板/JS 漂移再次静默白屏；已实证对修复前版本
+  报错）
+
+- **文档全面双语化 + 三平台对齐**：`README.md` 重写为全英文（与
+  `README.zh-CN.md` 成对，顶部语言互链）；`docs/en/` 与 `docs/zh-CN/`
+  五对文档（architecture/cli-reference/configuration/control-protocol/
+  deployment）同步到当前特性——三平台支持（删除"仅 Linux"残留）、
+  安装包（win Inno/mac DMG/linux tar.gz）、Web 面板操作全覆盖与浏览器
+  刷机、flash 多台默认拒绝门禁与 `--retries/--dry-run/--all` 全量 flag、
+  身份派生命名后缀（取代旧的 `-2` 枚举后缀描述）、配置补
+  `web_addr`/`flash_timeout_s`/`proxy_tap_exclude` 三字段、控制协议移植
+  SSH 隧道远程刷写章节与 Windows Python 直连示例；`docs/` 根下三个旧版
+  文档改为迁移跳转存根；CONTRIBUTING 更新包表（+web/tray）、CI 矩阵、
+  版本注入说明，并确立"双语成对维护"规则
+
+D
 ### 新增：主板操作台（读侧全覆盖 + 控制台注入）
 
 - `serialtap nvs RE [--show-secrets]` —— NVS 提取解析：自动定位分区、解析命名
@@ -16,6 +86,7 @@
   响应，采集不打断、写入落档审计。
 - 安全边界：NVS 值绝不进事件审计；dump 产物 0600 并提示勿提交；测试 fixture
   全合成（零真实凭据）。
+
 
 - fix(ctl, windows): Close 的等待加上限 + 主动关闭已接受连接 —— Windows
   AF_UNIX 两个平台限制实测：`conn.Close()` 不中止在途 Read（handler 永久卡
