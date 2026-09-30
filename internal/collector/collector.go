@@ -81,10 +81,10 @@ type Collector struct {
 	lastData  atomic.Int64 // 最近一次读到字节的 UnixMilli（0 = 尚无数据）
 
 	// 透传桥状态（见 proxy.go）
-	proxyMu    sync.Mutex     // 保护 proxyConn
-	proxyConn  net.Conn       // 当前代理客户端（单客户端，nil = 无会话）
-	portWriter atomic.Value   // func([]byte) error —— 端口写入口
-	tapExcl    *regexp.Regexp // 透传期间不落盘的行（proxy_tap_exclude）
+	proxyMu    sync.Mutex       // 保护 proxyConn
+	proxyConn  net.Conn         // 当前代理客户端（单客户端，nil = 无会话）
+	portWriter atomic.Value     // func([]byte) error —— 端口写入口
+	tapExcl    *regexp.Regexp   // 透传期间不落盘的行（proxy_tap_exclude）
 	dtrHold    []*regexp.Regexp // open 后保持 DTR+RTS 断言的设备（dtr_hold；见 open 点注释）
 }
 
