@@ -159,3 +159,34 @@ func compileTapExclude(pattern string, logf func(string, ...any)) *regexp.Regexp
 	}
 	return re
 }
+
+// compileDTRHold: 编译 dtr_hold 设备正则列表（坏正则跳过并告警）。
+func compileDTRHold(pats []string, logf func(string, ...any)) []*regexp.Regexp {
+	var out []*regexp.Regexp
+	for _, p := range pats {
+		if p == "" {
+			continue
+		}
+		re, err := regexp.Compile(p)
+		if err != nil {
+			if logf != nil {
+				logf("[watch] 忽略坏正则 dtr_hold: %s", p)
+			}
+			continue
+		}
+		out = append(out, re)
+	}
+	return out
+}
+
+// matchAnyFields: 任一正则命中任一非空字段。
+func matchAnyFields(pats []*regexp.Regexp, fields ...string) bool {
+	for _, p := range pats {
+		for _, f := range fields {
+			if f != "" && p.MatchString(f) {
+				return true
+			}
+		}
+	}
+	return false
+}

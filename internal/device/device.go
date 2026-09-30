@@ -34,6 +34,7 @@ var builtinNameRules = []config.NameRule{
 	{Match: `1a86_7523`, Name: "ch340"},
 	{Match: `1a86_(7522|55d3)`, Name: "ch343"},
 	{Match: `usb-303a_`, Name: "esp32s3-jtag"}, // Espressif 原生 USB（VID 303a）
+	{Match: `usb-2e8a_`, Name: "rp2040-cdc"},   // RP2040 原生 USB（VID 2e8a：TinyUSB CDC）
 }
 
 // 内置 VID:PID 命名规则（精确匹配）。by-id 规则未命中时套用：
@@ -46,6 +47,10 @@ var builtinVIDRules = []vidRule{
 	{VID: "1a86", PID: "7522", Name: "ch343"},
 	{VID: "1a86", PID: "55d3", Name: "ch343"},
 	{VID: "303a", PID: "1001", Name: "esp32s3-jtag"}, // 原生 USB-JTAG/串口
+	// RP2040 TinyUSB CDC（VID 2e8a）：000a=SDK stdio_usb，0003/0005=MicroPython 形态
+	{VID: "2e8a", PID: "000a", Name: "rp2040-cdc"},
+	{VID: "2e8a", PID: "0003", Name: "rp2040-cdc"},
+	{VID: "2e8a", PID: "0005", Name: "rp2040-cdc"},
 }
 
 func applyVIDRules(vid, pid string) string {

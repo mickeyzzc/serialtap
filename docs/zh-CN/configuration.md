@@ -37,6 +37,7 @@ serialtap 用一个 JSON 文件配置。仓库根目录带了一份带注释的�
 | `flash_baud` | int | `0` | `flash` 的波特率。`0` = esptool 默认。`--baud` 参数优先。 |
 | `flash_timeout_s` | int | `0` | 单台设备刷写超时（秒；超时杀 esptool 并回采）。`0` = 不限时。 |
 | `proxy_tap_exclude` | string | `""` | 透传会话期间不落全量日志的行正则（如 `^#S1 ` 剔除高频遥测）。空 = 全落。 |
+| `dtr_hold` | [string] | `[]` | open 后**保持** DTR+RTS 断言的设备正则（匹配 tty / key / by-id / 名字任一）。默认全部释放——CH340 的 RTS 接 EN、ESP 原生 USB-JTAG 的 DTR/RTS 有复位语义；但 pico-sdk（RP2040）的 USB CDC 以 DTR 判断"主机在听"，释放会导致固件静默丢弃全部输出（2026-09-27 rp2040-zero 实测）。坏正则跳过并告警。 |
 
 ## 设备命名
 
@@ -50,6 +51,7 @@ serialtap 用一个 JSON 文件配置。仓库根目录带了一份带注释的�
    | `USB_Serial-if00` | `ch340`（1a86:7523，安信可系板） |
    | `USB_Single_Serial` | `ch343`（1a86:7522/55d3，合宙系板） |
    | `Espressif_USB_JTAG` | `esp32s3-jtag`（原生 USB-JTAG，seeed/n16r8…） |
+   | `usb-2e8a_` | `rp2040-cdc`（RP2040 TinyUSB CDC——pico-sdk stdio_usb / MicroPython，VID 2e8a） |
 
 3. by-id 基名，再不行取 tty 名
 

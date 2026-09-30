@@ -31,6 +31,7 @@ type Config struct {
 	FlashBaud       int               `json:"flash_baud"`        // 代理刷波特率（0 = esptool 默认）
 	FlashTimeoutS   int               `json:"flash_timeout_s"`   // 单台设备刷写超时（秒，超时杀 esptool 并回采；显式写 0 = 不限时）
 	ProxyTapExclude string            `json:"proxy_tap_exclude"` // 透传会话期间不落全量日志的行正则（如 "^#S1 " 剔除高频遥测；空 = 全落）
+	DTRHold         []string          `json:"dtr_hold"`          // open 后保持 DTR+RTS 断言的设备正则（匹配 tty/by-id/by-path/名字任一）。默认全释放——CH340 的 RTS 接 EN；RP2040 pico-sdk CDC 以 DTR 判"主机在听"，释放即静默丢输出
 	WebAddr         string            `json:"web_addr"`          // Web 观测面板监听地址（空 = 默认 127.0.0.1:8801；"off" = 关闭）
 }
 

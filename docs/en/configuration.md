@@ -40,6 +40,7 @@ serialtap is configured by a single JSON file. An annotated example ships in
 | `flash_baud` | int | `0` | Baud rate for `flash`. `0` = esptool's default. `--baud` flag wins over this. |
 | `flash_timeout_s` | int | `0` | Per-device flash timeout in seconds (on timeout esptool is killed and capture resumed). `0` = no timeout. |
 | `proxy_tap_exclude` | string | `""` | Per-line regex kept out of the full log during proxy sessions (e.g. `^#S1 ` to drop high-rate telemetry). Empty = log everything. |
+| `dtr_hold` | [string] | `[]` | Device regexes (any of tty / key / by-id / name) that keep DTR+RTS **asserted** after open. Default releases both for every device — CH340 wires RTS to EN and ESP native USB-JTAG has DTR/RTS reset semantics; pico-sdk (RP2040) USB CDC however gates all stdio output on DTR ("host listening"), so a released DTR makes the firmware silently drop output (verified on rp2040-zero, 2026-09-27). Bad regexes are skipped with a warning. |
 
 ## Device naming
 
@@ -54,6 +55,7 @@ Every device gets a directory name under `root`. Resolution order:
    | `USB_Serial-if00` | `ch340` (1a86:7523, ai-thinker style boards) |
    | `USB_Single_Serial` | `ch343` (1a86:7522/55d3, luatos style boards) |
    | `Espressif_USB_JTAG` | `esp32s3-jtag` (native USB-JTAG, seeed/n16r8…) |
+   | `usb-2e8a_` | `rp2040-cdc` (RP2040 TinyUSB CDC — pico-sdk stdio_usb / MicroPython, VID 2e8a) |
 
 3. by-id base name, else the tty name
 
