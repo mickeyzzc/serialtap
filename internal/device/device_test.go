@@ -51,8 +51,10 @@ func TestApplyVIDRules(t *testing.T) {
 		{"1a86", "7522", "ch343"},
 		{"1a86", "55d3", "ch343"},
 		{"303a", "1001", "esp32s3-jtag"},
-		{"10c4", "ea60", ""}, // CP210x：无内置规则，回退链继续
-		{"1A86", "7523", ""}, // 大小写敏感：枚举层负责统一小写
+		{"2e8a", "000a", "rp2040-cdc"}, // RP2040 SDK CDC
+		{"2e8a", "0005", "rp2040-cdc"}, // RP2040 MicroPython 形态
+		{"10c4", "ea60", ""},           // CP210x：无内置规则，回退链继续
+		{"1A86", "7523", ""},           // 大小写敏感：枚举层负责统一小写
 	} {
 		if got := applyVIDRules(c.vid, c.pid); got != c.want {
 			t.Fatalf("applyVIDRules(%s,%s) = %q, want %q", c.vid, c.pid, got, c.want)

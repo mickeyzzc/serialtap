@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- feat(collector): **dtr_hold 配置 —— RP2040 CDC 的 DTR 判听适配** ——
+  pico-sdk 的 USB CDC 以 DTR 判断"主机在听"，而 serialtap open 后默认
+  释放 DTR/RTS（CH340 的 RTS 接 EN、乐鑫 USB-JTAG 有复位语义），两边
+  一合：固件静默丢弃全部输出（2026-09-27 rp2040-zero 实测：板端 seq
+  在涨、口上零字节）。新增 `dtr_hold` 设备正则列表（命中 tty / key /
+  by-id / 名字任一即生效），open 后**保持** DTR+RTS 断言；默认空列表 =
+  行为与历史版本完全一致。坏正则跳过并告警。双语文档同步
+  （docs/{zh-CN,en}/configuration.md）
+- feat(device): 内置命名规则 `rp2040-cdc`（VID 2e8a：pico-sdk stdio_usb
+  `000a` / MicroPython `0003`/`0005`），README 与配置文档的内置规则表同步
+
 - feat(web): **高级提取工作台 + 面板内置帮助页 + 波形观测指南** ——
   自动识别覆盖不了的场景给用户一条体面的高级路径：
   - **高级提取弹窗**（原折叠输入框升级）：常用模板一键填入（#S1 取

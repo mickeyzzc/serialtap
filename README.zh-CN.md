@@ -63,7 +63,7 @@
 tty / 设备名 / key / by-id 四个字段，但**字段形态不同**：
 Linux 的 by-id 是 `usb-Espressif_USB_JTAG_...`，Windows 是 `USB\VID_303A&PID_1001\...`
 实例路径，macOS 是 `usbmodem2101` 一类设备名 —— 用 `serialtap list` 看实际值再写正则。
-内置 VID:PID 规则（ch340/ch343/esp32s3-jtag）三平台通用。
+内置 VID:PID 规则（ch340/ch343/esp32s3-jtag/rp2040-cdc）三平台通用。
 
 ## 托盘与菜单栏
 
@@ -213,8 +213,8 @@ USB-JTAG 口（USB_SERIAL_JTAG 外设在硅内实现了与 CH340 一致的自动
 
 ## 设备命名
 
-优先级：配置 `names`（by-id 正则）→ 内置规则（`ch340` / `ch343` / `esp32s3-jtag`）
-→ by-id 基名 → tty 名。同名设备（如两只乐鑫原生 USB-JTAG 都是
+优先级：配置 `names`（by-id 正则）→ 内置规则（`ch340` / `ch343` / `esp32s3-jtag` /
+`rp2040-cdc`）→ by-id 基名 → tty 名。同名设备（如两只乐鑫原生 USB-JTAG 都是
 `303a:1001` → 都叫 `esp32s3-jtag`）自动加**身份派生后缀** `-<token>`：
 token 是设备稳定身份（key/by-id，Windows 实例路径内嵌 MAC）的 4 位散列，
 同一块板无论第几个接入、跨守护重启后缀都一致；裸基名先到先得。

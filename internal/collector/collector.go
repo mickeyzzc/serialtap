@@ -81,10 +81,11 @@ type Collector struct {
 	lastData  atomic.Int64 // 最近一次读到字节的 UnixMilli（0 = 尚无数据）
 
 	// 透传桥状态（见 proxy.go）
-	proxyMu    sync.Mutex     // 保护 proxyConn
-	proxyConn  net.Conn       // 当前代理客户端（单客户端，nil = 无会话）
-	portWriter atomic.Value   // func([]byte) error —— 端口写入口
-	tapExcl    *regexp.Regexp // 透传期间不落盘的行（proxy_tap_exclude）
+	proxyMu    sync.Mutex       // 保护 proxyConn
+	proxyConn  net.Conn         // 当前代理客户端（单客户端，nil = 无会话）
+	portWriter atomic.Value     // func([]byte) error —— 端口写入口
+	tapExcl    *regexp.Regexp   // 透传期间不落盘的行（proxy_tap_exclude）
+	dtrHold    []*regexp.Regexp // open 后保持 DTR+RTS 断言的设备（dtr_hold；见 open 点注释）
 }
 
 func NewCollector(dev device.DeviceInfo, cfg config.Config, w *logstore.DeviceWriter,
@@ -96,6 +97,7 @@ func NewCollector(dev device.DeviceInfo, cfg config.Config, w *logstore.DeviceWr
 		dev: dev, cfg: cfg, w: w, sigs: sigs, pause: p,
 		stdlog: stdlog, stop: make(chan struct{}),
 		tapExcl: compileTapExclude(cfg.ProxyTapExclude, stdlog),
+		dtrHold: compileDTRHold(cfg.DTRHold, stdlog),
 	}
 }
 
@@ -245,9 +247,17 @@ func (c *Collector) collectOnce() (collectExit, error) {
 	// 透传桥的写入口：端口存续期间登记，关闭即撤销（见 proxy.go）
 	c.setPortWriter(port)
 	defer c.setPortWriter(nil)
-	// 见文件头注释第 2 条：open 后立即释放 DTR/RTS
-	_ = port.SetDTR(false)
-	_ = port.SetRTS(false)
+	// 见文件头注释第 2 条：open 后立即释放 DTR/RTS。例外 = dtr_hold 命中的
+	// 设备保持断言：pico-sdk CDC（RP2040）以 DTR 判"主机在听"，释放会让
+	// stdio_usb 静默丢弃全部输出（2026-09-27 rp2040-zero 实测：seq 一路
+	// 在涨、口上零字节）。默认列表为空 = 行为与历史版本完全一致。
+	if len(c.dtrHold) > 0 && matchAnyFields(c.dtrHold, c.dev.Tty, c.dev.Key, c.dev.ByID, c.dev.Name) {
+		_ = port.SetDTR(true)
+		_ = port.SetRTS(true)
+	} else {
+		_ = port.SetDTR(false)
+		_ = port.SetRTS(false)
+	}
 	// 1s 读超时：喂看门狗检查、响应 stop/pause（注意 v1.8 API 是 Duration，
 	// 传裸数字会成纳秒级忙轮询）
 	_ = port.SetReadTimeout(time.Second)

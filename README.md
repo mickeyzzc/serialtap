@@ -79,8 +79,8 @@ tty / device name / key / by-id fields on every platform, but **the field
 shapes differ**: on Linux by-id looks like `usb-Espressif_USB_JTAG_...`, on
 Windows it's a `USB\VID_303A&PID_1001\...` instance path, on macOS a device
 name like `usbmodem2101` — run `serialtap list` to see the actual values
-before writing regexes. Built-in VID:PID rules (ch340/ch343/esp32s3-jtag) work
-on all three platforms.
+before writing regexes. Built-in VID:PID rules (ch340/ch343/esp32s3-jtag/
+rp2040-cdc) work on all three platforms.
 
 ## Tray & menu bar
 
@@ -261,7 +261,8 @@ hold it** — never reopen periodically:
 ## Device naming
 
 Resolution order: config `names` (by-id regexes) → built-in rules
-(`ch340` / `ch343` / `esp32s3-jtag`) → by-id base name → tty name. When two
+(`ch340` / `ch343` / `esp32s3-jtag` / `rp2040-cdc`) → by-id base name → tty
+name. When two
 live devices resolve to the same name (e.g. two Espressif native USB-JTAG
 both `303a:1001` → both `esp32s3-jtag`), an **identity-derived suffix**
 `-<token>` is appended: the token is a 4-hex hash of the device's stable
