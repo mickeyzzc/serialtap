@@ -2,9 +2,14 @@
 package cli
 
 import (
+	"bufio"
+	crand "crypto/rand"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	_ "net/http/pprof" // pprof 诊断口（DefaultServeMux 注册，见 cmdRun）
 	"os"
@@ -16,9 +21,6 @@ import (
 	"syscall"
 	"time"
 
-	"bufio"
-	"net"
-
 	"github.com/mickeyzzc/serialtap/internal/analyze"
 	"github.com/mickeyzzc/serialtap/internal/board"
 	"github.com/mickeyzzc/serialtap/internal/collector"
@@ -28,6 +30,7 @@ import (
 	"github.com/mickeyzzc/serialtap/internal/device"
 	"github.com/mickeyzzc/serialtap/internal/flash"
 	"github.com/mickeyzzc/serialtap/internal/logstore"
+	"github.com/mickeyzzc/serialtap/internal/mesh"
 	"github.com/mickeyzzc/serialtap/internal/pause"
 	"github.com/mickeyzzc/serialtap/internal/signature"
 	"github.com/mickeyzzc/serialtap/internal/tray"
@@ -76,7 +79,17 @@ func usage() {
   serialtap at RE "AT+..." [--wait 3s]   向设备控制台注入 AT 命令并回显响应
                                          （经 proxy 透传通道；写入以 > 前缀落档审计）
   serialtap status                       查看守护进程与设备实时状态
+  serialtap mesh status [--json]         mesh 多机互联：聚合显示全部 peer 节点与其设备
+  serialtap mesh keygen                  生成 mesh 预共享密钥口令（配到每台 PC 的 config）
+  serialtap mesh forward <peer> <RE>     为 peer 上的设备开本地透传隧道端点
+  —— 所有控制命令（status/flash/pause/resume/release/proxy/reopen/reset/
+     info/partitions/nvs/dump/at）加 --peer <节点> 即远程执行：目标在别的 PC，
+     flash 镜像自动从本机加密上传，dump 产物自动取回本机 ——
   serialtap version
+
+mesh 配置（config.json，默认关）:
+  "mesh_enabled": true, "mesh_key": "<serialtap mesh keygen 生成>",
+  ["mesh_name": "bench1", "mesh_port": 8802, "mesh_peers": ["10.0.0.9:8802"], ...]
 
 日志布局: <root>/<设备名>/serial-YYYYMMDD.log（全量）+ events-YYYYMMDD.log（事件）
 暂停清单: <root>/PAUSED（每行一个正则，匹配 tty/by-path/by-id/设备名）
@@ -161,6 +174,8 @@ func Run(args []string) int {
 		err = cmdPauseSocket(args[1:], false)
 	case "tray":
 		err = cmdTray(args[1:])
+	case "mesh":
+		err = cmdMesh(args[1:])
 	case "version":
 		fmt.Println("serialtap " + Version)
 	default:
@@ -247,7 +262,18 @@ func cmdRun(args []string) error {
 	}
 	ctlSrv.Logf = stdoutLog // 关闭兜底超时的告警进守护日志（#18）
 	defer ctlSrv.Close()
+	// mesh 节点（可选）：handler 闭包先于构造——peer 分支运行期判 nil
+	var node *mesh.Node
 	handler := func(req ctl.Request, respond func(ctl.Response)) {
+		// mesh 远端请求：经本地节点转发到 peer（PSK 只存在于守护进程）
+		if req.Peer != "" {
+			if node == nil {
+				respond(ctl.Response{OK: false, Error: "mesh 未启用（config 加 mesh_enabled=true 并配 mesh_key）"})
+				return
+			}
+			handlePeerCmd(node, req, respond)
+			return
+		}
 		switch req.Cmd {
 		case "status":
 			respond(ctl.Response{OK: true, Devices: d.Status()})
@@ -327,12 +353,39 @@ func cmdRun(args []string) error {
 				return
 			}
 			respond(ctl.Response{OK: true})
+		case "mesh":
+			// 聚合状态：全部已知 peer 并行查询（本机设备用普通 status 拿）
+			if node == nil {
+				respond(ctl.Response{OK: false, Error: "mesh 未启用（config 加 mesh_enabled=true 并配 mesh_key）"})
+				return
+			}
+			respond(ctl.Response{OK: true, Peers: node.AggregateStatus(5 * time.Second)})
 		default:
 			respond(ctl.Response{OK: false, Error: "unknown cmd: " + req.Cmd})
 		}
 	}
 	go ctlSrv.Serve(handler)
 	stdoutLog("[ctl] 控制通道: %s", sockPath)
+
+	// mesh 多机互联（默认关）：mesh_enabled 开启后 UDP beacon 互发现 +
+	// PSK 加密信道，任意 PC 管理所有 PC 接入的板子（--peer / mesh status）
+	if cfg.MeshEnabled {
+		node, err = mesh.NewNode(mesh.Options{
+			Name:        cfg.MeshName,
+			Port:        cfg.MeshPort,
+			Key:         cfg.MeshKey,
+			AnnounceS:   cfg.MeshAnnounceS,
+			StaticPeers: cfg.MeshPeers,
+			Root:        cfg.Root,
+			Forward:     handler,
+			Proxy:       d, // daemon 的 ProxyStart/Stop（隧道桥）
+			Logf:        stdoutLog,
+		})
+		if err != nil {
+			return err
+		}
+		defer node.Close()
+	}
 
 	// Web 观测面板：状态/实时日志/事件只读展示 + 全部运行操作（暂停/恢复/
 	// 代理/让口/软重连/USB 重置/上传刷机）。操作经 commander 桥到上面同一条
@@ -583,12 +636,137 @@ func ctlSend(sockOverride string, req ctl.Request, onEvent func(ctl.Response) bo
 	return ctl.Send(path, req, onEvent)
 }
 
+// —— mesh：多机互联（发现/聚合/隧道） ——
+
+// handlePeerCmd: 带 peer 字段请求的 mesh 分发——proxy 走本地隧道端点
+// （业务工具/at 直连它），其余经加密信道转发（flash/board dump 在节点内
+// 做镜像上传/产物取回编排）。
+func handlePeerCmd(node *mesh.Node, req ctl.Request, respond func(ctl.Response)) {
+	switch req.Cmd {
+	case "proxy":
+		if req.Action == "stop" {
+			n := node.CloseTunnel(req.Pattern)
+			respond(ctl.Response{OK: true, Line: fmt.Sprintf("%d", n)})
+			return
+		}
+		ep, dev, key, err := node.OpenTunnel(req.Peer, req.Pattern)
+		if err != nil {
+			respond(ctl.Response{OK: false, Error: err.Error()})
+			return
+		}
+		respond(ctl.Response{OK: true, Endpoint: ep, Device: dev, DeviceKey: key})
+	default:
+		if err := node.Forward(req.Peer, req, respond); err != nil {
+			respond(ctl.Response{OK: false, Error: err.Error()})
+		}
+	}
+}
+
+// cmdMesh: mesh 子命令族（status 聚合视图 / keygen 密钥生成 / forward 隧道）。
+func cmdMesh(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("用法: mesh <status|keygen|forward> ...")
+	}
+	switch args[0] {
+	case "keygen":
+		return meshKeygen()
+	case "status":
+		return cmdMeshStatus(args[1:])
+	case "forward":
+		return cmdMeshForward(args[1:])
+	}
+	return fmt.Errorf("未知 mesh 子命令: %s（status | keygen | forward）", args[0])
+}
+
+// meshKeygen: 生成 32 字符随机口令（base64url）。只打印不落盘——各机手工
+// 配进自己的 config（密钥永不进仓库/日志/beacon）。
+func meshKeygen() error {
+	buf := make([]byte, 24)
+	if _, err := crand.Read(buf); err != nil {
+		return err
+	}
+	fmt.Println(base64.RawURLEncoding.EncodeToString(buf))
+	return nil
+}
+
+func cmdMeshStatus(args []string) error {
+	fs := flag.NewFlagSet("mesh status", flag.ExitOnError)
+	sock := fs.String("sock", "", "控制 socket 路径")
+	jsonOut := fs.Bool("json", false, "输出 JSON（脚本消费）")
+	parseFlags(fs, args)
+	var respErr string
+	var peers []ctl.PeerStatus
+	err := ctlSend(*sock, ctl.Request{Cmd: "mesh"}, func(r ctl.Response) bool {
+		if !r.OK {
+			respErr = r.Error
+			return true
+		}
+		peers = r.Peers
+		return true
+	})
+	if respErr != "" {
+		return fmt.Errorf("%s", respErr)
+	}
+	if err != nil {
+		return err
+	}
+	if *jsonOut {
+		out, _ := json.Marshal(map[string]any{"peers": peers})
+		fmt.Println(string(out))
+		return nil
+	}
+	if len(peers) == 0 {
+		fmt.Println("（mesh 已启用但暂无 peer——对方 PC 也跑着同密钥的 serialtap 吗？）")
+		return nil
+	}
+	fmt.Printf("%-18s %-8s %-24s %-8s %s\n", "NODE", "ID", "ADDR", "STATE", "DELAY")
+	for _, p := range peers {
+		fmt.Printf("%-18s %-8s %-24s %-8s %s\n", p.Name, p.ID, p.Addr, p.State,
+			map[bool]string{true: fmt.Sprintf("%dms", p.LatencyMs), false: "-"}[p.LatencyMs > 0])
+		for _, d := range p.Devices {
+			fmt.Printf("  └─ %-16s %-14s %s\n", d.Name, d.Tty, d.State)
+		}
+		if p.Err != "" {
+			fmt.Printf("     ⚠ %s\n", p.Err)
+		}
+	}
+	return nil
+}
+
+// cmdMeshForward: 在本地开一条到 peer 设备的隧道端点（业务工具当本地串口用）。
+func cmdMeshForward(args []string) error {
+	fs := flag.NewFlagSet("mesh forward", flag.ExitOnError)
+	sock := fs.String("sock", "", "控制 socket 路径")
+	pos := parseFlags(fs, args)
+	if len(pos) != 2 {
+		return fmt.Errorf("用法: mesh forward <peer> <设备正则>")
+	}
+	var respErr string
+	err := ctlSend(*sock, ctl.Request{Cmd: "proxy", Peer: pos[0], Pattern: pos[1]}, func(r ctl.Response) bool {
+		if !r.OK {
+			respErr = r.Error
+			return true
+		}
+		dev := pos[1]
+		if r.Device != "" {
+			dev = r.Device
+		}
+		fmt.Printf("本地隧道端点: %s\n→ peer %s 的 %s（串口经加密信道透传；断开即自动收尾）\n", r.Endpoint, pos[0], dev)
+		return true
+	})
+	if respErr != "" {
+		return fmt.Errorf("%s", respErr)
+	}
+	return err
+}
+
 func cmdStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
 	sock := fs.String("sock", "", "控制 socket 路径（默认自动）")
+	peer := fs.String("peer", "", "mesh 远端节点：查看该节点上的设备（名字/唯一前缀/host:port）")
 	parseFlags(fs, args)
 	var respErr string
-	err := ctlSend(*sock, ctl.Request{Cmd: "status"}, func(r ctl.Response) bool {
+	err := ctlSend(*sock, ctl.Request{Cmd: "status", Peer: *peer}, func(r ctl.Response) bool {
 		if !r.OK {
 			respErr = r.Error // 统一由 Run 的错误出口打印
 			return true
@@ -621,12 +799,13 @@ func cmdStatus(args []string) error {
 func cmdProxy(args []string) error {
 	fs := flag.NewFlagSet("proxy", flag.ExitOnError)
 	sock := fs.String("sock", "", "控制 socket 路径")
+	peer := fs.String("peer", "", "mesh 远端节点：为该节点的设备开本地隧道端点")
 	stop := fs.Bool("stop", false, "停止透传（默认开启）")
 	pos := parseFlags(fs, args)
 	if len(pos) != 1 {
 		return fmt.Errorf("proxy 需要一个设备匹配正则，如 proxy luatos")
 	}
-	req := ctl.Request{Cmd: "proxy", Pattern: pos[0]}
+	req := ctl.Request{Cmd: "proxy", Pattern: pos[0], Peer: *peer}
 	if *stop {
 		req.Action = "stop"
 	}
@@ -656,12 +835,13 @@ func cmdProxy(args []string) error {
 func cmdRelease(args []string) error {
 	fs := flag.NewFlagSet("release", flag.ExitOnError)
 	sock := fs.String("sock", "", "控制 socket 路径")
+	peer := fs.String("peer", "", "mesh 远端节点")
 	forDur := fs.String("for", "", "限时自动回采（如 5m / 90s）；省略则端口空闲自动回采")
 	pos := parseFlags(fs, args)
 	if len(pos) != 1 {
 		return fmt.Errorf("release 需要一个设备匹配正则，如 release luatos")
 	}
-	req := ctl.Request{Cmd: "release", Pattern: pos[0], UntilIdle: true}
+	req := ctl.Request{Cmd: "release", Pattern: pos[0], Peer: *peer, UntilIdle: true}
 	if *forDur != "" {
 		d, err := time.ParseDuration(*forDur)
 		if err != nil {
@@ -729,6 +909,7 @@ func (r flashRetry) run(op func() error) error {
 func cmdFlash(args []string) error {
 	fs := flag.NewFlagSet("flash", flag.ExitOnError)
 	sock := fs.String("sock", "", "控制 socket 路径")
+	peer := fs.String("peer", "", "mesh 远端节点：镜像从本机加密上传到对端再刷")
 	cfgPath := fs.String("config", "", "配置文件 JSON")
 	esptool := fs.String("esptool", "", "esptool 命令（默认 PATH 自动发现或配置）")
 	baud := fs.Int("baud", 0, "刷写波特率")
@@ -770,7 +951,7 @@ func cmdFlash(args []string) error {
 	// 传输层错误（守护进程不可达等）包成 noRetryError：重试无益。
 	runOnce := func() error {
 		var flashErr error
-		err = ctlSend(*sock, ctl.Request{Cmd: "flash", Pattern: pos[0], All: *all, Spec: spec}, func(r ctl.Response) bool {
+		err = ctlSend(*sock, ctl.Request{Cmd: "flash", Pattern: pos[0], Peer: *peer, All: *all, Spec: spec}, func(r ctl.Response) bool {
 			switch r.Event {
 			case "flash-log":
 				fmt.Println(r.Line)
@@ -813,13 +994,14 @@ func cmdFlash(args []string) error {
 func cmdReopen(args []string) error {
 	fs := flag.NewFlagSet("reopen", flag.ExitOnError)
 	sock := fs.String("sock", "", "控制 socket 路径")
+	peer := fs.String("peer", "", "mesh 远端节点")
 	all := fs.Bool("all", false, "模式匹配多台设备时仍逐台重开（默认拒绝——精确操作一台请锚定正则）")
 	pos := parseFlags(fs, args)
 	if len(pos) != 1 {
 		return fmt.Errorf("reopen 需要一个设备匹配正则，如 reopen '^sense-c3$'")
 	}
 	var respErr string
-	err := ctlSend(*sock, ctl.Request{Cmd: "reopen", Pattern: pos[0], All: *all}, func(r ctl.Response) bool {
+	err := ctlSend(*sock, ctl.Request{Cmd: "reopen", Pattern: pos[0], Peer: *peer, All: *all}, func(r ctl.Response) bool {
 		if !r.OK {
 			respErr = r.Error
 			return true
@@ -837,6 +1019,7 @@ func cmdReopen(args []string) error {
 func cmdReset(args []string) error {
 	fs := flag.NewFlagSet("reset", flag.ExitOnError)
 	sock := fs.String("sock", "", "控制 socket 路径")
+	peer := fs.String("peer", "", "mesh 远端节点")
 	all := fs.Bool("all", false, "模式匹配多台设备时仍逐台重置（默认拒绝——精确操作一台请锚定正则）")
 	pos := parseFlags(fs, args)
 	if len(pos) != 1 {
@@ -844,7 +1027,7 @@ func cmdReset(args []string) error {
 	}
 	fmt.Println("USB 软重置中：让口 → pnputil 重启设备节点（若弹出 UAC 请确认）→ 回采…")
 	var respErr string
-	err := ctlSend(*sock, ctl.Request{Cmd: "reset", Pattern: pos[0], All: *all}, func(r ctl.Response) bool {
+	err := ctlSend(*sock, ctl.Request{Cmd: "reset", Pattern: pos[0], Peer: *peer, All: *all}, func(r ctl.Response) bool {
 		if !r.OK {
 			respErr = r.Error
 			return true
@@ -864,6 +1047,7 @@ func cmdReset(args []string) error {
 func cmdPauseSocket(args []string, pauseMode bool) error {
 	fs := flag.NewFlagSet("pause/resume", flag.ExitOnError)
 	sock := fs.String("sock", "", "控制 socket 路径")
+	peer := fs.String("peer", "", "mesh 远端节点（远端无文件直改回退——守护必须可达）")
 	fs.String("root", "", "日志根目录（回退文件直改时用）")
 	pos := parseFlags(fs, args)
 	pattern := ""
@@ -875,7 +1059,7 @@ func cmdPauseSocket(args []string, pauseMode bool) error {
 		cmd = "pause"
 	}
 	var respErr string
-	err := ctlSend(*sock, ctl.Request{Cmd: cmd, Pattern: pattern},
+	err := ctlSend(*sock, ctl.Request{Cmd: cmd, Pattern: pattern, Peer: *peer},
 		func(r ctl.Response) bool {
 			if !r.OK && r.Error != "" {
 				respErr = r.Error
@@ -893,6 +1077,9 @@ func cmdPauseSocket(args []string, pauseMode bool) error {
 		}
 		return nil
 	}
+	if *peer != "" {
+		return err // 远端操作没有文件直改回退
+	}
 	// 守护不在（连接失败）→ 文件直改（历史行为）
 	return cmdPauseCLI(args, pauseMode)
 }
@@ -902,6 +1089,7 @@ func cmdPauseSocket(args []string, pauseMode bool) error {
 func cmdBoard(args []string, action string) error {
 	fs := flag.NewFlagSet(action, flag.ExitOnError)
 	sock := fs.String("sock", "", "控制 socket 路径")
+	peer := fs.String("peer", "", "mesh 远端节点（dump 产物自动取回本机）")
 	cfgPath := fs.String("config", "", "配置文件 JSON")
 	esptool := fs.String("esptool", "", "esptool 命令（默认 PATH 自动发现或配置）")
 	baud := fs.Int("baud", 0, "波特率")
@@ -934,7 +1122,7 @@ func cmdBoard(args []string, action string) error {
 		spec.Addr, spec.Size, spec.OutPath = pos[1], pos[2], pos[3]
 	}
 	var boardErr error
-	err = ctlSend(*sock, ctl.Request{Cmd: "board", Pattern: pos[0], All: *all, Board: &spec},
+	err = ctlSend(*sock, ctl.Request{Cmd: "board", Pattern: pos[0], Peer: *peer, All: *all, Board: &spec},
 		func(r ctl.Response) bool {
 			switch r.Event {
 			case "board-log":
@@ -965,6 +1153,7 @@ func cmdBoard(args []string, action string) error {
 func cmdAt(args []string) error {
 	fs := flag.NewFlagSet("at", flag.ExitOnError)
 	sock := fs.String("sock", "", "控制 socket 路径")
+	peer := fs.String("peer", "", "mesh 远端节点：注入其设备控制台（经本地隧道端点）")
 	wait := fs.Duration("wait", 3*time.Second, "响应等待窗口")
 	pos := parseFlags(fs, args)
 	if len(pos) < 2 {
@@ -973,7 +1162,7 @@ func cmdAt(args []string) error {
 	pattern, cmds := pos[0], pos[1:]
 
 	var endpoint string
-	if err := ctlSend(*sock, ctl.Request{Cmd: "proxy", Pattern: pattern},
+	if err := ctlSend(*sock, ctl.Request{Cmd: "proxy", Pattern: pattern, Peer: *peer},
 		func(r ctl.Response) bool {
 			if !r.OK {
 				return true
@@ -987,7 +1176,7 @@ func cmdAt(args []string) error {
 		return fmt.Errorf("代理端点未建立（设备不在线？）")
 	}
 	defer func() {
-		_ = ctlSend(*sock, ctl.Request{Cmd: "proxy", Pattern: pattern, Action: "stop"}, func(ctl.Response) bool { return true })
+		_ = ctlSend(*sock, ctl.Request{Cmd: "proxy", Pattern: pattern, Peer: *peer, Action: "stop"}, func(ctl.Response) bool { return true })
 	}()
 
 	conn, err := net.DialTimeout("tcp", endpoint, 3*time.Second)
