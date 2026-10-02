@@ -27,8 +27,9 @@ func sunPathLimit() int {
 
 // Request: 客户端请求（一行 JSON）。
 type Request struct {
-	Cmd       string      `json:"cmd"`                  // status | pause | resume | release | flash | proxy | reopen | reset
+	Cmd       string      `json:"cmd"`                  // status | pause | resume | release | flash | proxy | reopen | reset | mesh
 	Pattern   string      `json:"pattern,omitempty"`    // 设备匹配正则（tty/name/key/by-id 任一）
+	Peer      string      `json:"peer,omitempty"`       // mesh 远端节点（名字/ID/唯一前缀/host:port）——非空 = 本地守护经 mesh 转发到该节点执行
 	ForMs     int64       `json:"for_ms,omitempty"`     // release: 限时自动回采
 	UntilIdle bool        `json:"until_idle,omitempty"` // release: 端口空闲后自动回采
 	Spec      flash.Spec  `json:"spec,omitempty"`       // flash: 刷写参数
@@ -49,17 +50,30 @@ type DevState struct {
 	LastData      int64  `json:"last_data,omitempty"`      // 最近读到字节的 UnixMilli（0 = 尚无数据）
 }
 
+// PeerStatus: mesh 节点状态（cmd:"mesh" 聚合查询返回）。
+type PeerStatus struct {
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	Addr      string     `json:"addr"`
+	State     string     `json:"state"` // online | offline
+	Static    bool       `json:"static,omitempty"`
+	LatencyMs int64      `json:"latency_ms,omitempty"`
+	Devices   []DevState `json:"devices,omitempty"`
+	Err       string     `json:"err,omitempty"`
+}
+
 // Response: 服务端响应（一行 JSON；flash 会流式多行）。
 type Response struct {
-	OK        bool       `json:"ok"`
-	Error     string     `json:"error,omitempty"`
-	Event     string     `json:"event,omitempty"` // flash-log | flash-done
-	Line      string     `json:"line,omitempty"`
-	Code      int        `json:"code,omitempty"`
-	Devices   []DevState `json:"devices,omitempty"`
-	Endpoint  string     `json:"endpoint,omitempty"`   // proxy start: 透传 TCP 端点
-	Device    string     `json:"device,omitempty"`     // proxy start: 返回端点所属设备名
-	DeviceKey string     `json:"device_key,omitempty"` // proxy start: 返回端点所属设备 key
+	OK        bool         `json:"ok"`
+	Error     string       `json:"error,omitempty"`
+	Event     string       `json:"event,omitempty"` // flash-log | flash-done | board-log | board-done
+	Line      string       `json:"line,omitempty"`
+	Code      int          `json:"code,omitempty"`
+	Devices   []DevState   `json:"devices,omitempty"`
+	Peers     []PeerStatus `json:"peers,omitempty"` // mesh: 聚合的远端节点状态
+	Endpoint  string       `json:"endpoint,omitempty"`
+	Device    string       `json:"device,omitempty"`
+	DeviceKey string       `json:"device_key,omitempty"`
 }
 
 // Handler: 请求处理。respond 可多次调用（flash 流式输出），最后一次带总结性状态。

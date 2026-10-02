@@ -103,7 +103,8 @@ func (s *Secrets) ValidFingerprint(id, fp string) bool {
 type Ident struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
-	TS   int64  `json:"ts,omitempty"` // 客户端自报携带（Unix 秒）
+	Port int    `json:"port,omitempty"` // 自报 mesh 监听端口（来话方登记用；0=未报）
+	TS   int64  `json:"ts,omitempty"`   // 客户端自报携带（Unix 秒）
 }
 
 // helloFrame / identFrame: 握手载荷。
@@ -114,6 +115,7 @@ type helloFrame struct {
 type identFrame struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+	Port int    `json:"port,omitempty"`
 	TS   int64  `json:"ts"`
 }
 
@@ -200,7 +202,7 @@ func DialChannel(conn net.Conn, sec *Secrets, self Ident) (ch *Channel, peer Ide
 		return nil, Ident{}, errors.New("mesh 对端身份不完整")
 	}
 	_ = conn.SetDeadline(time.Time{})
-	return ch, Ident{ID: peerRaw.ID, Name: peerRaw.Name}, nil
+	return ch, Ident{ID: peerRaw.ID, Name: peerRaw.Name, Port: peerRaw.Port}, nil
 }
 
 // AcceptChannel: 服务端——在已接受的连接上等待并完成握手。
@@ -260,7 +262,7 @@ func AcceptChannel(conn net.Conn, sec *Secrets, self Ident) (ch *Channel, peer I
 		return nil, Ident{}, err
 	}
 	_ = conn.SetDeadline(time.Time{})
-	return ch, Ident{ID: peerRaw.ID, Name: peerRaw.Name}, nil
+	return ch, Ident{ID: peerRaw.ID, Name: peerRaw.Name, Port: peerRaw.Port}, nil
 }
 
 // Send: 发送一帧（自动密封）。'H' 之外的明文帧不存在——握手后全部密封。
