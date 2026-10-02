@@ -28,6 +28,21 @@ positional argument, but serialtap loops around that, so the natural form
 
 See [configuration.md](configuration.md) for every field.
 
+**`--peer <node>` routes any control command to another PC.** Every ctl-based
+command (`status`, `pause`/`resume`, `release`, `proxy`, `flash`, `reopen`,
+`reset`, `info`/`partitions`/`nvs`/`dump`, `at`) accepts `--peer`: the request
+is forwarded by the **local daemon** over its encrypted mesh channel (local
+`mesh_enabled` + same `mesh_key` on both ends). `<node>` is the peer name,
+node id, a unique prefix, or `host:port`. Semantics worth knowing:
+
+- remote `flash` reads the images **on this machine** and uploads them (an
+  `--args-file` is expanded locally, bins uploaded, chip hint carried over)
+- remote `dump` writes the artifact **here**, at the `--out` path you gave
+- remote `at`/`proxy` return a **local** tunnel endpoint — dial it like a
+  local serial port; the bytes ride the encrypted channel
+- `pause`/`resume` with `--peer` has no file-edit fallback: the daemon must be
+  reachable
+
 **Device patterns (`RE`) are regexes.** Wherever a command takes a device
 pattern, it is a Go regular expression matched against any of the device's
 identities: tty path (`/dev/ttyUSB0`), device name (`ch340`, `board-a`…),
@@ -101,6 +116,21 @@ TTY             NAME            VID:PID   BY-ID                                 
 The BY-PATH column is the stable device key; use it (or the name) in patterns.
 Non-USB serial ports (e.g. mainboard `ttyS*`) are not listed — serialtap only
 manages ports that have a `/dev/serial/by-path` entry.
+
+## `mesh status` / `mesh keygen` / `mesh forward` — multi-PC mesh
+
+```
+serialtap mesh status [--json] [--sock S]   # aggregate: every peer + its boards
+serialtap mesh keygen                       # print a fresh passphrase for mesh_key
+serialtap mesh forward <peer> <RE> [--sock S]  # local TCP endpoint → peer's board
+```
+
+`status` shows one row per peer (name, id, addr, online/offline, latency) with
+its devices indented below, plus the error string for offline peers. `--json`
+emits `{"peers":[...]}` for scripts. `keygen` prints a 32-char passphrase —
+paste it into every machine's config; it never appears in logs or beacons.
+`forward` is the generic form of `at --peer`: it opens a local listener that
+bridges into the peer's proxy endpoint — point any serial tool at it.
 
 ## `status` — daemon state
 

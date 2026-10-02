@@ -31,7 +31,8 @@ scripts — from any language that can write a line to a socket.
 
 ```json
 {
-  "cmd": "status | pause | resume | release | flash | proxy | reopen | reset",
+  "cmd": "status | pause | resume | release | flash | proxy | reopen | reset | mesh",
+  "peer": "bench-a",         // optional: forward over the mesh channel to that node
   "action": "stop",          // proxy only: stop passthrough (default = start)
   "pattern": "regex, matched against tty / device name / by-path key / by-id",
   "for_ms": 300000,
@@ -43,6 +44,7 @@ scripts — from any language that can write a line to a socket.
 | Field | Used by | Meaning |
 |---|---|---|
 | `cmd` | all | The command. Unknown commands get `ok:false` with `unknown cmd`. |
+| `peer` | all | Node name / node id / unique prefix / `host:port` of a mesh peer. Present = the **local daemon** forwards the request over its encrypted mesh channel (it must have `mesh_enabled` and the same `mesh_key`); responses stream back identically, `flash` included. `proxy` with `peer` returns a **local** tunnel endpoint instead of the peer's loopback one. Remote `flash` uploads images readable on this machine first; remote `board dump` with an `OutPath` fetches the artifact back and writes it there. |
 | `pattern` | pause/resume/release/flash/proxy/reopen/reset | Device regex. Omitted on pause/resume = all devices. For the rest it is required and must match at least one live collector. |
 | `action` | proxy | `stop` = stop passthrough for matched devices; default = start. |
 | `all` | flash/reopen/reset | Execute one-by-one even when the pattern matches several devices (default: refuse and list the device names, protecting devices under test). |
@@ -84,6 +86,7 @@ auto-detect (esptool, or `flasher_args.json`'s `extra_esptool_args["--chip"]`).
 | `error` | Human-readable failure reason (daemon messages are in Chinese). |
 | `event` | `flash-log` for each streamed esptool output line (payload in `line`); exactly one final `flash-done` ends the command. |
 | `devices` | `status` only: per-device `{name, tty, key, state}` with state `collecting` / `paused` / `suspended` / `flashing`. |
+| `peers` | `mesh` only: per-peer `{id, name, addr, state(online/offline), static, latency_ms, devices[], err}` — the aggregate view behind `serialtap mesh status` and the panel's mesh section. |
 | `line` | `release` success carries the number of yielded collectors as a string here. |
 
 ## Commands in detail
@@ -91,6 +94,14 @@ auto-detect (esptool, or `flasher_args.json`'s `extra_esptool_args["--chip"]`).
 ### `status`
 
 Returns `devices`. The field is omitted entirely when no device is attached.
+
+### `mesh` (local node only)
+
+Aggregates every known peer: each is dialed in parallel with a 5 s budget and
+its `status` collected; unreachable peers come back with `state:"offline"` and
+`err` set instead of failing the whole query. `peer` on this command is
+ignored (it is about *your* node's view). Requires `mesh_enabled`; otherwise
+`ok:false` with a hint.
 
 ### `pause` / `resume`
 
@@ -172,7 +183,15 @@ friends subcommands):
 python -c "import socket,json; s=socket.socket(socket.AF_UNIX); s.connect(r'$env:LOCALAPPDATA\serialtap\serialtap.sock'); s.sendall(b'{\"cmd\":\"status\"}\n'); print(s.recv(65536).decode())"
 ```
 
-## Remote usage (SSH tunnel)
+## Remote usage
+
+Two options, in order of preference:
+
+1. **Mesh** (`--peer`): several machines, each with boards, any machine
+   manages all of them — see the README section *Multi-PC mesh*. Encrypted,
+   authenticated by a pre-shared key, discovery included.
+2. **SSH socket forward** (below): single remote machine, no mesh config —
+   you were probably already SSH-ing there.
 
 The classic setup: boards hang off a bench machine or Raspberry Pi that
 captures around the clock, and you flash from your laptop. The ctl channel

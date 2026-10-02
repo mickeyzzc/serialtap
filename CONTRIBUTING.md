@@ -44,6 +44,7 @@ CI 门禁(`.github/workflows/ci.yml`):golangci-lint、ubuntu 测试 + **80% 覆�
 | `flash` | esptool 编排 + flasher_args.json 解析 |
 | `ctl` | 控制 socket(JSON 行协议;Windows 走 AF_UNIX) |
 | `web` | 观测与操作面板(SSE 尾随、刷机上传、命令转发) |
+| `mesh` | 选配 LAN mesh:UDP beacon 发现 + PSK 加密信道,peer 复用同一 ctl handler(上传/尾随桥/代理隧道) |
 | `tray` | 托盘/菜单栏(darwin+cgo 内嵌于 run;Windows systray 进程) |
 | `analyze` | 离线分析(签名汇总 + addr2line) |
 | `testutil` | 跨包测试助手,**只被测试导入** |

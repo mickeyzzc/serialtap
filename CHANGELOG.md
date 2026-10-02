@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- feat(mesh): **多 PC mesh 互联——一台 PC 管理全网上每台 PC 接入的板子**。多台机器各配
+  同一个 `mesh_key` 并 `mesh_enabled=true` 后:UDP beacon 互发现(定向广播、HMAC 指纹隔离
+  不同密钥的实例、3 个间隔未见即过期、静态种子 `mesh_peers` 兜底 AP 隔离/跨网段),控制
+  请求经 PSK 加密信道(PBKDF2-SHA256 600k 派生主钥、每连接 salt+HKDF 双向 AES-256-GCM
+  子钥、帧序 AAD 防重放、自报 ts ±10min 容差)转发到对端执行——**远端 peer 是同一 ctl
+  handler 的第三个前端**(与 ctl socket/Web 面板同构,零业务逻辑复制):
+  - 全部控制命令加 `--peer <节点>`(status/pause/resume/release/proxy/reopen/reset/
+    info/partitions/nvs/dump/at);`serialtap mesh status [--json]` 聚合全部 peer 及其
+    设备,`mesh keygen` 生成口令,`mesh forward` 开本地隧道端点
+  - 远程刷机:镜像在发起机读取→1MB 分块加密上传对端 `.flash-upload/mesh-<sid>/`→改写
+    spec→对端走既有 flash 编排;`--args-file` 本地展开逐 bin 上传、chip 提示随迁
+  - 远程 NVS dump:产物落对端 `.mesh-share/` 并凭一次性 token 取回本机(下载只认 peer
+    自建产物——持钥者不能读任意文件);审计纪律:mesh 日志只记命令名/peer/字节数,
+    帧体(可能含 NVS 值)永不落日志
+  - 代理隧道:`at --peer`/`mesh forward` 把对端设备的透传端点桥进加密信道,发起侧得到
+    本地 `127.0.0.1:<随机>` 监听,业务工具当本地串口用
+  - Web 面板 mesh 区:peer 及其板子聚合展示、远程日志 SSE 尾随(`peer/dev` 复合键复用
+    全套查看管线,波形照常可用)、远程暂停/软重连、刷机弹窗带目标节点选择器
+  - 安全边界:默认关闭,未开启不开任何端口(回环-only 姿态不变);CLI 永不持有密钥
+    (`--peer` 只是请求字段,转发在本地守护);密钥永不进日志/beacon/仓库。
+    跨网数据全部 GCM 加密(镜像与 NVS 提取确实会过网——这正是功能本意)
+  - 文档:README(en/zh)功能与配置速览、architecture/en+zh 设计节(为什么加密而非
+    token、帧类型表、上传/下载安全模型)、control-protocol/en+zh `peer` 字段与 `mesh`
+    命令、cli-reference/en+zh、configuration/en+zh 字段表、deployment/en+zh 三平台
+    防火墙与 macOS 本地网络权限;config.example.json mesh 块
+
 - feat(collector): **dtr_hold 配置 —— RP2040 CDC 的 DTR 判听适配** ——
   pico-sdk 的 USB CDC 以 DTR 判断"主机在听"，而 serialtap open 后默认
   释放 DTR/RTS（CH340 的 RTS 接 EN、乐鑫 USB-JTAG 有复位语义），两边

@@ -25,6 +25,7 @@ internal/cli/              子命令分发、flag 解析、命令编排
    │     └── internal/pause/       PAUSED 文件 + 模式状态
    ├── internal/ctl/           控制 socket 服务端/客户端（JSON 行；Windows 走 AF_UNIX）
    ├── internal/web/           观测与操作面板（SSE 实时尾随、刷机上传、命令转发）
+   │     └── internal/mesh/    选配 LAN mesh：UDP beacon 发现 + PSK 加密信道；远端 peer 是同一 handler 的第三个前端（上传/尾随桥接/代理隧道）
    ├── internal/tray/          托盘/菜单栏（darwin+cgo 内嵌于 run；Windows systray 进程；其余平台桩）
    └── internal/analyze/       离线：签名汇总 + addr2line 解码
 
@@ -157,6 +158,49 @@ Linux 的 VID:PID 从 sysfs 读取：从 `/sys/class/tty/<tty>/device` 向上最
 （多镜像+偏移或 flasher_args.json → 落盘 `root/.flash-upload/` → 复用
 daemon 编排 → esptool 输出 SSE 实时回放 + 历史回放）。面板只监听本机
 回环，与 ctl socket 同信任域；**不做任何业务逻辑**。
+
+## 多 PC mesh（选配）
+
+`internal/mesh` 把同一局域网里的 N 个 serialtap 实例变成一个管理面。设计
+规则与 Web 面板同源：**不引入第二套控制逻辑**——远端 peer 只是同一
+handler 闭包的第三个前端，因此每条命令（含流式的 flash-log 逐行回传）
+本地/远端行为完全一致。
+
+- **发现**：每个节点每 `mesh_announce_s` 秒向所有非回环网卡的定向广播
+  地址发一个小 UDP 包（`serialtap-mesh {v,id,name,port,fp}`）。`fp` 是
+  密钥对节点 id 的 HMAC 指纹——同密钥实例互认，不同密钥实例静默互不可
+  见，密钥本身永不上网。连续 3 个间隔未见的 peer 过期摘除。静态种子
+  （`mesh_peers`）补充显式 `host:port`（AP 隔离/跨网段用），首次握手
+  成功后学到节点身份。
+- **信道**：客户端拨 peer 的 TCP 端口，双方按连接派生密钥——明文 hello
+  帧带随机 salt，HKDF(主钥, salt, "c2s"/"s2c") 得到每方向一把
+  AES-256-GCM 钥（防反射）。主钥 = PBKDF2-SHA256(口令, 600k)，进程启动
+  时派生一次。**能解开帧即完成认证**——没有可钓鱼的独立握手 token。每帧
+  以（帧类型 + 方向内递增计数）作 AAD 密封，重放/乱序帧即拒；握手自报带
+  时间戳（±10 分钟容差）与自报监听端口（对端 beacon 还没到也能先登记）。
+- **为什么加密而不是裸 token**：这条信道上会走刷机镜像、esptool 输出和
+  NVS 提取内容（可能含真实凭据）。
+- **帧类型**（长度前缀 + 1 字节类型 + 载荷）：`req/resp`（ctl
+  Request/Response 信封，流式命令以 `end` 帧收尾）、`up/upAck`（1MB 分块
+  上传——ack 携带服务端落盘绝对路径，发起侧据此改写 flash spec 到对端
+  真实存在的路径）、`down/block`（产物下载）、`tail`（日志尾随，与面板
+  同一套最新文件 + 大小差分 + 轮转跟随逻辑）、`dial/ack/wire`（代理裸
+  字节隧道——`dial` 之后连接切换为双向不透明 `wire` 帧）。
+- **远程刷机**：发起机可读的镜像分块上传到 peer 的
+  `<root>/.flash-upload/mesh-<sid>/`，spec 改写为那些路径后在对端走普通
+  flash 编排。`--args-file` 在本地解析、逐 bin 上传、chip 提示随迁。
+- **远程 dump**：发起侧把 `OutPath` 置空，peer 写进自己的
+  `<root>/.mesh-share/` 并随 `end` 帧返回一次性 token；发起侧凭 token
+  下载并写用户指定的本机路径。**token 只指向 peer 自己产出的文件**——
+  mesh 成员不能读任意文件；token 用一次即废。
+- **代理隧道**：`proxy --peer` / `mesh forward` 拨通 peer，对端对匹配设备
+  ProxyStart 并把回环端点桥进加密信道；发起侧得到本地
+  `127.0.0.1:<随机>` 监听。`at --peer` 就是它 + 常规控制台注入，CLI 代码
+  除旗标外零改动。
+- **审计纪律**：mesh 日志只记命令名、peer 身份与字节数——帧体（可能含
+  NVS 值）永不落日志，与 `daemon/board.go` 同规。
+- **默认关闭**：`mesh_enabled=false` 时不开任何端口，回环-only 姿态不变。
+  CLI 永不持有密钥——`--peer` 只是请求上的一个字段，转发由本地守护完成。
 
 ## 控制 socket
 

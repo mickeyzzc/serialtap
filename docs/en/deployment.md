@@ -152,6 +152,23 @@ group to the service user), but the user service is the tested setup.
   lines only), but rotates under the same cap so a reset-loop board cannot
   grow it unbounded.
 
+## Mesh networking (multi-PC)
+
+When `mesh_enabled` is set the daemon opens **TCP and UDP on `mesh_port`**
+(default 8802) on all interfaces. Firewall notes per platform:
+
+- **Linux**: `ufw allow 8802` (or `firewall-cmd --add-port=8802/tcp
+  --add-port=8802/udp --permanent`). Running as a **user** systemd service
+  needs no extra privileges for this.
+- **Windows**: the first mesh packet triggers a Windows Defender prompt —
+  allow it for private networks (or add an inbound rule for the port,
+  TCP+UDP).
+- **macOS 15+**: the OS asks once for **Local Network** permission — grant it,
+  otherwise beacons are silently blocked in both directions.
+- Router **AP/client isolation** blocks all station-to-station traffic and
+  therefore mesh entirely; if the hosts can still route to each other,
+  configure `mesh_peers` static seeds on both sides.
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |

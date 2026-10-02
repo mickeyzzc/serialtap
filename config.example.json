@@ -17,5 +17,12 @@
   "dtr_hold": ["^rp2040-"],
   "elf_map": {
     "board-a": "/path/to/your/firmware/build/app.elf"
-  }
+  },
+  // —— mesh：多 PC 互联（默认关）。每台机器配同一个 mesh_key ——
+  "mesh_enabled": false,
+  "mesh_key": "serialtap mesh keygen 生成的口令，所有互管 PC 一致",
+  "mesh_name": "bench1",
+  "mesh_port": 8802,
+  "mesh_announce_s": 5,
+  "mesh_peers": []
 }
