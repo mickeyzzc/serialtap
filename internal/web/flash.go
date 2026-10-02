@@ -61,16 +61,13 @@ func (j *flashJob) snapshot() (events []flashEvent, active bool) {
 }
 
 // handleFlash: POST /api/flash（multipart）。
-// 字段：pattern（必填）；all（可选 "true"）；args_file（文件，与其余互斥）；
-// bins（多文件，任意次序）+ offsets（JSON 字符串数组，与 bins 一一对应）。
+// 字段：pattern（必填）；peer（可选——mesh 远端节点，镜像先落本机再经
+// 加密信道上传到 peer 刷写）；all（可选 "true"）；args_file（文件，与其余
+// 互斥）；bins（多文件，任意次序）+ offsets（JSON 字符串数组，与 bins 一一对应）。
 // 镜像落在守护进程侧（面板与守护同机），路径进事件流可审计。
 func (s *Server) handleFlash(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
-		return
-	}
-	if s.flasher == nil {
-		http.Error(w, "flasher unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 128<<20)
@@ -81,6 +78,15 @@ func (s *Server) handleFlash(w http.ResponseWriter, r *http.Request) {
 	pattern := strings.TrimSpace(r.FormValue("pattern"))
 	if pattern == "" {
 		http.Error(w, "pattern 必填", http.StatusBadRequest)
+		return
+	}
+	peer := strings.TrimSpace(r.FormValue("peer"))
+	if peer == "" && s.flasher == nil {
+		http.Error(w, "flasher unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if peer != "" && s.meshFlasher == nil {
+		http.Error(w, "mesh 未启用，远程刷机不可用", http.StatusServiceUnavailable)
 		return
 	}
 	all := r.FormValue("all") == "true"
@@ -136,13 +142,20 @@ func (s *Server) handleFlash(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 翻新任务槽并异步执行（daemon opMu 兜底并发互斥）
+	// 翻新任务槽并异步执行（daemon opMu 兜底并发互斥）；peer 非空 = 远程：
+	// 镜像已落本机 .flash-upload，由 meshFlasher 加密上传到 peer 后在对端执行
+	run := s.flasher
+	if peer != "" {
+		run = func(pattern string, all bool, spec flash.Spec, out func(string)) error {
+			return s.meshFlasher(peer, pattern, all, spec, out)
+		}
+	}
 	s.job.mu.Lock()
 	s.job.events = nil
 	s.job.active = true
 	s.job.mu.Unlock()
 	go func() {
-		err := s.flasher(pattern, all, spec, func(line string) {
+		err := run(pattern, all, spec, func(line string) {
 			s.job.publish(flashEvent{Line: line})
 		})
 		ev := flashEvent{Done: true}

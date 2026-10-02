@@ -400,8 +400,31 @@ func cmdRun(args []string) error {
 		}
 		return ctl.Response{}, fmt.Errorf("面板不支持该命令: %s", req.Cmd)
 	}
-	webSrv := web.Start(cfg.WebAddr, cfg.Root, d.Status, webCmd, stdoutLog,
-		web.WithFlasher(d.Flash))
+	// mesh 启用时另注聚合查询/远程尾随/远程刷机（peer 请求经 handler 的
+	// peer 分支同路转发；flash-done !ok 要转成错误让面板红字显示）
+	webOpts := []web.Option{web.WithFlasher(d.Flash)}
+	if node != nil {
+		webOpts = append(webOpts,
+			web.WithMesh(node),
+			web.WithMeshFlasher(func(peer, pattern string, all bool, spec flash.Spec, out func(string)) error {
+				var flashErr error
+				ferr := node.Forward(peer, ctl.Request{Cmd: "flash", Pattern: pattern, All: all, Spec: spec}, func(r ctl.Response) {
+					switch r.Event {
+					case "flash-log":
+						out(r.Line)
+					case "flash-done":
+						if !r.OK {
+							flashErr = fmt.Errorf("%s", r.Error)
+						}
+					}
+				})
+				if ferr != nil {
+					return ferr
+				}
+				return flashErr
+			}))
+	}
+	webSrv := web.Start(cfg.WebAddr, cfg.Root, d.Status, webCmd, stdoutLog, webOpts...)
 	defer webSrv.Close()
 
 	// pprof 诊断口（可选）：SERIALTAP_PPROF=127.0.0.1:8802 时另开一个只听
