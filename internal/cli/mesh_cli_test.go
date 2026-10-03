@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mickeyzzc/serialtap/internal/ctl"
 	"github.com/mickeyzzc/serialtap/internal/mesh"
@@ -206,6 +207,7 @@ func TestMeshEnabledDaemonE2E(t *testing.T) {
 
 	nodeA, err := mesh.NewNode(mesh.Options{
 		Name: "bench-a", Key: "e2e-mesh-key", Root: rootA, NoUDP: true,
+		PairRetryWait: 200 * time.Millisecond, LinkDialBackoff: 100 * time.Millisecond,
 		Forward: func(req ctl.Request, respond func(ctl.Response)) {
 			respond(ctl.Response{OK: true, Devices: []ctl.DevState{
 				{Name: "remote-dev", Tty: "/dev/ttyUSB0", Key: "usb-r", State: "collecting"},
@@ -220,7 +222,9 @@ func TestMeshEnabledDaemonE2E(t *testing.T) {
 
 	nodeB, err := mesh.NewNode(mesh.Options{
 		Name: "bench-b", Key: "e2e-mesh-key", Root: rootB, NoUDP: true,
-		StaticPeers: []string{fmt.Sprintf("127.0.0.1:%d", portA)},
+		StaticPeers:     []string{fmt.Sprintf("127.0.0.1:%d", portA)},
+		PairRetryWait:   200 * time.Millisecond,
+		LinkDialBackoff: 100 * time.Millisecond,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -255,12 +259,20 @@ func TestMeshEnabledDaemonE2E(t *testing.T) {
 		t.Fatalf("未授权首连必须被拒并带指引: err=%v resp=%q", err, firstErr)
 	}
 
-	// A 批准 B（= serialtap mesh approve）→ 操作放行
+	// A 批准 B（= serialtap mesh approve）→ 链接重敲转正（200ms 周期）→ 操作放行。
+	// 转正前 Call 会快速失败，按行为轮询直到成功。
 	if _, err := nodeA.ApprovePeer(nodeB.Self().ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := nodeB.Call(fmt.Sprintf("127.0.0.1:%d", portA), ctl.Request{Cmd: "status"}, nil); err != nil {
-		t.Fatalf("批准后引导失败: %v", err)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := nodeB.Call(fmt.Sprintf("127.0.0.1:%d", portA), ctl.Request{Cmd: "status"}, nil); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("批准后操作未在 5s 内放行")
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 
 	// status --peer：远端设备透传回 CLI
