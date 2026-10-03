@@ -688,7 +688,7 @@ func handlePeerCmd(node *mesh.Node, req ctl.Request, respond func(ctl.Response))
 // cmdMesh: mesh 子命令族（status 聚合视图 / keygen 密钥生成 / forward 隧道）。
 func cmdMesh(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("用法: mesh <status|keygen|forward> ...")
+		return fmt.Errorf("用法: mesh <status|keygen|forward>")
 	}
 	switch args[0] {
 	case "keygen":

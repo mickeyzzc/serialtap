@@ -345,6 +345,7 @@ func (n *Node) handleReq(ch *Channel, payload []byte) error {
 	n.logf("[mesh] 转发本机执行: cmd=%s peer=%s", rf.Req.Cmd, ch.PeerAddr())
 
 	req := rf.Req
+	req.Peer = "" // 链路终点：剥掉 peer 字段再进本机 handler，防对端二次转发/成环
 	var file *fileRef
 	cleanup := func() {}
 	if req.Cmd == "board" && req.Board != nil && req.Board.Action == "dump" && req.Board.OutPath == "" {

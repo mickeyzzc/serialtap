@@ -263,7 +263,7 @@ func TestRemoteBoardDumpFetchesArtifact(t *testing.T) {
 		t.Fatalf("remoteBoardDump 失败: %v", err)
 	}
 	got := testutil.ReadFile(t, localOut)
-	if string(got) != "NVS-REGION-DATA" {
+	if got != "NVS-REGION-DATA" {
 		t.Fatalf("取回产物内容错误: %q", got)
 	}
 	// 一次性 token：再下载同 token 必须拿不到
@@ -389,5 +389,22 @@ func TestMeshStatusJSONShape(t *testing.T) {
 		if !strings.Contains(string(b), want) {
 			t.Fatalf("JSON 缺字段 %s: %s", want, b)
 		}
+	}
+}
+
+// TestPeerFieldStrippedAtHop: 请求到达对端 handler 时 peer 字段必须已剥离
+// ——否则对端会把它当二级转发请求再路由（成环/错配）。
+func TestPeerFieldStrippedAtHop(t *testing.T) {
+	var gotPeer string
+	p := newNodePair(t, func(req ctl.Request, respond func(ctl.Response)) {
+		gotPeer = req.Peer
+		respond(ctl.Response{OK: true})
+	}, nil)
+	err := p.b.Forward("bench-a", ctl.Request{Cmd: "pause", Peer: "bench-a"}, func(ctl.Response) {})
+	if err != nil {
+		t.Fatalf("Forward 失败: %v", err)
+	}
+	if gotPeer != "" {
+		t.Fatalf("对端 handler 收到的请求仍带 peer 字段: %q", gotPeer)
 	}
 }
