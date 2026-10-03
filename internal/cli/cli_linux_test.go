@@ -18,6 +18,9 @@ import (
 // run 优雅退出：SIGTERM → 停采集器返回（--exclude .* 避免碰真实设备）。
 func TestRunGracefulShutdownOnSIGTERM(t *testing.T) {
 	root := t.TempDir()
+	// 隔离默认配置：开发机上 ~/.config/serialtap/config.json 可能开着
+	// mesh_enabled，测试守护会去抢生产实例的 8802 端口（bind 冲突误判）
+	t.Setenv("HOME", root)
 	go func() {
 		time.Sleep(500 * time.Millisecond)
 		syscall.Kill(syscall.Getpid(), syscall.SIGTERM)

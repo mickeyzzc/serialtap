@@ -43,6 +43,7 @@ serialtap 用一个 JSON 文件配置。仓库根目录带了一份带注释的�
 | `mesh_port` | int | `8802` | mesh 端口。TCP 控制信道与 UDP beacon 同号共用；防火墙对**两个协议**都要放行。 |
 | `mesh_announce_s` | int | `5` | beacon 广播间隔秒。连续 3 个间隔未见的 peer 从注册表摘除（静态种子不过期）。 |
 | `mesh_peers` | []string | `[]` | 静态种子 peer（`"host:port"`）——广播发现被 AP 隔离/跨网段掐断时的兜底；广播发现仍并行工作。首次握手成功后学到节点身份。 |
+| `mesh_auto_approve` | bool | `false` | 配对自动批准。`false`（默认）：同密钥节点来话即敲门——批准（`serialtap mesh approve <id>` 或面板 ✓）前操作一概拒绝；授权表持久化于 `<root>/.mesh-peers.json`。`true`：持钥即信任，不再提示（配对功能之前的行为）。 |
 | `dtr_hold` | [string] | `[]` | open 后**保持** DTR+RTS 断言的设备正则（匹配 tty / key / by-id / 名字任一）。默认全部释放——CH340 的 RTS 接 EN、ESP 原生 USB-JTAG 的 DTR/RTS 有复位语义；但 pico-sdk（RP2040）的 USB CDC 以 DTR 判断"主机在听"，释放会导致固件静默丢弃全部输出（2026-09-27 rp2040-zero 实测）。坏正则跳过并告警。 |
 
 ## 设备命名

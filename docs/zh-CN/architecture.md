@@ -201,6 +201,14 @@ handler 闭包的第三个前端，因此每条命令（含流式的 flash-log �
   除旗标外零改动。
 - **审计纪律**：mesh 日志只记命令名、peer 身份与字节数——帧体（可能含
   NVS 值）永不落日志，与 `daemon/board.go` 同规。
+- **自动链接与配对（第二道门）**：节点对发现的每个 peer 自动拨链并保活
+  （配对帧 + ping 心跳 + 读侧活性探针 + 指数重连退避）。任何持钥来话都是
+  一次*敲门*：peer 进待授权名单，操作帧一律拒绝并附上要跑的
+  `mesh approve` 命令，直到 owner 批准（`mesh pair` / `mesh approve` /
+  面板 ✓✗）。授权表在 `<root>/.mesh-peers.json`（approved/pending/revoked），
+  重启不丢；撤销立即掐断该 peer 的活动连接、即时生效。
+  `mesh_auto_approve: true` 收回"持钥即信任"模型。`mesh status` 的
+  auth/peer_authed 字段展示双向授权态（互相批准显示"双向✓"）。
 - **默认关闭**：`mesh_enabled=false` 时不开任何端口，回环-only 姿态不变。
   CLI 永不持有密钥——`--peer` 只是请求上的一个字段，转发由本地守护完成。
 

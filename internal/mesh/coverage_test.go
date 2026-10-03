@@ -23,7 +23,7 @@ func TestNodeUDPDiscoveryPair(t *testing.T) {
 	b := &Node{}
 	var a *Node
 	a, err := NewNode(Options{
-		Name: "bench-a", Key: "k", Root: rootA, Port: 0,
+		Name: "bench-a", Key: "k", Root: rootA, Port: 0, AutoApprove: true,
 		Forward: func(req ctl.Request, respond func(ctl.Response)) { respond(ctl.Response{OK: true}) },
 		// A 的广播目标 = B 的 UDP 端口（生产是定向广播，这里注入单播）
 		BeaconTargets: func(int) []string { return []string{fmt.Sprintf("127.0.0.1:%d", bUDP.Load())} },
@@ -170,7 +170,7 @@ func TestNodeIDPersistenceAndReject(t *testing.T) {
 // TestHandleDialRejects: 隧道请求的错误分支（坏 JSON / 空 pattern / 无代理能力）。
 func TestHandleDialRejects(t *testing.T) {
 	// 节点无 Proxy 能力 → 拒绝
-	n, err := NewNode(Options{Name: "n", Key: "k", Root: t.TempDir(), NoUDP: true,
+	n, err := NewNode(Options{Name: "n", Key: "k", Root: t.TempDir(), NoUDP: true, AutoApprove: true,
 		Forward: func(ctl.Request, func(ctl.Response)) {}})
 	if err != nil {
 		t.Fatal(err)

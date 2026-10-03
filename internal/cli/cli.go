@@ -360,6 +360,40 @@ func cmdRun(args []string) error {
 				return
 			}
 			respond(ctl.Response{OK: true, Peers: node.AggregateStatus(5 * time.Second)})
+		case "mesh-pair":
+			// 配对总览：待授权（敲门未批）/已授权/已拒绝
+			if node == nil {
+				respond(ctl.Response{OK: false, Error: "mesh 未启用"})
+				return
+			}
+			approved, pending, revoked := node.PairInfo()
+			peers := []ctl.PeerStatus{}
+			conv := func(list []mesh.PairEntry, state string) {
+				for _, st := range list {
+					peers = append(peers, ctl.PeerStatus{ID: st.ID, Name: st.Name, Addr: st.Addr, State: state, At: st.At.UnixMilli()})
+				}
+			}
+			conv(pending, "pending")
+			conv(approved, "approved")
+			conv(revoked, "revoked")
+			respond(ctl.Response{OK: true, Peers: peers})
+		case "mesh-approve", "mesh-revoke":
+			if node == nil {
+				respond(ctl.Response{OK: false, Error: "mesh 未启用"})
+				return
+			}
+			var id string
+			var err error
+			if req.Cmd == "mesh-approve" {
+				id, err = node.ApprovePeer(req.Pattern)
+			} else {
+				id, err = node.RevokePeer(req.Pattern)
+			}
+			if err != nil {
+				respond(ctl.Response{OK: false, Error: err.Error()})
+				return
+			}
+			respond(ctl.Response{OK: true, Line: id})
 		default:
 			respond(ctl.Response{OK: false, Error: "unknown cmd: " + req.Cmd})
 		}
@@ -376,6 +410,7 @@ func cmdRun(args []string) error {
 			Key:         cfg.MeshKey,
 			AnnounceS:   cfg.MeshAnnounceS,
 			StaticPeers: cfg.MeshPeers,
+			AutoApprove: cfg.MeshAutoApprove,
 			Root:        cfg.Root,
 			Forward:     handler,
 			Proxy:       d, // daemon 的 ProxyStart/Stop（隧道桥）
@@ -393,7 +428,8 @@ func cmdRun(args []string) error {
 	// 直调 daemon.Flash（同一次编排，进度 SSE 流回浏览器）。
 	webCmd := func(req ctl.Request) (ctl.Response, error) {
 		switch req.Cmd {
-		case "status", "pause", "resume", "proxy", "release", "reopen", "reset":
+		case "status", "pause", "resume", "proxy", "release", "reopen", "reset",
+			"mesh-pair", "mesh-approve", "mesh-revoke":
 			var resp ctl.Response
 			handler(req, func(r ctl.Response) { resp = r })
 			return resp, nil
@@ -697,8 +733,14 @@ func cmdMesh(args []string) error {
 		return cmdMeshStatus(args[1:])
 	case "forward":
 		return cmdMeshForward(args[1:])
+	case "pair":
+		return cmdMeshPair(args[1:])
+	case "approve":
+		return cmdMeshApprove(args[1:], true)
+	case "revoke":
+		return cmdMeshApprove(args[1:], false)
 	}
-	return fmt.Errorf("未知 mesh 子命令: %s（status | keygen | forward）", args[0])
+	return fmt.Errorf("未知 mesh 子命令: %s（status | keygen | forward | pair | approve | revoke）", args[0])
 }
 
 // meshKeygen: 生成 32 字符随机口令（base64url）。只打印不落盘——各机手工
@@ -742,9 +784,20 @@ func cmdMeshStatus(args []string) error {
 		fmt.Println("（mesh 已启用但暂无 peer——对方 PC 也跑着同密钥的 serialtap 吗？）")
 		return nil
 	}
-	fmt.Printf("%-18s %-8s %-24s %-8s %s\n", "NODE", "ID", "ADDR", "STATE", "DELAY")
+	fmt.Printf("%-18s %-8s %-24s %-8s %-7s %s\n", "NODE", "ID", "ADDR", "STATE", "AUTH", "DELAY")
 	for _, p := range peers {
-		fmt.Printf("%-18s %-8s %-24s %-8s %s\n", p.Name, p.ID, p.Addr, p.State,
+		auth := "-"
+		if p.ID != "" {
+			switch {
+			case p.Auth == "approved" && p.PeerAuthed:
+				auth = "双向✓"
+			case p.Auth == "approved":
+				auth = "已授" // 本机已批对端，对端尚未批本机
+			case p.PeerAuthed:
+				auth = "待批" // 对端已批本机，本机未批对端
+			}
+		}
+		fmt.Printf("%-18s %-8s %-24s %-8s %-7s %s\n", p.Name, p.ID, p.Addr, p.State, auth,
 			map[bool]string{true: fmt.Sprintf("%dms", p.LatencyMs), false: "-"}[p.LatencyMs > 0])
 		for _, d := range p.Devices {
 			fmt.Printf("  └─ %-16s %-14s %s\n", d.Name, d.Tty, d.State)
@@ -1166,6 +1219,99 @@ func cmdBoard(args []string, action string) error {
 		})
 	if boardErr != nil {
 		return boardErr
+	}
+	return err
+}
+
+// cmdMeshPair: 配对总览——待授权（有节点敲门未批）/已授权/已拒绝。
+func cmdMeshPair(args []string) error {
+	fs := flag.NewFlagSet("mesh pair", flag.ExitOnError)
+	sock := fs.String("sock", "", "控制 socket 路径")
+	parseFlags(fs, args)
+	var peers []ctl.PeerStatus
+	var respErr string
+	err := ctlSend(*sock, ctl.Request{Cmd: "mesh-pair"}, func(r ctl.Response) bool {
+		if !r.OK {
+			respErr = r.Error
+			return true
+		}
+		peers = r.Peers
+		return true
+	})
+	if respErr != "" {
+		return fmt.Errorf("%s", respErr)
+	}
+	if err != nil {
+		return err
+	}
+	var pending, approved, revoked []ctl.PeerStatus
+	for _, p := range peers {
+		switch p.State {
+		case "pending":
+			pending = append(pending, p)
+		case "approved":
+			approved = append(approved, p)
+		case "revoked":
+			revoked = append(revoked, p)
+		}
+	}
+	if len(pending) == 0 {
+		fmt.Println("（无待授权请求）")
+	} else {
+		fmt.Println("待授权（被链接请求，approve 后放行）:")
+		for _, p := range pending {
+			fmt.Printf("  %-16s %-8s @%-24s serialtap mesh approve %s\n", or(p.Name, "?"), p.ID, p.Addr, p.ID)
+		}
+	}
+	if len(approved) > 0 {
+		fmt.Println("已授权:")
+		for _, p := range approved {
+			fmt.Printf("  %-16s %-8s @%-24s（revoke 撤销）\n", or(p.Name, "?"), p.ID, p.Addr)
+		}
+	}
+	if len(revoked) > 0 {
+		fmt.Println("已拒绝:")
+		for _, p := range revoked {
+			fmt.Printf("  %-16s %-8s @%s\n", or(p.Name, "?"), p.ID, p.Addr)
+		}
+	}
+	return nil
+}
+
+func or(s, fallback string) string {
+	if s == "" {
+		return fallback
+	}
+	return s
+}
+
+// cmdMeshApprove: 批准/撤销一个配对（选择器 = 节点 id 前缀或名字）。
+func cmdMeshApprove(args []string, approve bool) error {
+	fs := flag.NewFlagSet("mesh approve/revoke", flag.ExitOnError)
+	sock := fs.String("sock", "", "控制 socket 路径")
+	pos := parseFlags(fs, args)
+	if len(pos) != 1 {
+		return fmt.Errorf("用法: mesh %s <节点id或名字>（mesh pair 查看）", map[bool]string{true: "approve", false: "revoke"}[approve])
+	}
+	cmd := "mesh-revoke"
+	if approve {
+		cmd = "mesh-approve"
+	}
+	var respErr string
+	err := ctlSend(*sock, ctl.Request{Cmd: cmd, Pattern: pos[0]}, func(r ctl.Response) bool {
+		if !r.OK {
+			respErr = r.Error
+			return true
+		}
+		if approve {
+			fmt.Printf("已授权 peer %s —— 对端链接将在下一个敲门周期（≤30s）转正\n", r.Line)
+		} else {
+			fmt.Printf("已撤销 peer %s —— 其后续操作帧将被拒绝\n", r.Line)
+		}
+		return true
+	})
+	if respErr != "" {
+		return fmt.Errorf("%s", respErr)
 	}
 	return err
 }

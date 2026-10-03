@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mickeyzzc/serialtap/internal/ctl"
 	"github.com/mickeyzzc/serialtap/internal/mesh"
@@ -61,6 +62,17 @@ func startMeshFakeServer(t *testing.T) (*meshFakeServer, string) {
 			}})
 		case "proxy":
 			respond(ctl.Response{OK: true, Endpoint: "127.0.0.1:45678", Device: "echo-dev", DeviceKey: "usb-k"})
+		case "mesh-pair":
+			respond(ctl.Response{OK: true, Peers: []ctl.PeerStatus{
+				{ID: "1a2b", Name: "bench-a", Addr: "192.168.63.10:8802", State: "pending"},
+				{ID: "9f8e", Name: "bench-b", Addr: "192.168.63.11:8802", State: "approved"},
+			}})
+		case "mesh-approve", "mesh-revoke":
+			if req.Pattern == "" {
+				respond(ctl.Response{OK: false, Error: "缺少 peer 选择器"})
+				return
+			}
+			respond(ctl.Response{OK: true, Line: req.Pattern})
 		default:
 			respond(ctl.Response{OK: true})
 		}
@@ -149,6 +161,33 @@ func TestPeerFlagPlumbedToRequest(t *testing.T) {
 	}
 }
 
+func TestMeshPairTableAndApprove(t *testing.T) {
+	_, sock := startMeshFakeServer(t)
+	out := captureStdout(t, func() {
+		if code := Run([]string{"mesh", "pair", "--sock", sock}); code != 0 {
+			t.Errorf("mesh pair 退出码 %d", code)
+		}
+	})
+	for _, want := range []string{"待授权", "bench-a", "1a2b", "mesh approve 1a2b", "已授权", "bench-b"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("mesh pair 输出缺 %q:\n%s", want, out)
+		}
+	}
+	// approve：请求带选择器，成功回显
+	out = captureStdout(t, func() {
+		if code := Run([]string{"mesh", "approve", "1a2b", "--sock", sock}); code != 0 {
+			t.Errorf("mesh approve 退出码 %d", code)
+		}
+	})
+	if !strings.Contains(out, "已授权 peer 1a2b") {
+		t.Errorf("approve 输出错误:\n%s", out)
+	}
+	// revoke 缺参 → 退出 1
+	if code := Run([]string{"mesh", "revoke", "--sock", sock}); code != 1 {
+		t.Errorf("revoke 缺参应退出 1: %d", code)
+	}
+}
+
 func TestMeshSubcommandErrors(t *testing.T) {
 	if code := Run([]string{"mesh", "bogus"}); code != 1 {
 		t.Fatalf("未知子命令应退出 1: %d", code)
@@ -168,6 +207,7 @@ func TestMeshEnabledDaemonE2E(t *testing.T) {
 
 	nodeA, err := mesh.NewNode(mesh.Options{
 		Name: "bench-a", Key: "e2e-mesh-key", Root: rootA, NoUDP: true,
+		PairRetryWait: 200 * time.Millisecond, LinkDialBackoff: 100 * time.Millisecond,
 		Forward: func(req ctl.Request, respond func(ctl.Response)) {
 			respond(ctl.Response{OK: true, Devices: []ctl.DevState{
 				{Name: "remote-dev", Tty: "/dev/ttyUSB0", Key: "usb-r", State: "collecting"},
@@ -182,7 +222,9 @@ func TestMeshEnabledDaemonE2E(t *testing.T) {
 
 	nodeB, err := mesh.NewNode(mesh.Options{
 		Name: "bench-b", Key: "e2e-mesh-key", Root: rootB, NoUDP: true,
-		StaticPeers: []string{fmt.Sprintf("127.0.0.1:%d", portA)},
+		StaticPeers:     []string{fmt.Sprintf("127.0.0.1:%d", portA)},
+		PairRetryWait:   200 * time.Millisecond,
+		LinkDialBackoff: 100 * time.Millisecond,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -204,9 +246,33 @@ func TestMeshEnabledDaemonE2E(t *testing.T) {
 		respond(ctl.Response{OK: true, Devices: []ctl.DevState{{Name: "local-dev", State: "collecting"}}})
 	})
 
-	// 引导静态种子身份（生产里 mesh status 聚合做同样的事）
-	if _, err := nodeB.Call(fmt.Sprintf("127.0.0.1:%d", portA), ctl.Request{Cmd: "status"}, nil); err != nil {
-		t.Fatalf("静态种子引导失败: %v", err)
+	// 引导静态种子身份（生产里 mesh status 聚合做同样的事）——首连即敲门，
+	// A 未授权 B：要么快速失败（链接循环已知未授权）要么闸门拒——都带 approve 指引
+	firstErr := ""
+	_, err = nodeB.Call(fmt.Sprintf("127.0.0.1:%d", portA), ctl.Request{Cmd: "status"}, func(r ctl.Response) bool {
+		if !r.OK {
+			firstErr = r.Error
+		}
+		return true
+	})
+	if !strings.Contains(fmt.Sprint(err)+firstErr, "mesh approve") {
+		t.Fatalf("未授权首连必须被拒并带指引: err=%v resp=%q", err, firstErr)
+	}
+
+	// A 批准 B（= serialtap mesh approve）→ 链接重敲转正（200ms 周期）→ 操作放行。
+	// 转正前 Call 会快速失败，按行为轮询直到成功。
+	if _, err := nodeA.ApprovePeer(nodeB.Self().ID); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := nodeB.Call(fmt.Sprintf("127.0.0.1:%d", portA), ctl.Request{Cmd: "status"}, nil); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("批准后操作未在 5s 内放行")
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 
 	// status --peer：远端设备透传回 CLI

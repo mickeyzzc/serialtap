@@ -87,6 +87,13 @@
 
 ## 命令详解
 
+### `mesh-pair` / `mesh-approve` / `mesh-revoke`（仅本机节点）
+
+`mesh-pair` 返回 `peers`，`state` = `pending`（敲门待授权）/ `approved` /
+`revoked`，每项带 `{id, name, addr, at}`。`mesh-approve`/`mesh-revoke` 的
+选择器放 `pattern`（节点 id 前缀或名字），解析出的 id 回在 `line`。
+面板配对按钮发的就是这几条。
+
 ### `mesh`（仅本机节点）
 
 聚合全部已知 peer：并行拨号、每个 5 秒预算、收集其 `status`；不可达的

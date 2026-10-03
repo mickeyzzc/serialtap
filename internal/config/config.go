@@ -35,12 +35,13 @@ type Config struct {
 	WebAddr         string            `json:"web_addr"`          // Web 观测面板监听地址（空 = 默认 127.0.0.1:8801；"off" = 关闭）
 
 	// —— mesh：多台 PC 上的 serialtap 在局域网内互发现、互管理（默认关）——
-	MeshEnabled   bool     `json:"mesh_enabled"`    // 总开关。开启后监听 mesh_port（TCP 控制信道 + UDP beacon 同号）
-	MeshName      string   `json:"mesh_name"`       // 节点名（默认 hostname；node id 另有随机身份兜底防撞名）
-	MeshPort      int      `json:"mesh_port"`       // mesh 端口（TCP 加密信道 + UDP 广播 beacon 同号，默认 8802）
-	MeshKey       string   `json:"mesh_key"`        // 预共享密钥口令。所有互管 PC 配同一值；beacon 只带 HMAC 指纹不带密钥
-	MeshAnnounceS int      `json:"mesh_announce_s"` // beacon 广播间隔秒（默认 5；peer 超 3 个间隔未见即摘除）
-	MeshPeers     []string `json:"mesh_peers"`      // 静态种子 peer（"host:port"，广播被 AP 隔离/跨网段时的兜底）
+	MeshEnabled     bool     `json:"mesh_enabled"`      // 总开关。开启后监听 mesh_port（TCP 控制信道 + UDP beacon 同号）
+	MeshName        string   `json:"mesh_name"`         // 节点名（默认 hostname；node id 另有随机身份兜底防撞名）
+	MeshPort        int      `json:"mesh_port"`         // mesh 端口（TCP 加密信道 + UDP 广播 beacon 同号，默认 8802）
+	MeshKey         string   `json:"mesh_key"`          // 预共享密钥口令。所有互管 PC 配同一值；beacon 只带 HMAC 指纹不带密钥
+	MeshAnnounceS   int      `json:"mesh_announce_s"`   // beacon 广播间隔秒（默认 5；peer 超 3 个间隔未见即摘除）
+	MeshPeers       []string `json:"mesh_peers"`        // 静态种子 peer（"host:port"，广播被 AP 隔离/跨网段时的兜底）
+	MeshAutoApprove bool     `json:"mesh_auto_approve"` // 配对自动批准（false=同密钥节点敲门后须 mesh approve 才放行；true=回到 PSK-only 行为）
 }
 
 func DefaultConfig() Config {

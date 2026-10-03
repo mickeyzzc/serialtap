@@ -149,10 +149,19 @@ serialtap mesh forward bench2 '^sense$'          # 本地端点 → 远端串口
 Web 面板会多出一个 **mesh** 区：每个 peer 及其板子、远程日志尾随、远程
 暂停/软重连、带目标节点选择器的远程刷机。
 
+**自动链接与配对。** 发现不是被动等待：每个节点对学到的 peer（beacon 或
+静态种子）自动拨链并保活。被链接的节点来话即"敲门"：同密钥能过加密门，
+但操作帧在**批准配对**前一概拒绝——`serialtap mesh pair` 看待授权名单，
+`serialtap mesh approve <id>` 放行（面板 mesh 区有 ✓/✗ 按钮）。授权表
+持久化在 `<root>/.mesh-peers.json`；`mesh revoke` 撤销已批 peer 并立即掐断
+其活动连接。`"mesh_auto_approve": true` 可回到"持钥即信任"（不再提示）。
+
 安全模型速记（细节见 `docs/zh-CN/architecture.md`）：
 
 - 跨网数据全部走 **AES-256-GCM** 加密信道（口令经 PBKDF2 600k 派生）；
   beacon 只带 HMAC 指纹——不同密钥的实例互相不可见，密钥本身永不出机
+- 密钥是**第一道门**；**配对批准是第二道**——同密钥节点在显式批准前
+  依然不能操作（`mesh_auto_approve: true` 关掉第二道门=持钥即信任）
 - 刷机镜像与 NVS dump **确实会过网**（这正是功能本意）——信道加密，但
   LAN 上应当只有 mesh 成员；mesh 默认关闭，未开启前网络面只有回环
 - 从 peer 下载仅限该 peer 自己产出的工件（dump 结果）——mesh peer 不能
@@ -223,6 +232,8 @@ Windows 上是 `serialtap.exe list`（设备形如 `COM3`）、单口采集 `ser
 | `decode-backtrace LOG` | `Backtrace:` 地址帧 addr2line 解码 |
 | `mesh status [--json]` | **mesh 聚合视图**：LAN 上全部 peer 节点（广播发现 + 静态种子）的状态/延迟/板子 |
 | `mesh keygen` | 生成 mesh 预共享密钥口令（粘进每台机器的 config；密钥永不进日志/beacon） |
+| `mesh pair` | **配对总览**：待授权敲门（同密钥节点请求链接）/已授权/已拒绝 |
+| `mesh approve <id>` / `mesh revoke <id>` | 批准待授权配对（≤一个敲门周期生效）/ 撤销已批 peer——立即掐断其活动连接 |
 | `mesh forward <peer> <RE>` | 为 peer 上的板子开**本地隧道端点**——业务工具当本地串口用 |
 | `--peer <节点>` | 所有控制命令（`status`/`flash`/`pause`/`resume`/`release`/`proxy`/`reopen`/`reset`/`info`/`partitions`/`nvs`/`dump`/`at`）加它即在该 peer 上执行——镜像从本机经加密信道上传，dump 产物取回本机 |
 | `version` | 打印版本号 |
@@ -334,6 +345,9 @@ macOS / Windows 无需权限配置——launchd agent 与 Windows 安装包/任�
 
 ## 故障排查
 
+- **`--peer` 报"尚未授权/未授权"**：对端还没批准你的节点——到**那台机器**
+  上跑 `serialtap mesh pair` + `mesh approve <id>`，或它配
+  `mesh_auto_approve: true`。批准在一个敲门周期（≤30s）内生效；撤销即时。
 - **mesh peer 互相发现不了**：两边都跑 `serialtap mesh status` 依次查：
   (1) `mesh_key` 一致（指纹不同 → beacon 被静默忽略）；(2) 防火墙对
   **TCP 和 UDP** 都放行该端口（`ufw allow 8802`）；(3) 路由器 **AP/客户端
