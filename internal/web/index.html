@@ -17,10 +17,26 @@ header h1{font-size:17px;margin:0}
 #toast{margin-left:auto;font-size:12px;color:var(--teal);opacity:0;transition:opacity .3s}
 #toast.show{opacity:1}
 header .dim{color:var(--dim);font-size:12px}
-main{padding:16px 20px;max-width:1500px;margin:0 auto}
-#cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px;margin-bottom:16px}
+main{padding:16px 20px;max-width:1700px;margin:0 auto}
+mark{background:#6e4019;color:#ffdf9e;border-radius:2px;padding:0 1px}
+
+/* —— 顶部视图导航（仪表盘 / 日志 / 波形）—— */
+nav#views{display:flex;gap:2px;margin-left:10px;background:#0a0e14;border:1px solid var(--border);border-radius:8px;padding:2px}
+nav#views .nv{padding:3px 16px;border-radius:6px;cursor:pointer;color:var(--dim);font-size:13px;user-select:none}
+nav#views .nv:hover{color:var(--fg)}
+nav#views .nv.on{background:#21262d;color:var(--fg)}
+
+/* —— 仪表盘 KPI —— */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px}
+.kpi{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:8px 14px;cursor:default}
+.kpi .n{font-size:22px;font-weight:600;line-height:1.25}
+.kpi .l{color:var(--dim);font-size:11px;margin-top:2px}
+.kpi.good .n{color:var(--green)}
+.kpi.bad .n{color:var(--red)}
+
+#cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px;margin-bottom:4px}
 .card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px 14px;cursor:pointer}
-.card.sel{border-color:var(--blue)}
+.card:hover{border-color:var(--blue)}
 .card .top{display:flex;align-items:center;gap:8px}
 .card .name{font-weight:600;font-size:15px;cursor:pointer}
 .card .tty{color:var(--dim);font-size:12px}
@@ -45,31 +61,45 @@ button:hover{border-color:var(--blue)}
 button.danger:hover{border-color:var(--red)}
 .grid2{display:grid;grid-template-columns:1.7fr 1fr;gap:12px}
 @media(max-width:1000px){.grid2{grid-template-columns:1fr}}
+.dashgrid{display:grid;grid-template-columns:1.6fr 1fr;gap:12px;margin-top:12px}
+@media(max-width:1000px){.dashgrid{grid-template-columns:1fr}}
 .panel{background:var(--card);border:1px solid var(--border);border-radius:8px;overflow:hidden}
 .panel .hd{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);flex-wrap:wrap}
 .panel .hd .t{font-weight:600}
 .tabs{display:flex;gap:4px}
-.tab{padding:2px 10px;border-radius:6px;cursor:pointer;color:var(--dim);font-size:12px}
+.tab{padding:2px 10px;border-radius:6px;cursor:pointer;color:var(--dim);font-size:12px;user-select:none}
 .tab.on{background:#21262d;color:var(--fg)}
-#log{height:340px;overflow-y:auto;padding:8px 12px;margin:0;font:12px/1.45 Consolas,monospace;
-white-space:pre-wrap;word-break:break-all;background:#0a0e14}
+
+/* —— 设备多选 chips（日志/波形页共用）—— */
+.chips{display:flex;gap:6px;flex-wrap:wrap;flex:1}
+.dchip{font-size:12px;padding:2px 10px;border:1px solid var(--border);border-radius:12px;
+cursor:pointer;color:var(--dim);user-select:none;background:#0a0e14}
+.dchip:hover{border-color:var(--blue)}
+.dchip.on{color:var(--fg);border-color:var(--teal);background:rgba(57,210,192,.1)}
+.dchip.st-flashing{border-color:var(--red)}
+
+/* —— 日志页：并排窗格 + 合并流 —— */
+#logGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:10px;padding:10px}
+.lpane{background:#0a0e14;border:1px solid var(--border);border-radius:8px;display:flex;flex-direction:column;min-width:0}
+.lpane .lhd{display:flex;gap:8px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--border);font-size:12px;flex-wrap:wrap}
+.lpane .lhd b{font-weight:600}
+.lpane pre{margin:0;padding:8px 10px;height:330px;overflow-y:auto;font:12px/1.45 Consolas,monospace;
+white-space:pre-wrap;word-break:break-all}
+#logMerge{margin:0;padding:10px 12px;height:62vh;overflow-y:auto;font:12px/1.5 Consolas,monospace;background:#0a0e14}
+.mline{white-space:pre-wrap;word-break:break-all}
+.mline .devtag{font-weight:600}
 #logSearch{background:#0a0e14;color:var(--fg);border:1px solid var(--border);border-radius:6px;
 padding:2px 8px;font:12px Consolas,monospace;width:150px}
 #logSearch:focus{outline:none;border-color:var(--blue)}
 #logCount{font-size:11px;color:var(--dim)}
-#log mark{background:#6e4019;color:#ffdf9e;border-radius:2px;padding:0 1px}
 .devtag{color:var(--blue);font-size:12px}
-#events{height:340px;overflow-y:auto;padding:8px 12px;font:12px/1.5 Consolas,monospace}
 .hit{color:var(--amber)}
-.ev-dev{color:var(--teal);margin-top:6px}
-.ev-line{white-space:pre-wrap;word-break:break-all}
-.ev-line:has(.hit){color:var(--amber)}
 label.ck{font-size:12px;color:var(--dim);display:flex;gap:4px;align-items:center;cursor:pointer}
 select{background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:6px;font-size:12px;padding:2px 6px}
 #nodata{color:var(--dim);padding:20px;text-align:center}
 .hidden{display:none!important}
 
-/* —— 事件时间线 —— */
+/* —— 事件时间线（仪表盘）—— */
 #tl{padding:8px 12px 4px;font-size:11px}
 .tl-row{display:flex;align-items:center;gap:8px;margin-bottom:3px}
 .tl-dev{color:var(--teal);width:76px;flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -80,12 +110,21 @@ select{background:#21262d;color:var(--fg);border:1px solid var(--border);border-
 .tl-tick.life{background:var(--blue);opacity:.75}
 .tl-legend{color:var(--dim);margin:2px 0 4px;display:flex;gap:12px}
 .tl-legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+#events{height:340px;overflow-y:auto;padding:8px 12px;font:12px/1.5 Consolas,monospace}
+.ev-dev{color:var(--teal);margin-top:6px}
+.ev-line{white-space:pre-wrap;word-break:break-all}
+.ev-line:has(.hit){color:var(--amber)}
 
-/* —— 波形示波器 —— */
+/* —— 波形页：多机网格 + 单机大图 —— */
+#waveGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:10px;padding:10px}
+.wmini{background:#0a0e14;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.wmini .whd{display:flex;gap:8px;align-items:center;padding:5px 10px;font-size:12px;color:var(--teal)}
+.wmini .whd b{font-weight:600}
+.wmini canvas{width:100%;height:140px;display:block;cursor:crosshair}
 #waveBox{display:flex;flex-direction:column;background:#0a0e14}
 .wavebar{display:flex;align-items:center;gap:8px;padding:8px 12px;flex-wrap:wrap}
 .wavebar select{flex:none}
-#waveCv{width:100%;height:320px;display:block;cursor:crosshair}
+#waveCv{width:100%;height:380px;display:block;cursor:crosshair}
 #waveMode{cursor:pointer}
 .tpls{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .tpl{font:12px Consolas,monospace;color:var(--teal)}
@@ -101,19 +140,13 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
 .hbody .dim{font-size:12px}
 .hbody a{color:var(--blue)}
 
-/* —— 多设备对比 —— */
-.cmp{margin-top:12px}
-.cmp summary{padding:8px 12px;cursor:pointer;font-weight:600;user-select:none}
-.cmp summary .dim{font-weight:400;margin-left:8px}
-#cmpRow,#meshRow{display:flex;gap:10px;padding:0 12px 12px;overflow-x:auto;flex-wrap:wrap}
+/* —— mesh 多机互联（仪表盘右栏）—— */
 .mdev{display:flex;gap:8px;align-items:center;padding:6px 10px;border-bottom:1px solid rgba(48,54,61,.4);font:12px/1.4 sans-serif}
 .mdev .mname{cursor:pointer;color:var(--teal)}
 .mdev .macts{margin-left:auto;display:flex;gap:6px}
 .mdev .macts button{padding:1px 8px;font-size:11px}
-.cmp-dev{background:#0a0e14;border:1px solid var(--border);border-radius:8px;
-min-width:300px;flex:1;font:12px/1.4 Consolas,monospace}
-.cmp-dev .hd2{display:flex;gap:8px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--border);color:var(--teal)}
-.cmp-dev pre{margin:0;padding:8px 10px;height:180px;overflow-y:auto;white-space:pre-wrap;word-break:break-all}
+.mbox2{max-height:420px;overflow-y:auto}
+.msec{padding:0 12px 12px}
 
 .modal{position:fixed;inset:0;background:rgba(3,6,12,.72);display:flex;align-items:center;justify-content:center;z-index:50}
 .mbox{background:var(--card);border:1px solid var(--border);border-radius:10px;width:min(680px,92vw);max-height:88vh;display:flex;flex-direction:column}
@@ -131,64 +164,109 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
 <header>
   <svg class="logo" width="26" height="26" viewBox="0 0 100 100" aria-hidden="true"><rect x="2" y="2" width="96" height="96" rx="22" fill="#0F172A"/><path d="M14 32 H28 V52 H42 V32 H56 V52 H70 V32 H86" fill="none" stroke="#E2E8F0" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><path d="M49 52 V76" fill="none" stroke="#2DD4BF" stroke-width="8" stroke-linecap="round"/><circle cx="49" cy="82" r="6.5" fill="#2DD4BF"/></svg>
   <h1>serialtap · 观测面板</h1>
+  <nav id="views">
+    <span class="nv on" data-v="dash">仪表盘</span>
+    <span class="nv" data-v="logs">日志</span>
+    <span class="nv" data-v="wave">波形</span>
+  </nav>
   <span class="dim" id="root">—</span>
   <span class="dim" id="conn"></span>
-  <button id="btnHelp" title="帮助 · 教程（波形/提取/面板功能）">?</button>
+  <button id="btnHelp" title="帮助 · 教程（仪表盘/多机日志/波形/提取）">?</button>
   <span id="toast"></span>
 </header>
 <main>
-  <div id="cards"><div id="nodata">暂无设备接入</div></div>
-  <div class="grid2">
+
+  <!-- ═══ 视图一：仪表盘 —— 全网健康总览 ═══ -->
+  <section id="view-dash">
+    <div class="kpis">
+      <div class="kpi"><div class="n" id="kDev">0</div><div class="l">接入设备</div></div>
+      <div class="kpi" id="kColK"><div class="n" id="kCol">0</div><div class="l">采集中</div></div>
+      <div class="kpi"><div class="n" id="kRate">0</div><div class="l">总吞吐 B/s</div></div>
+      <div class="kpi" id="kBadK" title=""><div class="n" id="kBad">0</div><div class="l">异常设备</div></div>
+      <div class="kpi" id="kEvK" title=""><div class="n" id="kEv">0</div><div class="l">事件 · 近30min</div></div>
+      <div class="kpi hidden" id="kMeshK"><div class="n" id="kMesh">0/0</div><div class="l">mesh 节点在线</div></div>
+    </div>
+    <div id="cards"><div id="nodata">暂无设备接入</div></div>
+    <div class="dashgrid">
+      <div class="panel">
+        <div class="hd"><span class="t">事件时间线 · 最近事件</span><span class="dim" style="font-size:11px">签名命中 · 生命周期 · 刷机</span></div>
+        <div id="tl"><div class="dim" style="padding:4px 0">暂无事件</div></div>
+        <div id="events"></div>
+      </div>
+      <div>
+        <div class="panel" id="meshPanel" style="display:none">
+          <div class="hd"><span class="t">mesh 多机互联</span><span class="dim" id="meshSum" style="font-size:11px">同密钥 LAN 节点 · 点设备即远程日志/操作/刷机</span></div>
+          <div class="mbox2" id="meshRow"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 视图二：多机日志 —— 并排 / 合并 ═══ -->
+  <section id="view-logs" class="hidden">
     <div class="panel">
       <div class="hd">
-        <span class="t">实时日志</span>
-        <select id="devSel" title="选择要查看的设备/串口"></select>
-        <span class="tabs">
-          <span class="tab on" data-kind="serial" id="tabSerial">全量</span>
-          <span class="tab" data-kind="events" id="tabEvents">事件流</span>
-          <span class="tab" data-kind="wave" id="tabWave">波形</span>
-        </span>
+        <span class="t">多机日志</span>
+        <span class="chips" id="logChips"></span>
+      </div>
+      <div class="hd">
+        <select id="logLayout" title="布局：并排 = 每台一个窗格；合并 = 按时间交织成一条流">
+          <option value="grid" selected>并排</option>
+          <option value="merge">合并</option>
+        </select>
+        <select id="logLines" title="每个窗格 / 合并流显示的行数">
+          <option value="100">100 行</option>
+          <option value="200" selected>200 行</option>
+          <option value="400">400 行</option>
+          <option value="800">800 行</option>
+        </select>
         <input id="logSearch" placeholder="搜索/正则过滤…">
         <span id="logCount"></span>
         <label class="ck"><input type="checkbox" id="autoscroll" checked>自动滚动</label>
         <button id="btnClear">清屏</button>
-        <button id="btnExportLog" title="导出当前缓冲为 .log 文件">导出</button>
-        <button id="btnExportWave" class="hidden" title="导出波形样本为 CSV">导出 CSV</button>
-        <span class="dim" id="viewerDev" style="font-size:12px;color:var(--dim)"></span>
+        <button id="btnExportLog" title="导出当前选择的日志缓冲为 .log 文件">导出</button>
+        <span class="dim" id="logInfo" style="font-size:12px"></span>
       </div>
-      <pre id="log">选择左侧设备卡片查看…</pre>
+      <div id="logGrid"></div>
+      <pre id="logMerge" class="hidden"></pre>
+    </div>
+  </section>
+
+  <!-- ═══ 视图三：多机波形 —— 网格 / 单机大图 ═══ -->
+  <section id="view-wave" class="hidden">
+    <div class="panel">
+      <div class="hd">
+        <span class="t">多机波形</span>
+        <span class="chips" id="waveChips"></span>
+      </div>
+      <div class="hd">
+        <span class="tabs" id="waveViewTabs">
+          <span class="tab on" data-m="grid">多机网格</span>
+          <span class="tab" data-m="big">单机大图</span>
+        </span>
+        <select id="waveWin" title="时间窗（网格与大图共用）">
+          <option value="15">15s</option>
+          <option value="60" selected>60s</option>
+          <option value="300">5min</option>
+          <option value="1800">30min</option>
+        </select>
+        <span class="dim" style="font-size:11px">每台设备都在后台持续采样，切换/勾选随时可看，历史不丢</span>
+      </div>
+      <div id="waveGrid"></div>
       <div id="waveBox" class="hidden">
         <div class="wavebar">
           <b id="waveDev" class="devtag"></b>
           <span class="chip" id="waveMode" title="点击配置提取策略">自动</span>
-          <select id="waveWin" title="时间窗">
-            <option value="15">15s</option>
-            <option value="60" selected>60s</option>
-            <option value="300">5min</option>
-            <option value="1800">30min</option>
-          </select>
           <button id="waveFreeze">冻结</button>
           <button id="waveClear">清除</button>
           <span class="dim" id="waveInfo" style="font-size:11px"></span>
           <button id="btnXtr" title="自动识别不合意时，用正则定义通道：模板 + 实时试跑">高级提取…</button>
+          <button id="btnExportWave" title="导出波形样本为 CSV">导出 CSV</button>
         </div>
         <canvas id="waveCv"></canvas>
       </div>
     </div>
-    <div class="panel">
-      <div class="hd"><span class="t">最近事件</span><span class="dim" style="font-size:11px">签名命中 · 生命周期 · 刷机</span></div>
-      <div id="tl"><div class="dim" style="padding:4px 0">暂无事件</div></div>
-      <div id="events"></div>
-    </div>
-  </div>
-  <details class="panel cmp" id="cmpPanel" open>
-    <summary>多设备对比<span class="dim">各设备实时尾随并排（关闭即断开附加流）</span></summary>
-    <div id="cmpRow"></div>
-  </details>
-  <details class="panel cmp" id="meshPanel" style="display:none">
-    <summary>mesh 多机互联<span class="dim" id="meshSum">同密钥 LAN 节点 · 点设备即远程尾随/操作/刷机</span></summary>
-    <div id="meshRow"></div>
-  </details>
+  </section>
 </main>
 
 <div id="flashModal" class="modal hidden">
@@ -240,17 +318,20 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
 
 <div id="helpModal" class="modal hidden">
   <div class="mbox" style="width:min(860px,94vw)">
-    <div class="mhd"><b>帮助 · 教程</b> <span class="dim" style="font-size:12px">波形观测 · 提取策略 · 面板功能</span>
+    <div class="mhd"><b>帮助 · 教程</b> <span class="dim" style="font-size:12px">仪表盘 · 多机日志 · 波形观测 · 提取策略</span>
       <button id="helpClose" style="margin-left:auto">关闭</button></div>
     <div class="mbody hbody">
-      <h3>三步上手</h3>
-      <p>① 左侧点选设备卡片 → ② 点「波形」tab → ③ 看图。波形与设备一一对应
-      （工具栏蓝字就是当前设备名），<b>每台设备都在后台持续采样</b>——切到别的
-      设备再切回来，这期间的波形一点不丢。无需任何配置：面板自动识别遥测行
-      并把数字变成通道画出来。想锁定某几路时才需要「高级提取…」，写不了正则
-      也照样能用自动模式。</p>
+      <h3>三个页面</h3>
+      <p>顶部导航切换（记忆上次页面，也可用 <code>#dash / #logs / #wave</code> 直达）：</p>
+      <table>
+        <tr><th>页面</th><th>看什么</th></tr>
+        <tr><td><b>仪表盘</b></td><td>全网健康总览：KPI 指标条（设备数/采集中/总吞吐/异常/事件/mesh 节点）、设备卡（速率迷你图、静默、重开）、30 分钟事件时间线、mesh 节点管理</td></tr>
+        <tr><td><b>日志</b></td><td>多机同时看日志：勾选多台设备，<b>并排</b>（每台一个窗格）或<b>合并</b>（按时间交织成一条流，每行带彩色设备标签）；搜索/正则过滤与高亮跨设备生效</td></tr>
+        <tr><td><b>波形</b></td><td>多机同时看波形：<b>多机网格</b>每台一块实时示波器；点「大图」进单机分析（冻结/悬停读值/高级提取/导出 CSV）</td></tr>
+      </table>
+      <p>所有设备（含 mesh 远端）都在后台持续采样与缓冲——勾选、切换、换页都不会丢数据。</p>
 
-      <h3>自动识别是怎么工作的</h3>
+      <h3>波形自动识别是怎么工作的</h3>
       <p>板子通常按固定格式周期输出一行遥测（如 <code>#S1 1117 27762 -49 09fb0e…</code>）。
       面板按<b>行首记号</b>（帧型，如 <code>#S1</code>）给行分组，取近 5 秒最活跃的帧型绘制，偶发的心跳/握手行自动让位。行内：</p>
       <table>
@@ -262,7 +343,7 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
 
       <h3>自定义提取（高级）</h3>
       <p>三种典型场景：只要其中一路（如只看 RSSI）；量纲差异想精确分组；行格式特殊自动识别不理想。
-      点「高级提取…」→ 挑模板或手写正则 → 看<b>实时试跑</b>确认每行提出什么 → 应用。</p>
+      波形「单机大图」里点「高级提取…」→ 挑模板或手写正则 → 看<b>实时试跑</b>确认每行提出什么 → 应用。提取策略按设备各自记忆，回到网格也生效。</p>
       <table>
         <tr><th>想看什么</th><th>正则</th><th>说明</th></tr>
         <tr><td>#S1 行的 RSSI（第 3 个数）</td><td><code>#S1 \d+ \d+ (-?\d+)</code></td><td>一个捕获组 = 一个通道</td></tr>
@@ -278,17 +359,16 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
       <p><b>每个通道一条泳道</b>，互不挤压：左上角是通道名、当前值和区间（min~max，含余量）——
       泳道内曲线贴顶说明触到区间上沿。曲线是<b>每像素 min/max 包络 + 中心线</b>：高频数据下
       包络的"毛边"是真实的波动幅度，中心线是趋势。<b>Hz</b> 是采样速率（每秒多少行命中）。
-      <b>悬停</b>出十字线：跨所有泳道同时读该时刻各通道值，底部显示时间偏移。
+      大图里<b>悬停</b>出十字线：跨所有泳道同时读该时刻各通道值，底部显示时间偏移。
       <b>冻结</b>停采样定格画面（窗口停在冻结时刻），<b>清除</b>清空缓冲，时间窗 15s~30min 可选。</p>
       <p class="dim">读图示例：RSSI 泳道缓慢漂移是信道变化；骤降常是干扰或距离变化；计数类通道（v1/v2）
       呈斜线属正常——它单调递增，斜率不变=流速稳定，斜率突变=丢行或重启。</p>
 
-      <h3>面板其它功能速览</h3>
+      <h3>仪表盘健康速览</h3>
       <p>设备卡：<b>静默 Xs</b>（最近读到数据距今，超 30s 变黄、超 5min 变红）、<b>重开 N</b>（断线重开次数，
-      ≥3 变红）、写入速率迷你图（2 分钟）。日志区：搜索框支持正则（写错自动当子串）+ 高亮 + 计数；
-      「导出」下载当前缓冲，「波形」tab 下导出 CSV。事件面板：30 分钟时间线，红=崩溃/复位、黄=错误、
-      蓝=生命周期，悬停看原文。底部：多设备对比面板并排尾随。所有操作按钮与命令行走同一条守护控制
-      通道，行为一致。</p>
+      ≥3 变红）、写入速率迷你图（2 分钟）。KPI 条的<b>异常设备</b>把静默超 5 分钟或重开 ≥3 的板子计红，
+      悬停看名单；<b>事件</b>统计近 30 分钟签名命中（红=崩溃/复位、黄=错误、蓝=生命周期），悬停时间线刻度看原文。
+      所有操作按钮与命令行走同一条守护控制通道，行为一致。</p>
 
       <h3>延伸阅读</h3>
       <p>完整文档在 GitHub 仓库（双语）：<a href="https://github.com/mickeyzzc/serialtap/blob/main/docs/zh-CN/waveform-guide.md" target="_blank">波形观测指南</a> ·
@@ -308,25 +388,101 @@ const fmtAgo = ms => { if (!ms || ms < 0) return "—";
   if (s < 90) return s+"s"; if (s < 5400) return Math.floor(s/60)+"m"; return Math.floor(s/3600)+"h"; };
 
 let status = {devices:[]}, prevSize = {}, rate = {}, rateHist = {};
-let selDev = null, selKind = "serial";
-let selAbsentSince = 0;      // 选中设备开始缺席的时刻（0 = 在场）
-const SEL_GRACE_MS = 60000;  // 缺席宽限：软重连/让口/刷机是秒级~分钟级；再长 = 拔出/改名
-const logs = {};             // "dev/kind" → 日志缓冲（每设备独立，切换设备不清零不重取）
-const serialES = {};         // dev → 常开 serial SSE（后台持续喂波形/日志/对比，与正在看谁无关）
-let evES = null;             // 事件流按需开（选中设备的事件 tab）
-let cardSig = ""; // 卡片结构签名：不变则只就地更新数字，绝不重建 DOM —— 每秒全量重建会把进行中的点击吞掉
+const logs = {};             // "dev/serial" → 日志缓冲（每设备独立，常开 SSE 后台喂，换页不丢）
+const serialES = {};         // dev → 常开 serial SSE（本地 + mesh 远程统一管线）
+let knownDevs = new Set();   // 见过的设备键：新设备自动进多选（默认勾上）
 const LOG_CAP = 256 * 1024, SPARK_N = 120;
-function logKey(){ return (selDev || "") + "/" + (selKind === "events" ? "events" : "serial"); }
-// 远程设备键 "peer/dev"：SSE 走 mesh 桥接端点，其余管线（缓冲/波形/对比）与本地完全一致
+const WAVE_COLORS = ["#2DD4BF","#58A6FF","#F5A623","#FF7B72","#7EE787","#D2A8FF"];
+
+// 远程设备键 "peer/dev"：SSE 走 mesh 桥接端点，其余管线（缓冲/波形/日志）与本地完全一致
 function isRemoteDev(dev){ return (dev || "").includes("/"); }
 function liveURL(dev, kind){
   if (!isRemoteDev(dev)) return `/api/devices/${encodeURIComponent(dev)}/live?kind=${kind}`;
   const i = dev.indexOf("/");
   return `/api/mesh/devices/${encodeURIComponent(dev.slice(0,i))}/${encodeURIComponent(dev.slice(i+1))}/live?kind=${kind}`;
 }
+// devMeta: 设备键 → 展示元数据（本地查 status，远程查 mesh 聚合）。
+function devMeta(k){
+  if (!isRemoteDev(k)){
+    const d = status.devices.find(x => x.name === k);
+    return {name: k, tty: d ? d.tty : "", state: d ? d.state : "", remote: false};
+  }
+  const i = k.indexOf("/"), pn = k.slice(0, i), dn = k.slice(i+1);
+  const p = (mesh.peers || []).find(x => x.name === pn);
+  const d = p && (p.devices || []).find(x => x.name === dn);
+  return {name: dn, tty: d ? d.tty : "", state: d ? d.state : "", remote: true, peer: pn};
+}
+function allDevKeys(){
+  const ks = status.devices.map(d => d.name);
+  if (mesh.enabled) for (const p of mesh.peers) for (const d of (p.devices || [])) ks.push(p.name + "/" + d.name);
+  return ks;
+}
+// devColor: 设备键 → 稳定颜色（合并流/日志窗格标题用，跨刷新一致）。
+function devColor(k){ let h = 0; for (let i = 0; i < k.length; i++) h = (h*31 + k.charCodeAt(i)) >>> 0;
+  return WAVE_COLORS[h % WAVE_COLORS.length]; }
+// parseTs: 解析行首 [YYYY-MM-DD HH:MM:SS.mmm] 时间戳 → ms；无则 null。
+function parseTs(l){
+  const m = /^\[(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})\.(\d{3})\]/.exec(l);
+  if (!m) return null;
+  return new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +m[6], +m[7]).getTime();
+}
 
-// ensureSerial: 每设备一条常开 serial SSE，喂三处：波形缓冲（后台采样）、
-// 日志缓冲（切设备即刻满屏尾随）、对比面板文本。断线由 EventSource 自动重连。
+// —— 视图路由：dash | logs | wave（hash 可直达，记忆上次页面）——
+const VIEWS = ["dash", "logs", "wave"];
+let view = "dash";
+function setView(v, fromHash){
+  if (!VIEWS.includes(v)) v = "dash";
+  view = v;
+  localStorage.setItem("st_view", v);
+  if (!fromHash && location.hash !== "#" + v) history.replaceState(null, "", "#" + v);
+  for (const b of document.querySelectorAll("#views .nv")) b.classList.toggle("on", b.dataset.v === v);
+  for (const s of VIEWS) $("view-" + s).classList.toggle("hidden", s !== v);
+  if (v === "logs"){ syncLogGrid(); renderLogs(); }
+  if (v === "wave"){ syncWaveGrid(); }
+}
+window.addEventListener("hashchange", () => setView(location.hash.slice(1) || "dash", true));
+for (const b of document.querySelectorAll("#views .nv"))
+  b.onclick = () => setView(b.dataset.v, false);
+// 跳到日志页单看某台（设备卡 / mesh 行点击）
+function gotoLogs(k){
+  logSel.add(k); localStorage.setItem("st_logsel", JSON.stringify([...logSel]));
+  setView("logs");
+}
+
+// —— 设备多选 chips（日志/波形两套独立选择，均持久化）——
+function loadSet(key){ try { const a = JSON.parse(localStorage.getItem(key) || "[]");
+  return new Set(Array.isArray(a) ? a.filter(x => typeof x === "string") : []); } catch { return new Set(); } }
+const logSel = loadSet("st_logsel"), waveSel = loadSet("st_wavesel");
+function autoAdopt(){ // 新接入的设备默认进两个多选（用户取消勾选的不受影响）
+  for (const k of allDevKeys()) if (!knownDevs.has(k)){ knownDevs.add(k); logSel.add(k); waveSel.add(k); }
+}
+const chipSig = {};
+function renderChips(cid, sel, storeKey){
+  const el = $(cid);
+  const keys = allDevKeys();
+  const sig = keys.join("|") + "#" + [...sel].sort().join(",");
+  if (sig === chipSig[cid]) return;
+  chipSig[cid] = sig;
+  el.innerHTML = "";
+  if (!keys.length){ el.innerHTML = '<span class="dim">暂无设备</span>'; return; }
+  for (const k of keys){
+    const m = devMeta(k);
+    const b = document.createElement("span");
+    b.className = "dchip" + (sel.has(k) ? " on" : "") + (m.state === "flashing" ? " st-flashing" : "");
+    b.textContent = (m.remote ? "⌗ " : "") + m.name + (m.remote ? " · " + m.peer : "");
+    b.title = (m.tty ? m.tty + " · " : "") + (m.state || "状态未知");
+    b.onclick = () => {
+      if (sel.has(k)) sel.delete(k); else sel.add(k);
+      localStorage.setItem(storeKey, JSON.stringify([...sel]));
+      renderChips(cid, sel, storeKey);
+      if (cid === "logChips"){ syncLogGrid(); renderLogs(); } else syncWaveGrid();
+    };
+    el.appendChild(b);
+  }
+}
+
+// ensureSerial: 每设备一条常开 serial SSE（本地与 mesh 远程同一管线），喂三处：
+// 日志缓冲（切页即刻满屏尾随）、波形缓冲（后台采样）、合并流（按行带时间戳入队）。
 function ensureSerial(dev){
   if (serialES[dev]) return;
   const s = serialES[dev] = new EventSource(liveURL(dev, "serial"));
@@ -335,13 +491,16 @@ function ensureSerial(dev){
     const k = dev + "/serial";
     logs[k] = (logs[k] || "") + chunk;
     if (logs[k].length > LOG_CAP) logs[k] = logs[k].slice(-LOG_CAP);
-    let b = (cmpBuf[dev] || "") + chunk;
-    cmpBuf[dev] = b.length > 8192 ? b.slice(-8192) : b;
     waveFeedDev(dev, chunk);
-    if ($("cmpPanel").open) cmpAppend(dev);
-    if (dev === selDev && selKind === "serial") renderLog();
+    const lines = chunk.split("\n");          // 合并流：按行拆，半行留到下个 chunk 拼装
+    lines[0] = (mergeTail[dev] || "") + lines[0];
+    mergeTail[dev] = lines.pop();
+    for (const l of lines) if (l) mergeQ.push({d: dev, t: parseTs(l), l, seq: mergeSeq++});
+    if (mergeQ.length > 4000) mergeQ = mergeQ.slice(-3000);
+    if (view === "logs") scheduleLogRender();
   };
 }
+let mergeQ = [], mergeTail = {}, mergeSeq = 0;   // 合并流：到达序入队，渲染时按时间戳归位
 
 function pollStatus(){
   fetch("/api/status").then(r=>r.json()).then(s=>{
@@ -358,31 +517,33 @@ function pollStatus(){
     for (const d of s.devices) ensureSerial(d.name);
     for (const n of Object.keys(serialES))
       if (!isRemoteDev(n) && !s.devices.some(d=>d.name === n)){ serialES[n].close(); delete serialES[n]; }
-    const names = s.devices.map(d=>d.name);
-    if (names.length && !selDev){
-      const saved = localStorage.getItem("st_dev") || "";
-      selectDev(names.includes(saved) ? saved : names[0]); // 恢复上次选择；失效则选首台
-    } else if (selDev && !isRemoteDev(selDev) && !names.includes(selDev)){
-      // 粘性：短暂缺席（软重连/让口/刷机）不跳台；超过宽限（拔出/改名）切回首台
-      if (!selAbsentSince) selAbsentSince = Date.now();
-      else if (Date.now() - selAbsentSince > SEL_GRACE_MS){ selAbsentSince = 0; selectDev(names[0]); }
-    } else selAbsentSince = 0;
+    autoAdopt();
     renderCards();
-    updateViewerLabels();
-    syncCmp();
+    renderChips("logChips", logSel, "st_logsel");
+    renderChips("waveChips", waveSel, "st_wavesel");
+    updateKpis();
+    if (view === "logs"){ syncLogGrid(); renderLogs(); }
+    if (view === "wave") syncWaveGrid();
   }).catch(()=>{ $("conn").textContent = "○ 守护进程不可达"; });
 }
 setInterval(pollStatus, 1000); pollStatus();
 
 // —— mesh 多机互联：peer 聚合（6s 一轮；对端查询本身带 5s 超时，别更快） ——
 let mesh = {enabled:false, peers:[]}, meshSig = "";
-function meshDevKey(pn, d){ return pn + "/" + d.name; }
 let meshPending = [];   // 待授权配对请求（mesh-pair 查询）
 function pollMesh(){
   fetch("/api/mesh/status").then(r=>r.json()).then(m=>{
     mesh = m && m.enabled ? m : {enabled:false, peers:[]};
+    // 远程设备与本地同管线：常开 serial SSE（后台喂日志/波形），peer 消失即关流
+    const alive = new Set();
+    for (const p of mesh.peers) for (const d of (p.devices || [])){ const k = p.name + "/" + d.name; alive.add(k); ensureSerial(k); }
+    for (const n of Object.keys(serialES))
+      if (isRemoteDev(n) && !alive.has(n)){ serialES[n].close(); delete serialES[n]; }
     renderMesh();
-    syncDevSel();   // 远程设备进查看下拉
+    autoAdopt();
+    renderChips("logChips", logSel, "st_logsel");
+    renderChips("waveChips", waveSel, "st_wavesel");
+    updateKpis();
     syncFmPeers();  // 刷机弹窗目标节点下拉
   }).catch(()=>{});
   fetch("/api/cmd", {method:"POST", headers:{"Content-Type":"application/json"},
@@ -450,8 +611,8 @@ function renderMesh(){
     el.querySelectorAll(".mdev").forEach(dv => {
       const key = dv.dataset.key, pn = key.slice(0, key.indexOf("/")), dn = key.slice(key.indexOf("/")+1);
       const anchor = "^" + dn.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$";
-      dv.querySelector('.mname').onclick = () => selectDev(key);
-      dv.querySelector('[data-a="log"]').onclick = () => selectDev(key);
+      dv.querySelector('.mname').onclick = () => gotoLogs(key);
+      dv.querySelector('[data-a="log"]').onclick = () => gotoLogs(key);
       const collecting = dv.dataset.state === "collecting";
       dv.querySelector('[data-a="toggle"]').onclick = () =>
         cmd(collecting ? "pause" : "resume", anchor, "", {peer: pn});
@@ -473,7 +634,6 @@ function renderCards(){
   const c = $("cards");
   if (!status.devices.length){
     if (c.innerHTML.indexOf("nodata") < 0) c.innerHTML = '<div id="nodata">暂无设备接入</div>';
-    cardSig = ""; syncDevSel();
     return;
   }
   const sig = devSig();
@@ -482,7 +642,7 @@ function renderCards(){
   c.innerHTML = "";
   for (const d of status.devices){
     const el = document.createElement("div");
-    el.className = "card" + (d.name === selDev ? " sel" : "");
+    el.className = "card";
     el.dataset.dev = d.name;
     el.innerHTML = `
       <div class="top">
@@ -510,9 +670,9 @@ function renderCards(){
         <button data-a="rst" class="danger" title="USB 层重枚举设备节点（需管理员，非提权守护会弹 UAC）">USB 重置</button>
         <button data-a="flash">刷机…</button>
       </div>`;
-    // 整卡可点切换查看（操作按钮阻止冒泡，避免按"暂停"顺带换台）
-    el.onclick = () => selectDev(d.name);
-    el.querySelector(".name").onclick = e => { e.stopPropagation(); selectDev(d.name); };
+    // 整卡可点跳日志页（操作按钮阻止冒泡，避免按"暂停"顺带换页）
+    el.onclick = () => gotoLogs(d.name);
+    el.querySelector(".name").onclick = e => { e.stopPropagation(); gotoLogs(d.name); };
     el.querySelector('[data-a="toggle"]').onclick = e => { e.stopPropagation(); cmd(
       d.state === "collecting" ? "pause" : "resume", "^" + d.name.replace(/[.*+?^${}()|[\]\\]/g,"\\$&") + "$"); };
     el.querySelector('[data-a="proxy"]').onclick = e => { e.stopPropagation();
@@ -529,8 +689,8 @@ function renderCards(){
     c.appendChild(el);
   }
   updateVolatile();
-  syncDevSel();
 }
+let cardSig = "";
 
 // updateVolatile: 每秒仅刷新数字（速率/体积/健康/迷你图），DOM 节点不动。
 function updateVolatile(){
@@ -551,6 +711,7 @@ function updateVolatile(){
     hr.className = "h-reopen " + (reopen === 0 ? "ok" : reopen < 3 ? "warn" : "bad");
     drawSpark(card.querySelector(".spark"), rateHist[d.name] || []);
   }
+  updateKpis();
 }
 
 // drawSpark: 写入速率迷你图（2 分钟），峰谷一目了然。
@@ -570,18 +731,33 @@ function drawSpark(cv, hist){
   ctx.strokeStyle = "#39d2c0"; ctx.lineWidth = 1.5; ctx.stroke();
 }
 
-// syncDevSel: 日志区设备下拉与卡片选择双向同步。
-function syncDevSel(){
-  const sel = $("devSel");
-  let html = status.devices
-    .map(d=>`<option value="${esc(d.name)}">${esc(d.name)} · ${esc(d.tty)}</option>`).join("");
-  const rDevs = [];
-  for (const p of (mesh.enabled ? mesh.peers : []))
-    for (const d of (p.devices || [])) rDevs.push([p.name, d]);
-  if (rDevs.length)
-    html += rDevs.map(([pn, d])=>`<option value="${esc(pn)}/${esc(d.name)}">⌗ ${esc(pn)} · ${esc(d.name)}</option>`).join("");
-  sel.innerHTML = html;
-  if (selDev && (status.devices.some(d=>d.name === selDev) || rDevs.some(([pn,d])=>pn+"/"+d.name === selDev))) sel.value = selDev;
+// —— KPI 指标条（仪表盘）：纯前端聚合 status/rate/events/mesh ——
+let evStats = {total: 0, err: 0, crit: 0, life: 0};
+function updateKpis(){
+  const ds = status.devices;
+  $("kDev").textContent = ds.length;
+  const col = ds.filter(d => d.state === "collecting").length;
+  $("kCol").textContent = col;
+  $("kColK").classList.toggle("good", ds.length > 0 && col === ds.length);
+  const tot = ds.reduce((a, d) => a + (rate[d.name] || 0), 0);
+  $("kRate").textContent = tot >= 1024 ? (tot/1024).toFixed(1) + "K" : tot;
+  const now = Date.now(), bad = [];
+  for (const d of ds){
+    const silent = d.last_data ? now - d.last_data : Infinity;
+    const reopen = Math.max(0, (d.opens || 1) - 1);
+    if (silent > 300000 || reopen >= 3) bad.push(d.name);
+  }
+  $("kBad").textContent = bad.length;
+  $("kBadK").classList.toggle("bad", bad.length > 0);
+  $("kBadK").title = bad.length ? "异常： " + bad.join(", ") : "静默 >5min 或重开 ≥3 记为异常";
+  $("kEv").textContent = evStats.total;
+  $("kEvK").classList.toggle("bad", evStats.err > 0 || evStats.crit > 0);
+  $("kEvK").title = `崩溃/复位 ${evStats.crit} · 错误 ${evStats.err} · 生命周期 ${evStats.life}`;
+  const mk = $("kMeshK");
+  if (mesh.enabled){
+    mk.classList.remove("hidden");
+    $("kMesh").textContent = mesh.peers.filter(p => p.state === "online").length + "/" + mesh.peers.length;
+  } else mk.classList.add("hidden");
 }
 
 let toastTimer = null;
@@ -670,33 +846,166 @@ $("fmGo").onclick = () => {
   }).catch(e=>{ fmState("✗ " + e, true); $("fmGo").disabled = false; });
 };
 
-function selectDev(name){
-  selDev = name; selAbsentSince = 0;
-  if (name) localStorage.setItem("st_dev", name);
-  for (const t of document.querySelectorAll(".tab"))
-    t.classList.toggle("on", t.dataset.kind === selKind);
-  // 选中态就地切换（不重建卡片），下拉同步
-  document.querySelectorAll(".card").forEach(c=>c.classList.toggle("sel", c.dataset.dev === selDev));
-  const ds = $("devSel");
-  if (status.devices.some(d=>d.name === selDev) && ds.value !== selDev) ds.value = selDev;
-  openStream();
-  renderCards();
+// ═══════════ 日志视图：多机并排 / 合并 ═══════════
+let logGridSig = "", logRenderTimer = null;
+function selLogKeys(){ return allDevKeys().filter(k => logSel.has(k)); }
+function syncLogGrid(){
+  if (view !== "logs") return;
+  const row = $("logGrid"), keys = selLogKeys();
+  const merge = $("logLayout").value === "merge";
+  row.classList.toggle("hidden", merge);
+  $("logMerge").classList.toggle("hidden", !merge);
+  const sig = keys.join("|") + "#" + merge;
+  updateLogInfo(keys, merge);
+  if (sig === logGridSig) return;
+  logGridSig = sig;
+  if (merge || !keys.length){
+    row.innerHTML = !keys.length ? '<div class="dim" style="padding:10px">勾选上方设备开始同时查看日志</div>' : "";
+    return;
+  }
+  row.innerHTML = "";
+  for (const k of keys){
+    const m = devMeta(k);
+    const el = document.createElement("div");
+    el.className = "lpane";
+    el.innerHTML = `<div class="lhd"><b style="color:${devColor(k)}">${esc(m.name)}</b>` +
+      (m.remote ? `<span class="dim">⌗ ${esc(m.peer)}</span>` : `<span class="dim">${esc(m.tty)}</span>`) +
+      `<span class="chip lstate"></span>` +
+      `<span class="dim lrate" style="margin-left:auto;font-size:11px"></span>` +
+      `<button class="lwave" title="切到波形页单看这台">波形</button></div><pre></pre>`;
+    el.querySelector(".lwave").onclick = () => {
+      waveSel.add(k); localStorage.setItem("st_wavesel", JSON.stringify([...waveSel]));
+      waveBigDev = k; setWaveMode("big"); setView("wave");
+    };
+    row.appendChild(el);
+  }
+  renderLogs();
 }
-$("devSel").onchange = () => { const v = $("devSel").value; if (v) selectDev(v); };
-for (const t of document.querySelectorAll(".tab"))
-  t.onclick = () => { selKind = t.dataset.kind;
-    for (const x of document.querySelectorAll(".tab")) x.classList.toggle("on", x===t);
-    if (selDev) openStream(); };
+function updateLogInfo(keys, merge){
+  $("logInfo").textContent = keys.length ?
+    `${keys.length} 台 · ${merge ? "合并" : "并排"}${keys.some(isRemoteDev) ? " · 含远程" : ""}` : "";
+}
+function scheduleLogRender(){
+  if (logRenderTimer) return;
+  logRenderTimer = setTimeout(() => { logRenderTimer = null; renderLogs(); }, 150);
+}
+function renderLogs(){
+  if (view !== "logs") return;
+  if ($("logLayout").value === "merge") renderMerge(); else renderGrid();
+}
+function logMatcher(){
+  const q = $("logSearch").value.trim();
+  if (!q) return null;
+  // /g 必须加：高亮循环靠 lastIndex 前进，非全局 exec 永远返回首个匹配 → 死循环冻页
+  try { const re = new RegExp(q, "gi");
+    return {re, test: l => { re.lastIndex = 0; return re.test(l); }}; }
+  catch { const s = q.toLowerCase(); return {re: null, test: l => l.toLowerCase().includes(s), lit: q}; }
+}
+// hlLine: 单行 → 高亮 HTML（正则 <mark> / 子串 <mark>；无匹配原样转义）。
+function hlLine(l, matcher){
+  if (!l) return "";
+  if (!matcher) return esc(l);
+  if (!matcher.test(l)) return esc(l);
+  if (matcher.re){
+    let out = "", last = 0, m, hits = 0; matcher.re.lastIndex = 0;
+    while ((m = matcher.re.exec(l)) && hits < 200){
+      out += esc(l.slice(last, m.index)) + "<mark>" + esc(m[0]) + "</mark>";
+      last = m.index + m[0].length;
+      hits++;
+      if (!m[0].length) matcher.re.lastIndex++;
+    }
+    return out + esc(l.slice(last));
+  }
+  const i = l.toLowerCase().indexOf(matcher.lit.toLowerCase());
+  if (i < 0) return esc(l);
+  return esc(l.slice(0,i)) + "<mark>" + esc(l.slice(i, i+matcher.lit.length)) + "</mark>" + esc(l.slice(i+matcher.lit.length));
+}
+function hitLine(l, html){ return HIT.test(l) ? `<span class="hit">${html}</span>` : html; }
 
-// —— 通用示波器（波形 tab）——
-// 零配置：自动识别遥测帧（首个 token 为帧型），key=value 记号成为命名通道，
-// 纯数字记号成为位置通道（十六进制块天然不是纯数字，自动排除）；多帧型时
-// 取近期最活跃的帧型。自定义正则仍是逃生门（高级项，按设备各自记忆）。
+function renderGrid(){
+  const row = $("logGrid"), keys = selLogKeys();
+  const matcher = logMatcher();
+  const N = parseInt($("logLines").value, 10) || 200;
+  const auto = $("autoscroll").checked;
+  let shown = 0, total = 0;
+  keys.forEach((k, i) => {
+    const pane = row.children[i];
+    if (!pane) return;
+    const pre = pane.querySelector("pre");
+    const m = devMeta(k);
+    const st = pane.querySelector(".lstate");
+    st.textContent = m.state || "—";
+    st.className = "chip lstate " + (m.state || "");
+    pane.querySelector(".lrate").textContent = m.remote ? "" : (rate[k] || 0) + " B/s";
+    let lines = (logs[k + "/serial"] || "").split("\n");
+    if (lines.length && lines[lines.length-1] === "") lines.pop();
+    total += lines.length;
+    if (matcher){
+      lines = lines.filter(l => !l || matcher.test(l));
+      shown += lines.filter(l => l && matcher.test(l)).length;
+    }
+    const tail = lines.slice(-N);
+    const stick = auto && pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40;
+    pre.innerHTML = tail.map(l => hitLine(l, hlLine(l, matcher))).join("\n");
+    if (stick || auto) pre.scrollTop = pre.scrollHeight;
+  });
+  $("logCount").textContent = matcher ? `${shown}/${total} 行` : "";
+}
+function renderMerge(){
+  const el = $("logMerge"), keys = selLogKeys();
+  const matcher = logMatcher();
+  const N = parseInt($("logLines").value, 10) || 200;
+  const sel = new Set(keys);
+  let pool = mergeQ.filter(e => sel.has(e.d) && (!matcher || !e.l || matcher.test(e.l)));
+  const tail = pool.slice(-N).sort((a, b) => (a.t ?? a.seq) - (b.t ?? b.seq));
+  const stick = $("autoscroll").checked &&
+    el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  el.innerHTML = tail.map(e => {
+    const tag = `<span class="devtag" style="color:${devColor(e.d)}">${esc(isRemoteDev(e.d) ? "⌗" + e.d : e.d)}</span>`;
+    return `<div class="mline">${tag} ${hitLine(e.l, hlLine(e.l, matcher))}</div>`;
+  }).join("");
+  $("logCount").textContent = matcher ? `${pool.length}/${mergeQ.filter(e => sel.has(e.d)).length} 行` : "";
+  if (stick) el.scrollTop = el.scrollHeight;
+}
+$("logSearch").oninput = () => renderLogs();
+$("logLayout").onchange = () => { logGridSig = ""; syncLogGrid(); };
+$("logLines").onchange = () => renderLogs();
+$("btnClear").onclick = () => {
+  for (const k of selLogKeys()) logs[k + "/serial"] = "";
+  mergeQ = mergeQ.filter(e => !logSel.has(e.d));
+  renderLogs();
+};
+$("btnExportLog").onclick = () => {
+  const keys = selLogKeys();
+  if (!keys.length){ toast("✗ 未选择设备", false); return; }
+  const matcher = logMatcher();
+  let out = "";
+  if ($("logLayout").value === "merge"){
+    for (const e of mergeQ)
+      if (logSel.has(e.d) && (!matcher || !e.l || matcher.test(e.l))) out += `[${e.d}] ${e.l}\n`;
+  } else {
+    for (const k of keys){
+      let lines = (logs[k + "/serial"] || "").split("\n");
+      if (matcher) lines = lines.filter(l => !l || matcher.test(l));
+      out += `===== ${k} =====\n` + lines.join("\n") + "\n";
+    }
+  }
+  if (!out.trim()){ toast("✗ 缓冲为空", false); return; }
+  download(`serialtap-logs-${stamp()}.log`, out);
+};
+
+// ═══════════ 波形视图 ═══════════
+// 通用示波器：零配置自动识别遥测帧（行首记号为帧型），key=value 记号成为命名
+// 通道，纯数字记号成为位置通道（十六进制块天然不是纯数字，自动排除）；多帧型
+// 时取近期最活跃的帧型。自定义正则仍是逃生门（高级项，按设备各自记忆）。
 // 解析/绘制全在浏览器；每台设备独立缓冲由各自的常开 serial 流后台喂——
-// 切设备只是换绘哪一份，波形连续、即时切换。
+// 网格/大图/勾选切换只是换绘哪几份，波形连续。
+let waveMode = localStorage.getItem("st_wavemode") === "big" ? "big" : "grid";
+let waveBigDev = null;
 let waveFrozen = false, waveFrozenAt = 0;
-let waveHover = null; // {x} 画布像素
-const waveBufs = new Map(); // dev → {samples, tail, re, reG, chNames, frameStats}
+let waveHover = null;        // {x} 大图画布像素
+let waveGridSig = "";
+const waveBufs = new Map();  // dev → {samples, tail, re, reG, chNames, frameStats}
 function wstate(dev){
   let w = waveBufs.get(dev);
   if (!w){
@@ -705,24 +1014,63 @@ function wstate(dev){
   }
   return w;
 }
-const WAVE_COLORS = ["#2DD4BF","#58A6FF","#F5A623","#FF7B72","#7EE787","#D2A8FF"];
 const WAVE_MAX_CH = 6, WAVE_MAX = 60000, WAVE_NUM = /^-?\d+(?:\.\d+)?$/, WAVE_KV = /^([A-Za-z_][\w-]*)=(-?\d+(?:\.\d+)?)$/;
 
-function compileWave(){} // 由「高级提取」弹窗驱动（applyXtr），不再有内联输入框
+function setWaveMode(m){
+  waveMode = m;
+  localStorage.setItem("st_wavemode", m);
+  for (const t of document.querySelectorAll("#waveViewTabs .tab"))
+    t.classList.toggle("on", t.dataset.m === m);
+  waveGridSig = "";
+  syncWaveGrid();
+}
+for (const t of document.querySelectorAll("#waveViewTabs .tab"))
+  t.onclick = () => setWaveMode(t.dataset.m);
 
-// applyXtr: 应用自定义提取正则到当前设备（空 = 恢复自动识别）。无效正则返回 false 不动状态。
-function applyXtr(src){
+function syncWaveGrid(){
+  if (view !== "wave") return;
+  const row = $("waveGrid"), keys = allDevKeys().filter(k => waveSel.has(k));
+  row.classList.toggle("hidden", waveMode === "big");
+  $("waveBox").classList.toggle("hidden", waveMode !== "big");
+  const sig = keys.join("|") + "#" + waveMode;
+  if (sig === waveGridSig) return;
+  waveGridSig = sig;
+  if (waveMode === "big"){
+    if (!waveBigDev || (!keys.includes(waveBigDev) && !allDevKeys().includes(waveBigDev)))
+      waveBigDev = keys[0] || allDevKeys()[0] || null;
+    return;
+  }
+  if (!keys.length){
+    row.innerHTML = '<div class="dim" style="padding:10px">勾选上方设备开始观察波形</div>';
+    return;
+  }
+  row.innerHTML = "";
+  for (const k of keys){
+    const m = devMeta(k);
+    const el = document.createElement("div");
+    el.className = "wmini";
+    el.innerHTML = `<div class="whd"><b>${esc(m.name)}</b>` +
+      (m.remote ? `<span class="dim">⌗ ${esc(m.peer)}</span>` : "") +
+      `<button class="wbig" style="margin-left:auto" title="切到单机大图（冻结/悬停/提取/CSV）">大图</button></div>` +
+      `<canvas data-dev="${esc(k)}"></canvas>`;
+    el.querySelector(".wbig").onclick = () => { waveBigDev = k; setWaveMode("big"); };
+    row.appendChild(el);
+  }
+}
+
+// applyXtr: 应用自定义提取正则到设备（空 = 恢复自动识别）。无效正则返回 false 不动状态。
+function applyXtr(dev, src){
   let re = null, reG = null;
   if (src){
     try { re = new RegExp(src); reG = new RegExp(src, "g"); }
     catch { return false; }
   }
-  const wv = wstate(selDev);
+  const wv = wstate(dev);
   wv.re = re; wv.reG = reG;
   wv.samples = []; wv.chNames = []; wv.frameStats = {};
   return true;
 }
-// xtrTest: 对最近 20 行原始日志逐行试跑当前输入，应用前先看见每行提出什么。
+// xtrTest: 对大图设备最近 20 行原始日志逐行试跑当前输入，应用前先看见每行提出什么。
 function xtrTest(){
   const src = $("xtrRe").value.trim();
   $("xtrErr").textContent = "";
@@ -732,7 +1080,7 @@ function xtrTest(){
   try { re = new RegExp(src); reG = new RegExp(src, "g"); }
   catch(e){ $("xtrErr").textContent = "✗ 正则无效: " + e.message; pv.textContent = ""; return; }
   const hasGroups = re.source.indexOf("(") >= 0;
-  const lines = (logs[logKey()] || "").split("\n").filter(l => l.trim()).slice(-20);
+  const lines = (logs[(waveBigDev || "") + "/serial"] || "").split("\n").filter(l => l.trim()).slice(-20);
   const rows = [];
   let hit = 0;
   for (const l of lines){
@@ -760,16 +1108,20 @@ function xtrTest(){
   pv.textContent = chInfo + "，命中 " + hit + "/" + lines.length + " 行\n\n" + rows.join("\n");
 }
 // autoChannels: 一行 → {frame, ch:[{name, val}]}；无可提取数值返回 null。
+// 首记号本身是 key=value（t=23.4 h=55 …无帧型遥测）时整行都是通道，帧型归为
+// 统一 "#kv"——否则帧键每行都变，永远凑不满活跃帧，波形一幅也画不出来。
 function autoChannels(body){
   const toks = body.split(/\s+/);
   if (toks.length < 2) return null;
   const ch = [];
-  for (let i = 1; i < toks.length && ch.length < WAVE_MAX_CH; i++){
+  const kvHead = WAVE_KV.test(toks[0]);
+  const frame = kvHead ? "#kv" : toks[0];
+  for (let i = kvHead ? 0 : 1; i < toks.length && ch.length < WAVE_MAX_CH; i++){
     const kv = WAVE_KV.exec(toks[i]);
     if (kv) ch.push({name: kv[1], val: parseFloat(kv[2])});
-    else if (WAVE_NUM.test(toks[i])) ch.push({name: "v"+i, val: parseFloat(toks[i])});
+    else if (WAVE_NUM.test(toks[i]) && !kvHead) ch.push({name: "v"+i, val: parseFloat(toks[i])});
   }
-  return ch.length ? {frame: toks[0], ch} : null;
+  return ch.length ? {frame, ch} : null;
 }
 function waveFeedDev(dev, chunk){
   if (waveFrozen) return;
@@ -830,49 +1182,48 @@ function dominantFrame(wv, now){
 }
 function waveEnd(){ return waveFrozen ? waveFrozenAt : Date.now(); }
 
-// drawWave: 分通道泳道 + 每像素 min/max 包络（保波形不失真）+ 悬停十字线。
-// 画的是「当前选中设备」自己那份缓冲（各自后台积累，切换即见）。
-function drawWave(){
-  const box = $("waveBox");
-  if (box.classList.contains("hidden")) return;
-  if (!selDev) return;
-  const wv = wstate(selDev);
-  const cv = $("waveCv"), ctx = cv.getContext("2d");
+// drawScope: 通用示波器渲染 —— 分通道泳道 + 每像素 min/max 包络（保波形不失真）。
+// o.mini=true 为多机网格的小图（省时间轴/悬停，只留通道名+当前值）；否则为单机大图
+//（时间网格 + 悬停十字线跨泳道读值 + 状态条更新）。画的是该设备自己那份缓冲。
+function drawScope(dev, cv, o){
+  const wv = wstate(dev);
   const dpr = window.devicePixelRatio || 1;
   const w = cv.clientWidth, h = cv.clientHeight;
-  if (!w) return;
+  if (!w || !h) return;
   if (cv.width !== Math.round(w*dpr) || cv.height !== Math.round(h*dpr)){
     cv.width = Math.round(w*dpr); cv.height = Math.round(h*dpr);
   }
+  const ctx = cv.getContext("2d");
   ctx.setTransform(dpr,0,0,dpr,0,0);
   ctx.clearRect(0,0,w,h);
-  const AX = 20; // 底部时间轴高
   const winMs = (parseInt($("waveWin").value,10)||60) * 1000;
   const end = waveEnd(), start = end - winMs;
   wv.samples = wv.samples.filter(s => s.t >= start - winMs);
   const vis = wv.samples.filter(s => s.t >= start);
   const nCh = Math.min(WAVE_MAX_CH, Math.max(wv.chNames.length,
     vis.reduce((m,s)=>Math.max(m,s.v.length),0)));
+  const AX = o.mini ? 0 : 20; // 底部时间轴高（小图省略）
   const laneH = nCh ? (h - AX) / nCh : h - AX;
 
-  // 时间网格（每窗 1/6 一档，与底轴标签对齐）
-  ctx.font = "10px Consolas,monospace"; ctx.textBaseline = "top";
-  for (let i = 0; i <= 6; i++){
-    const x = Math.round(w*i/6) + .5;
-    ctx.strokeStyle = "rgba(48,54,61,.5)"; ctx.setLineDash([2,4]);
-    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h - AX); ctx.stroke();
-    ctx.setLineDash([]);
-    const lbl = "-" + Math.round(winMs/1000*(6-i)/6) + "s";
-    ctx.fillStyle = "#8b949e";
-    ctx.fillText(lbl, Math.min(Math.max(x+3, 2), w-28), h - AX + 4);
+  if (!o.mini){
+    // 时间网格（每窗 1/6 一档，与底轴标签对齐）
+    ctx.font = "10px Consolas,monospace"; ctx.textBaseline = "top";
+    for (let i = 0; i <= 6; i++){
+      const x = Math.round(w*i/6) + .5;
+      ctx.strokeStyle = "rgba(48,54,61,.5)"; ctx.setLineDash([2,4]);
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h - AX); ctx.stroke();
+      ctx.setLineDash([]);
+      const lbl = "-" + Math.round(winMs/1000*(6-i)/6) + "s";
+      ctx.fillStyle = "#8b949e";
+      ctx.fillText(lbl, Math.min(Math.max(x+3, 2), w-28), h - AX + 4);
+    }
   }
 
-  const hoverT = waveHover !== null ? start + waveHover/w*winMs : null;
+  const hoverT = (!o.mini && waveHover !== null) ? start + waveHover/w*winMs : null;
   let nearest = null;
   if (hoverT !== null){
     for (const s of vis) if (!nearest || Math.abs(s.t-hoverT) < Math.abs(nearest.t-hoverT)) nearest = s;
   }
-  const infos = [];
   for (let ch = 0; ch < nCh; ch++){
     const y0 = ch*laneH, name = wv.chNames[ch] || ("ch"+(ch+1));
     const color = WAVE_COLORS[ch % WAVE_COLORS.length];
@@ -880,6 +1231,7 @@ function drawWave(){
     ctx.strokeStyle = "rgba(48,54,61,.9)";
     ctx.beginPath(); ctx.moveTo(0, y0+.5); ctx.lineTo(w, y0+.5); ctx.stroke();
     ctx.fillStyle = color; ctx.textBaseline = "top";
+    ctx.font = o.mini ? "9px Consolas,monospace" : "10px Consolas,monospace";
     ctx.fillText(name, 6, y0+4);
     // 通道 min/max（含 8% 余量）
     let mn = Infinity, mx = -Infinity, cur = null;
@@ -921,46 +1273,66 @@ function drawWave(){
     }
     ctx.strokeStyle = color; ctx.lineWidth = 1.5;
     ctx.lineJoin = "round"; ctx.lineCap = "round"; ctx.stroke();
-    // 悬停读值
+    // 读值标注：小图只标当前值；大图标当前值 + 区间 + 悬停读值
     let hv = null;
     if (nearest && ch < nearest.v.length) hv = nearest.v[ch];
     ctx.fillStyle = "#e6edf3"; ctx.textBaseline = "top";
-    const rt = hv !== null ? hv.toFixed(2) : (cur === null ? "–" : cur.toFixed(2));
-    ctx.fillText(`${rt}  (${mn.toFixed(1)}~${mx.toFixed(1)})`, Math.min(w-150, 6 + ctx.measureText(name).width + 10), y0+4);
-    if (hv !== null){
-      const hx = (nearest.t - start)/winMs * w;
-      ctx.fillStyle = color;
-      ctx.beginPath(); ctx.arc(hx, yOf(hv), 3, 0, 7); ctx.fill();
-      infos.push({name, v: hv, color, hx});
+    if (o.mini){
+      ctx.fillText(cur === null ? "–" : cur.toFixed(2), Math.min(w-40, 6 + ctx.measureText(name).width + 8), y0+4);
+    } else {
+      const rt = hv !== null ? hv.toFixed(2) : (cur === null ? "–" : cur.toFixed(2));
+      ctx.fillText(`${rt}  (${mn.toFixed(1)}~${mx.toFixed(1)})`, Math.min(w-150, 6 + ctx.measureText(name).width + 10), y0+4);
+      if (hv !== null){
+        const hx = (nearest.t - start)/winMs * w;
+        ctx.fillStyle = color;
+        ctx.beginPath(); ctx.arc(hx, yOf(hv), 3, 0, 7); ctx.fill();
+      }
     }
   }
   if (nCh === 0){
-    ctx.fillStyle = "#8b949e"; ctx.font = "13px 'Segoe UI',sans-serif"; ctx.textBaseline = "middle";
+    ctx.fillStyle = "#8b949e";
+    ctx.font = o.mini ? "11px 'Segoe UI',sans-serif" : "13px 'Segoe UI',sans-serif";
+    ctx.textBaseline = "middle";
     ctx.fillText(wv.re ? "等待匹配的行…" : "等待可识别的遥测行（数字或 key=数值 记号）…", 16, (h-AX)/2);
   }
-  // 十字线（最上层）
-  if (waveHover !== null && nearest){
-    ctx.strokeStyle = "rgba(230,237,243,.35)";
-    ctx.beginPath(); ctx.moveTo(waveHover+.5, 0); ctx.lineTo(waveHover+.5, h-AX); ctx.stroke();
-    ctx.fillStyle = "#e6edf3"; ctx.font = "10px Consolas,monospace"; ctx.textBaseline = "top";
-    const dt = (nearest.t - end)/1000;
-    ctx.fillText((dt >= 0 ? "" : "T-") + Math.abs(dt).toFixed(1) + "s", waveHover+5, h-AX-14);
+  // 十字线（大图最上层）+ 状态条
+  if (!o.mini){
+    if (waveHover !== null && nearest){
+      ctx.strokeStyle = "rgba(230,237,243,.35)";
+      ctx.beginPath(); ctx.moveTo(waveHover+.5, 0); ctx.lineTo(waveHover+.5, h-AX); ctx.stroke();
+      ctx.fillStyle = "#e6edf3"; ctx.font = "10px Consolas,monospace"; ctx.textBaseline = "top";
+      const dt = (nearest.t - end)/1000;
+      ctx.fillText((dt >= 0 ? "" : "T-") + Math.abs(dt).toFixed(1) + "s", waveHover+5, h-AX-14);
+    }
+    const m = waveBigDev ? devMeta(waveBigDev) : null;
+    const absent = m && !m.remote && status.devices.length > 0 &&
+      !status.devices.some(d => d.name === waveBigDev);
+    $("waveDev").textContent = waveBigDev ? waveBigDev + (absent ? " · ⏳ 等待接入" : "") : "";
+    const hzWin = vis.filter(s=>s.t >= end-5000).length;
+    $("waveMode").textContent = wv.re ? "自定义" : "自动";
+    $("waveInfo").innerHTML = (wv.re ? "自定义 · " : "自动(" + esc(wv.frameStats.__cur || "…") + ") · ") +
+      `${(hzWin/5).toFixed(1)} Hz · ${vis.length} 样本` + (waveFrozen ? " · 已冻结" : "");
   }
-  const hzWin = vis.filter(s=>s.t >= end-5000).length;
-  $("waveMode").textContent = wv.re ? "自定义" : "自动";
-  $("waveInfo").innerHTML = (wv.re ? "自定义 · " : "自动(" + esc(wv.frameStats.__cur || "…") + ") · ") +
-    `${(hzWin/5).toFixed(1)} Hz · ${vis.length} 样本` + (waveFrozen ? " · 已冻结" : "");
 }
-setInterval(drawWave, 120);
+function drawAll(){
+  if (view !== "wave") return;
+  if (waveMode === "big"){
+    if (waveBigDev) drawScope(waveBigDev, $("waveCv"), {mini:false});
+  } else {
+    document.querySelectorAll("#waveGrid canvas").forEach(cv => drawScope(cv.dataset.dev, cv, {mini:true}));
+  }
+}
+setInterval(drawAll, 120);
 $("waveCv").addEventListener("mousemove", e => {
   const r = e.target.getBoundingClientRect();
   waveHover = e.clientX - r.left;
-  drawWave();
 });
-$("waveCv").addEventListener("mouseleave", () => { waveHover = null; drawWave(); });
-// —— 高级提取弹窗与帮助页接线 ——
+$("waveCv").addEventListener("mouseleave", () => { waveHover = null; });
+
+// —— 高级提取弹窗（作用于一机大图设备）与帮助页接线 ——
 $("btnXtr").onclick = $("waveMode").onclick = () => {
-  const wv = wstate(selDev);
+  if (!waveBigDev){ toast("✗ 先勾选一台设备", false); return; }
+  const wv = wstate(waveBigDev);
   $("xtrRe").value = wv.re ? wv.re.source : "";
   $("xtrModal").classList.remove("hidden");
   xtrTest();
@@ -970,10 +1342,10 @@ for (const b of document.querySelectorAll(".tpl"))
   b.onclick = () => { $("xtrRe").value = b.dataset.re; xtrTest(); };
 $("xtrRe").oninput = xtrTest;
 $("xtrApply").onclick = () => {
-  if (!applyXtr($("xtrRe").value.trim())){ xtrTest(); return; } // 无效正则：试跑区标红，不关窗
+  if (!waveBigDev || !applyXtr(waveBigDev, $("xtrRe").value.trim())){ xtrTest(); return; } // 无效正则：试跑区标红，不关窗
   $("xtrModal").classList.add("hidden");
 };
-$("xtrAuto").onclick = () => { applyXtr(""); $("xtrModal").classList.add("hidden"); };
+$("xtrAuto").onclick = () => { if (waveBigDev) applyXtr(waveBigDev, ""); $("xtrModal").classList.add("hidden"); };
 $("btnHelp").onclick = () => $("helpModal").classList.remove("hidden");
 $("helpClose").onclick = () => $("helpModal").classList.add("hidden");
 $("waveFreeze").onclick = () => {
@@ -982,15 +1354,17 @@ $("waveFreeze").onclick = () => {
   $("waveFreeze").textContent = waveFrozen ? "恢复" : "冻结";
 };
 $("waveClear").onclick = () => {
-  const wv = wstate(selDev);
+  if (!waveBigDev) return;
+  const wv = wstate(waveBigDev);
   wv.samples = []; wv.tail = ""; wv.frameStats = {}; wv.chNames = [];
 };
 $("btnExportWave").onclick = () => {
-  const wv = wstate(selDev);
+  if (!waveBigDev){ toast("✗ 先勾选一台设备", false); return; }
+  const wv = wstate(waveBigDev);
   if (!wv.samples.length){ toast("✗ 无样本可导出", false); return; }
   const head = "t_ms," + (wv.chNames.length ? wv.chNames.join(",") : wv.samples[0].v.map((_,i)=>"ch"+(i+1)).join(","));
   const csv = [head, ...wv.samples.map(s => s.t + "," + s.v.join(","))].join("\n");
-  download(`${selDev}-wave-${stamp()}.csv`, csv, "text/csv");
+  download(`${waveBigDev}-wave-${stamp()}.csv`, csv, "text/csv");
 };
 
 function stamp(){ const d = new Date(), p = n => String(n).padStart(2,"0");
@@ -1001,106 +1375,11 @@ function download(name, text, mime){
   a.download = name; a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
 }
-$("btnExportLog").onclick = () => {
-  const buf = logs[logKey()] || "";
-  if (!buf){ toast("✗ 缓冲为空", false); return; }
-  download(`${selDev}-${selKind}-${stamp()}.log`, buf);
-};
-
-// openStream: 只管「视图」——serial 流每设备常开（ensureSerial），这里按
-// tab 开/关事件流、切换可见性、渲染常在的 serial 缓冲。切设备/切 tab 都
-// 不清波形缓冲：每台设备的波形在后台一直积累。
-function openStream(){
-  if (evES){ evES.close(); evES = null; }
-  const wave = selKind === "wave";
-  $("waveBox").classList.toggle("hidden", !wave);
-  $("log").classList.toggle("hidden", wave);
-  $("logSearch").classList.toggle("hidden", wave);
-  $("logCount").classList.toggle("hidden", wave);
-  $("autoscroll").parentElement.classList.toggle("hidden", wave);
-  $("btnClear").classList.toggle("hidden", wave);
-  $("btnExportLog").classList.toggle("hidden", wave);
-  $("btnExportWave").classList.toggle("hidden", !wave);
-  updateViewerLabels();
-  if (!selDev){ $("log").textContent = "选择左侧设备卡片查看…"; return; }
-  if (selKind === "events"){
-    // 事件流按需重开（从末尾 16KB 起步）；serial/波形用常开缓冲不清零
-    const key = selDev + "/events";
-    logs[key] = ""; $("log").textContent = "";
-    evES = new EventSource(liveURL(selDev, "events"));
-    evES.onmessage = ev => {
-      let chunk; try { chunk = JSON.parse(ev.data); } catch { return; }
-      const k = selDev + "/events";
-      logs[k] = (logs[k] || "") + chunk;
-      if (logs[k].length > LOG_CAP) logs[k] = logs[k].slice(-LOG_CAP);
-      if (selKind === "events") renderLog();
-    };
-  } else {
-    renderLog(); // serial 缓冲常在：切换设备即刻满屏尾随，不等下一段数据
-  }
-}
-
-// updateViewerLabels: 日志区角标与波形标题的设备名（含缺席等待态）。
-function updateViewerLabels(){
-  const kindZh = selKind === "serial" ? "全量" : selKind === "events" ? "事件流" : "波形";
-  const absent = !!selDev && !isRemoteDev(selDev) && status.devices.length > 0 &&
-    !status.devices.some(d=>d.name === selDev);
-  $("viewerDev").textContent = selDev ? selDev + " · " + kindZh + (absent ? " · ⏳ 等待接入" : "") : "";
-  $("waveDev").textContent = selDev ? selDev + (absent ? " · ⏳ 等待接入" : "") : "";
-}
-
-// —— 日志渲染与搜索：非空查询 = 过滤模式（正则优先，非法回退子串）+ 高亮 ——
-function logMatcher(){
-  const q = $("logSearch").value.trim();
-  if (!q) return null;
-  // /g 必须加：高亮循环靠 lastIndex 前进，非全局 exec 永远返回首个匹配 → 死循环冻页
-  try { const re = new RegExp(q, "gi");
-    return {re, test: l => { re.lastIndex = 0; return re.test(l); }}; }
-  catch { const s = q.toLowerCase(); return {re: null, test: l => l.toLowerCase().includes(s), lit: q}; }
-}
-function renderLog(){
-  const el = $("log");
-  const buf = logs[logKey()] || "";
-  const stick = $("autoscroll").checked &&
-    el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-  const matcher = logMatcher();
-  let lines = buf.split("\n"), hitCount = 0, total = lines.length;
-  if (matcher){
-    lines = lines.filter(l => !l || matcher.test(l));
-    hitCount = lines.filter(l => l && matcher.test(l)).length;
-    $("logCount").textContent = `${hitCount}/${total} 行`;
-  } else $("logCount").textContent = "";
-  if (selKind === "events") {
-    el.innerHTML = lines.map(l => {
-      const safe = esc(l);
-      return HIT.test(l) ? `<span class="hit">${safe}</span>` : safe;
-    }).join("\n");
-  } else if (matcher) {
-    el.innerHTML = lines.map(l => {
-      if (!l) return "";
-      if (!matcher.test(l)) return esc(l);
-      if (matcher.re){
-        let out = "", last = 0, m, hits = 0; matcher.re.lastIndex = 0;
-        while ((m = matcher.re.exec(l)) && hits < 200){
-          out += esc(l.slice(last, m.index)) + "<mark>" + esc(m[0]) + "</mark>";
-          last = m.index + m[0].length;
-          hits++;
-          if (!m[0].length) matcher.re.lastIndex++;
-        }
-        return out + esc(l.slice(last));
-      }
-      const i = l.toLowerCase().indexOf(matcher.lit.toLowerCase());
-      return esc(l.slice(0,i)) + "<mark>" + esc(l.slice(i, i+matcher.lit.length)) + "</mark>" + esc(l.slice(i+matcher.lit.length));
-    }).join("\n");
-  } else el.textContent = buf;
-  if (stick) el.scrollTop = el.scrollHeight;
-}
-$("logSearch").oninput = () => renderLog();
-$("btnClear").onclick = () => { logs[logKey()] = ""; $("log").textContent = ""; $("logCount").textContent = ""; };
 
 const HIT = /rst:0x|Guru|Backtrace|panic|abort|assert|watchdog|WDT/i;
 
-// —— 事件时间线：30 分钟窗口内每设备一行泳道，签名命中彩色刻度，悬停看原文 ——
+// —— 事件时间线（仪表盘）：30 分钟窗口内每设备一行泳道，签名命中彩色刻度，
+// 悬停看原文；同一份数据顺带统计 KPI 事件数 ——
 const TL_WIN = 30*60*1000;
 function tlClass(line){
   if (/\[(reset-banner|guru-meditation|backtrace|panic|watchdog|abort|assert)\]/i.test(line)) return "err";
@@ -1111,6 +1390,7 @@ function tlClass(line){
 function pollEvents(){
   fetch("/api/events").then(r=>r.json()).then(list=>{
     const now = Date.now(), tl = $("tl");
+    const st = {total: 0, err: 0, crit: 0, life: 0};
     if (!list || !list.length || list.every(g => !g.lines || !g.lines.length)){
       tl.innerHTML = '<div class="dim" style="padding:4px 0">暂无事件</div>';
     } else {
@@ -1126,13 +1406,17 @@ function pollEvents(){
           const t = new Date(m[1] + "T" + m[2] + "." + m[3]).getTime();
           const age = now - t;
           if (age < 0 || age > TL_WIN) continue;
+          const cls = tlClass(l);
+          st.total++; if (cls === "err") st.crit++; else if (cls === "life") st.life++; else st.err++;
           const x = Math.max(0, Math.min(99.5, (1 - age/TL_WIN)*100));
-          ticks.push(`<div class="tl-tick ${tlClass(l)}" style="left:${x}%" title="${esc(l.slice(1, 160))}"></div>`);
+          ticks.push(`<div class="tl-tick ${cls}" style="left:${x}%" title="${esc(l.slice(1, 160))}"></div>`);
         }
         html += `<div class="tl-row"><span class="tl-dev">${esc(g.device)}</span><div class="tl-track">${ticks.join("")}</div></div>`;
       }
       tl.innerHTML = html;
     }
+    evStats = st;
+    updateKpis();
     const el = $("events");
     if (!list || !list.length){ el.innerHTML = '<div class="dim" style="padding:12px">暂无事件</div>'; return; }
     el.innerHTML = list.map(g =>
@@ -1144,43 +1428,9 @@ function pollEvents(){
 }
 setInterval(pollEvents, 5000); pollEvents();
 
-// —— 多设备对比：可折叠面板内每设备一路迷你尾随。内容来自 ensureSerial 的
-// 常开缓冲（不再各开 SSE）；关闭折叠即停渲染，数据照常在后台积累 ——
-let cmpBuf = {}, cmpSig = "";
-function syncCmp(){
-  const row = $("cmpRow"), open = $("cmpPanel").open;
-  const names = status.devices.map(d => d.name);
-  const sig = names.join("|") + (open ? "+open" : "");
-  if (sig === cmpSig) { if (open) updateCmpHeads(); return; }
-  cmpSig = sig;
-  if (!open || !names.length){
-    row.innerHTML = !names.length ? '<div class="dim" style="padding:6px 0">暂无设备</div>' : "";
-    return;
-  }
-  row.innerHTML = "";
-  for (const d of status.devices){
-    const el = document.createElement("div");
-    el.className = "cmp-dev";
-    el.innerHTML = `<div class="hd2"><b>${esc(d.name)}</b><span class="dim" style="font:12px sans-serif">${esc(d.tty)}</span>` +
-      `<span class="cmp-rate dim" style="font:12px sans-serif;margin-left:auto"></span></div><pre></pre>`;
-    row.appendChild(el);
-    cmpAppend(d.name); // 缓冲由常开 serial 流持续喂，打开即有内容
-  }
-}
-function cmpAppend(name){
-  const el = document.querySelector(`.cmp-dev:nth-child(${status.devices.findIndex(d=>d.name===name)+1}) pre`);
-  if (!el) return;
-  const lines = (cmpBuf[name] || "").split("\n");
-  el.textContent = lines.slice(-12).join("\n");
-  el.scrollTop = el.scrollHeight;
-}
-function updateCmpHeads(){
-  document.querySelectorAll(".cmp-dev").forEach((el, i) => {
-    const d = status.devices[i];
-    if (d) el.querySelector(".cmp-rate").textContent = (rate[d.name]||0) + " B/s";
-  });
-}
-$("cmpPanel").addEventListener("toggle", syncCmp);
+// —— 启动：hash > 上次页面 > 仪表盘 ——
+setView(VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1)
+  : (localStorage.getItem("st_view") || "dash"), false);
 </script>
 </body>
 </html>

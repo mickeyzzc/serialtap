@@ -115,13 +115,28 @@ Linux has no tray (systray needs libappindicator) — use the web panel instead.
 **http://127.0.0.1:8801/**, `--web off` to disable) — everything the daemon
 sees, plus every operation:
 
+- **Three-view navigation**: dashboard / logs / waveforms (remembers the last
+  view; `#dash`/`#logs`/`#wave` deep-link)
+- **Dashboard**: KPI strip (devices, collecting, total throughput, unhealthy
+  boards, events in the last 30 min, mesh nodes online) + device cards + a
+  30-minute event timeline + mesh peer management — whole-fleet health on one
+  screen; boards silent >5 min or with ≥3 reopens count as unhealthy (red)
 - **Device cards**: state (collecting/paused/suspended/flashing), proxy-session
   badge, live write rate (log-size delta), full/event log sizes and total
   retention usage
-- **Live logs**: full/event dual tabs, SSE tailing (700 ms incremental pushes,
-  follows day and size rotation), pausable auto-scroll, clear screen; pick the
-  board via the device dropdown or by clicking a card (this is where you
-  select the COM with multiple boards attached)
+- **Multi-device logs**: tick any number of boards (mesh remotes included) and
+  watch them together — **side-by-side** panes or a **merged** stream
+  interleaved by timestamp with per-device colored tags; regex/substring
+  search + highlight works across devices; export the buffered logs of every
+  selected board. SSE tailing (700 ms incremental pushes, follows day and
+  size rotation)
+- **Multi-device waveforms**: every board is sampled continuously in the
+  background (switching views or selection never loses data) — the **grid**
+  shows one live scope per board on one screen, and "大图" (detail view) opens
+  single-board analysis (freeze, hover crosshair readout, advanced regex
+  extraction, CSV export); zero-config auto-recognition of telemetry lines
+  (`key=value` and numeric tokens — when the line *starts* with key=value,
+  every token is a channel)
 - **Recent events**: signature hits (reset banner, Guru Meditation, WDT…) +
   collector lifecycle + proxy-flash history, grouped per device, matched lines
   highlighted
