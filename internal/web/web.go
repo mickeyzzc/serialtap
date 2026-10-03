@@ -588,9 +588,15 @@ func (s *Server) handleLiveMulti(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-r.Context().Done():
+			// 先等全部尾随 goroutine 退出再返回：否则它们可能还在写响应体，
+			// 与 net/http 的 finishRequest 产生数据竞争（-race 实测）。
+			cancel()
+			wg.Wait()
 			return
 		case <-heart.C:
 			if !ping() {
+				cancel()
+				wg.Wait()
 				return
 			}
 		}
