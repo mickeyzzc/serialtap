@@ -33,6 +33,8 @@ nav#views .nv.on{background:#21262d;color:var(--fg)}
 .kpi .l{color:var(--dim);font-size:11px;margin-top:2px}
 .kpi.good .n{color:var(--green)}
 .kpi.bad .n{color:var(--red)}
+.kpi.click{cursor:pointer}
+.kpi.click:hover{border-color:var(--blue)}
 
 #cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px;margin-bottom:4px}
 .card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px 14px;cursor:pointer}
@@ -77,14 +79,16 @@ cursor:pointer;color:var(--dim);user-select:none;background:#0a0e14}
 .dchip:hover{border-color:var(--blue)}
 .dchip.on{color:var(--fg);border-color:var(--teal);background:rgba(57,210,192,.1)}
 .dchip.st-flashing{border-color:var(--red)}
+.stdot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:5px;vertical-align:1px}
 
 /* —— 日志页：并排窗格 + 合并流 —— */
 #logGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:10px;padding:10px}
 .lpane{background:#0a0e14;border:1px solid var(--border);border-radius:8px;display:flex;flex-direction:column;min-width:0}
 .lpane .lhd{display:flex;gap:8px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--border);font-size:12px;flex-wrap:wrap}
 .lpane .lhd b{font-weight:600}
-.lpane pre{margin:0;padding:8px 10px;height:330px;overflow-y:auto;font:12px/1.45 Consolas,monospace;
+.lpane pre{margin:0;padding:8px 10px;height:44vh;overflow-y:auto;font:12px/1.45 Consolas,monospace;
 white-space:pre-wrap;word-break:break-all}
+#logGrid.solo .lpane pre{height:62vh}
 #logMerge{margin:0;padding:10px 12px;height:62vh;overflow-y:auto;font:12px/1.5 Consolas,monospace;background:#0a0e14}
 .mline{white-space:pre-wrap;word-break:break-all}
 .mline .devtag{font-weight:600}
@@ -120,7 +124,7 @@ select{background:#21262d;color:var(--fg);border:1px solid var(--border);border-
 .wmini{background:#0a0e14;border:1px solid var(--border);border-radius:8px;overflow:hidden}
 .wmini .whd{display:flex;gap:8px;align-items:center;padding:5px 10px;font-size:12px;color:var(--teal)}
 .wmini .whd b{font-weight:600}
-.wmini canvas{width:100%;height:140px;display:block;cursor:crosshair}
+.wmini canvas{width:100%;height:160px;display:block;cursor:crosshair}
 #waveBox{display:flex;flex-direction:column;background:#0a0e14}
 .wavebar{display:flex;align-items:center;gap:8px;padding:8px 12px;flex-wrap:wrap}
 .wavebar select{flex:none}
@@ -179,17 +183,17 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
   <!-- ═══ 视图一：仪表盘 —— 全网健康总览 ═══ -->
   <section id="view-dash">
     <div class="kpis">
-      <div class="kpi"><div class="n" id="kDev">0</div><div class="l">接入设备</div></div>
-      <div class="kpi" id="kColK"><div class="n" id="kCol">0</div><div class="l">采集中</div></div>
-      <div class="kpi"><div class="n" id="kRate">0</div><div class="l">总吞吐 B/s</div></div>
-      <div class="kpi" id="kBadK" title=""><div class="n" id="kBad">0</div><div class="l">异常设备</div></div>
-      <div class="kpi" id="kEvK" title=""><div class="n" id="kEv">0</div><div class="l">事件 · 近30min</div></div>
+      <div class="kpi" id="kDevK"><div class="n" id="kDev">0</div><div class="l">接入设备 · 全网</div></div>
+      <div class="kpi" id="kColK"><div class="n" id="kCol">0</div><div class="l">采集中 · 全网</div></div>
+      <div class="kpi" id="kRateK" title="只统计本机接入的设备；远程节点速率可在其面板查看"><div class="n" id="kRate">0</div><div class="l">本机吞吐 B/s</div></div>
+      <div class="kpi" id="kBadK" title=""><div class="n" id="kBad">0</div><div class="l">异常设备 · 全网</div></div>
+      <div class="kpi" id="kEvK" title=""><div class="n" id="kEv">0</div><div class="l">事件 · 近30min · 本机</div></div>
       <div class="kpi hidden" id="kMeshK"><div class="n" id="kMesh">0/0</div><div class="l">mesh 节点在线</div></div>
     </div>
     <div id="cards"><div id="nodata">暂无设备接入</div></div>
     <div class="dashgrid">
       <div class="panel">
-        <div class="hd"><span class="t">事件时间线 · 最近事件</span><span class="dim" style="font-size:11px">签名命中 · 生命周期 · 刷机</span></div>
+        <div class="hd"><span class="t">事件时间线 · 最近事件</span><span class="dim" style="font-size:11px">本机设备 · 签名命中 · 生命周期 · 刷机</span></div>
         <div id="tl"><div class="dim" style="padding:4px 0">暂无事件</div></div>
         <div id="events"></div>
       </div>
@@ -208,13 +212,15 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
       <div class="hd">
         <span class="t">多机日志</span>
         <span class="chips" id="logChips"></span>
+        <button id="logAll" title="勾选全部设备">全选</button>
+        <button id="logNone" title="清空选择（看单台：点设备卡 / 窗格标题）">清空</button>
       </div>
       <div class="hd">
-        <select id="logLayout" title="布局：并排 = 每台一个窗格；合并 = 按时间交织成一条流">
+        <select id="logLayout" title="布局：并排 = 每台一个窗格；合并 = 按时间交织（每台保底配额，防刷屏）">
           <option value="grid" selected>并排</option>
           <option value="merge">合并</option>
         </select>
-        <select id="logLines" title="每个窗格 / 合并流显示的行数">
+        <select id="logLines" title="并排 = 每窗格行数；合并 = 每台配额行数">
           <option value="100">100 行</option>
           <option value="200" selected>200 行</option>
           <option value="400">400 行</option>
@@ -238,6 +244,8 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
       <div class="hd">
         <span class="t">多机波形</span>
         <span class="chips" id="waveChips"></span>
+        <button id="waveAll" title="勾选全部设备">全选</button>
+        <button id="waveNone" title="清空选择">清空</button>
       </div>
       <div class="hd">
         <span class="tabs" id="waveViewTabs">
@@ -256,6 +264,7 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
       <div id="waveBox" class="hidden">
         <div class="wavebar">
           <b id="waveDev" class="devtag"></b>
+          <select id="waveDevSel" title="切换大图设备"></select>
           <span class="chip" id="waveMode" title="点击配置提取策略">自动</span>
           <button id="waveFreeze">冻结</button>
           <button id="waveClear">清除</button>
@@ -326,8 +335,8 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
       <table>
         <tr><th>页面</th><th>看什么</th></tr>
         <tr><td><b>仪表盘</b></td><td>全网健康总览：KPI 指标条（设备数/采集中/总吞吐/异常/事件/mesh 节点）、设备卡（速率迷你图、静默、重开）、30 分钟事件时间线、mesh 节点管理</td></tr>
-        <tr><td><b>日志</b></td><td>多机同时看日志：勾选多台设备，<b>并排</b>（每台一个窗格）或<b>合并</b>（按时间交织成一条流，每行带彩色设备标签）；搜索/正则过滤与高亮跨设备生效</td></tr>
-        <tr><td><b>波形</b></td><td>多机同时看波形：<b>多机网格</b>每台一块实时示波器；点「大图」进单机分析（冻结/悬停读值/高级提取/导出 CSV）</td></tr>
+        <tr><td><b>日志</b></td><td>多机同时看日志：勾选多台设备，<b>并排</b>（每台一个窗格）或<b>合并</b>（按时间交织、每台保底配额防刷屏，每行带彩色设备标签）；「全选/清空」一键改选，点设备卡或窗格标题 = 只看这台；搜索/正则过滤与高亮跨设备生效</td></tr>
+        <tr><td><b>波形</b></td><td>多机同时看波形：<b>多机网格</b>每台一块实时示波器；「大图」进单机分析（冻结/悬停读值/高级提取/导出 CSV），大图里用设备下拉随时换台</td></tr>
       </table>
       <p>所有设备（含 mesh 远端）都在后台持续采样与缓冲——勾选、切换、换页都不会丢数据。</p>
 
@@ -388,19 +397,14 @@ const fmtAgo = ms => { if (!ms || ms < 0) return "—";
   if (s < 90) return s+"s"; if (s < 5400) return Math.floor(s/60)+"m"; return Math.floor(s/3600)+"h"; };
 
 let status = {devices:[]}, prevSize = {}, rate = {}, rateHist = {};
-const logs = {};             // "dev/serial" → 日志缓冲（每设备独立，常开 SSE 后台喂，换页不丢）
-const serialES = {};         // dev → 常开 serial SSE（本地 + mesh 远程统一管线）
+const logs = {};             // "dev/serial" → 日志缓冲（常开复用 SSE 后台喂，换页不丢）
 let knownDevs = new Set();   // 见过的设备键：新设备自动进多选（默认勾上）
 const LOG_CAP = 256 * 1024, SPARK_N = 120;
 const WAVE_COLORS = ["#2DD4BF","#58A6FF","#F5A623","#FF7B72","#7EE787","#D2A8FF"];
 
-// 远程设备键 "peer/dev"：SSE 走 mesh 桥接端点，其余管线（缓冲/波形/日志）与本地完全一致
+// 远程设备键 "peer/dev"：与本地设备同管线（SSE 帧里带设备键），其余
+// （缓冲/波形/日志）完全一致
 function isRemoteDev(dev){ return (dev || "").includes("/"); }
-function liveURL(dev, kind){
-  if (!isRemoteDev(dev)) return `/api/devices/${encodeURIComponent(dev)}/live?kind=${kind}`;
-  const i = dev.indexOf("/");
-  return `/api/mesh/devices/${encodeURIComponent(dev.slice(0,i))}/${encodeURIComponent(dev.slice(i+1))}/live?kind=${kind}`;
-}
 // devMeta: 设备键 → 展示元数据（本地查 status，远程查 mesh 聚合）。
 function devMeta(k){
   if (!isRemoteDev(k)){
@@ -443,11 +447,16 @@ function setView(v, fromHash){
 window.addEventListener("hashchange", () => setView(location.hash.slice(1) || "dash", true));
 for (const b of document.querySelectorAll("#views .nv"))
   b.onclick = () => setView(b.dataset.v, false);
-// 跳到日志页单看某台（设备卡 / mesh 行点击）
-function gotoLogs(k){
-  logSel.add(k); localStorage.setItem("st_logsel", JSON.stringify([...logSel]));
+// 跳到日志页单看某台（设备卡 / mesh 行 / KPI 异常块点击）——独看式：清掉其它勾选，
+// 「全选」按钮一键恢复
+function gotoLogsKeys(keys){
+  logSel.clear();
+  for (const k of keys) logSel.add(k);
+  localStorage.setItem("st_logsel", JSON.stringify([...logSel]));
+  renderChips("logChips", logSel, "st_logsel");
   setView("logs");
 }
+function gotoLogs(k){ gotoLogsKeys([k]); }
 
 // —— 设备多选 chips（日志/波形两套独立选择，均持久化）——
 function loadSet(key){ try { const a = JSON.parse(localStorage.getItem(key) || "[]");
@@ -457,6 +466,10 @@ function autoAdopt(){ // 新接入的设备默认进两个多选（用户取消�
   for (const k of allDevKeys()) if (!knownDevs.has(k)){ knownDevs.add(k); logSel.add(k); waveSel.add(k); }
 }
 const chipSig = {};
+function stDotColor(state){
+  return state === "collecting" ? "#3fb950" : state === "paused" ? "#d29922" :
+         state === "suspended" ? "#58a6ff" : state === "flashing" ? "#f85149" : "#8b949e";
+}
 function renderChips(cid, sel, storeKey){
   const el = $(cid);
   const keys = allDevKeys();
@@ -469,35 +482,52 @@ function renderChips(cid, sel, storeKey){
     const m = devMeta(k);
     const b = document.createElement("span");
     b.className = "dchip" + (sel.has(k) ? " on" : "") + (m.state === "flashing" ? " st-flashing" : "");
-    b.textContent = (m.remote ? "⌗ " : "") + m.name + (m.remote ? " · " + m.peer : "");
+    b.innerHTML = `<i class="stdot" style="background:${stDotColor(m.state)}"></i>` +
+      esc((m.remote ? "⌗ " : "") + m.name + (m.remote ? " · " + m.peer : ""));
     b.title = (m.tty ? m.tty + " · " : "") + (m.state || "状态未知");
     b.onclick = () => {
       if (sel.has(k)) sel.delete(k); else sel.add(k);
       localStorage.setItem(storeKey, JSON.stringify([...sel]));
       renderChips(cid, sel, storeKey);
-      if (cid === "logChips"){ syncLogGrid(); renderLogs(); } else syncWaveGrid();
+      if (cid === "logChips"){ syncLogGrid(); renderLogs(); }
+      else {
+        // 大图模式下点 chips：新勾上的设备直接成为大图主体，所见即所得
+        if (waveMode === "big" && sel.has(k)){ waveBigDev = k; }
+        syncWaveGrid();
+      }
     };
     el.appendChild(b);
   }
 }
 
-// ensureSerial: 每设备一条常开 serial SSE（本地与 mesh 远程同一管线），喂三处：
-// 日志缓冲（切页即刻满屏尾随）、波形缓冲（后台采样）、合并流（按行带时间戳入队）。
-function ensureSerial(dev){
-  if (serialES[dev]) return;
-  const s = serialES[dev] = new EventSource(liveURL(dev, "serial"));
-  s.onmessage = ev => {
-    let chunk; try { chunk = JSON.parse(ev.data); } catch { return; }
-    const k = dev + "/serial";
-    logs[k] = (logs[k] || "") + chunk;
-    if (logs[k].length > LOG_CAP) logs[k] = logs[k].slice(-LOG_CAP);
-    waveFeedDev(dev, chunk);
-    const lines = chunk.split("\n");          // 合并流：按行拆，半行留到下个 chunk 拼装
-    lines[0] = (mergeTail[dev] || "") + lines[0];
-    mergeTail[dev] = lines.pop();
-    for (const l of lines) if (l) mergeQ.push({d: dev, t: parseTs(l), l, seq: mergeSeq++});
-    if (mergeQ.length > 4000) mergeQ = mergeQ.slice(-3000);
-    if (view === "logs") scheduleLogRender();
+// 全部设备共用一条多路复用 SSE（/api/live）：浏览器对同 host 只有 ~6 条
+// 并发连接，每设备一条常开流会耗尽连接池（多板时页面卡死、第二开面板连首
+// 页都进不来）。帧 {dev, chunk} → 喂三处：日志缓冲、波形缓冲（后台采样）、
+// 合并流。设备增减时重连（各设备重放末尾 16KB）；断线由 EventSource 自动重连。
+let liveES = null, liveSig = null;
+function feedDeviceChunk(dev, chunk){
+  const k = dev + "/serial";
+  logs[k] = (logs[k] || "") + chunk;
+  if (logs[k].length > LOG_CAP) logs[k] = logs[k].slice(-LOG_CAP);
+  waveFeedDev(dev, chunk);
+  const lines = chunk.split("\n");          // 合并流：按行拆，半行留到下个 chunk 拼装
+  lines[0] = (mergeTail[dev] || "") + lines[0];
+  mergeTail[dev] = lines.pop();
+  for (const l of lines) if (l) mergeQ.push({d: dev, t: parseTs(l), l, seq: mergeSeq++});
+  if (mergeQ.length > 4000) mergeQ = mergeQ.slice(-3000);
+  if (view === "logs") scheduleLogRender();
+}
+function ensureLivePipe(){
+  const keys = allDevKeys().slice().sort().join(",");
+  if (liveES && liveSig === keys) return;
+  liveSig = keys;
+  if (liveES){ liveES.close(); liveES = null; }
+  if (!keys) return;
+  liveES = new EventSource(`/api/live?kind=serial&devices=${encodeURIComponent(keys)}`);
+  liveES.onmessage = ev => {
+    let m; try { m = JSON.parse(ev.data); } catch { return; }
+    if (!m.dev || typeof m.chunk !== "string") return;
+    feedDeviceChunk(m.dev, m.chunk);
   };
 }
 let mergeQ = [], mergeTail = {}, mergeSeq = 0;   // 合并流：到达序入队，渲染时按时间戳归位
@@ -514,13 +544,12 @@ function pollStatus(){
       const h = rateHist[d.name] = rateHist[d.name] || [];
       h.push(rate[d.name]); if (h.length > SPARK_N) h.shift();
     }
-    for (const d of s.devices) ensureSerial(d.name);
-    for (const n of Object.keys(serialES))
-      if (!isRemoteDev(n) && !s.devices.some(d=>d.name === n)){ serialES[n].close(); delete serialES[n]; }
+    ensureLivePipe();
     autoAdopt();
     renderCards();
     renderChips("logChips", logSel, "st_logsel");
     renderChips("waveChips", waveSel, "st_wavesel");
+    syncWaveDevSel();
     updateKpis();
     if (view === "logs"){ syncLogGrid(); renderLogs(); }
     if (view === "wave") syncWaveGrid();
@@ -534,15 +563,12 @@ let meshPending = [];   // 待授权配对请求（mesh-pair 查询）
 function pollMesh(){
   fetch("/api/mesh/status").then(r=>r.json()).then(m=>{
     mesh = m && m.enabled ? m : {enabled:false, peers:[]};
-    // 远程设备与本地同管线：常开 serial SSE（后台喂日志/波形），peer 消失即关流
-    const alive = new Set();
-    for (const p of mesh.peers) for (const d of (p.devices || [])){ const k = p.name + "/" + d.name; alive.add(k); ensureSerial(k); }
-    for (const n of Object.keys(serialES))
-      if (isRemoteDev(n) && !alive.has(n)){ serialES[n].close(); delete serialES[n]; }
+    ensureLivePipe();   // 本地+远程设备同一管道，peer 增减触发重连
     renderMesh();
     autoAdopt();
     renderChips("logChips", logSel, "st_logsel");
     renderChips("waveChips", waveSel, "st_wavesel");
+    syncWaveDevSel();
     updateKpis();
     syncFmPeers();  // 刷机弹窗目标节点下拉
   }).catch(()=>{});
@@ -644,6 +670,7 @@ function renderCards(){
     const el = document.createElement("div");
     el.className = "card";
     el.dataset.dev = d.name;
+    el.title = "点击卡片 = 日志页只看这台";
     el.innerHTML = `
       <div class="top">
         <span class="name">${esc(d.name)}</span>
@@ -731,34 +758,51 @@ function drawSpark(cv, hist){
   ctx.strokeStyle = "#39d2c0"; ctx.lineWidth = 1.5; ctx.stroke();
 }
 
-// —— KPI 指标条（仪表盘）：纯前端聚合 status/rate/events/mesh ——
+// —— KPI 指标条（仪表盘）：设备/采集/异常按全网（本机+mesh 远端）口径，
+// 吞吐与事件只有本机数据可算，标签诚实标注 ——
 let evStats = {total: 0, err: 0, crit: 0, life: 0};
-function updateKpis(){
-  const ds = status.devices;
-  $("kDev").textContent = ds.length;
-  const col = ds.filter(d => d.state === "collecting").length;
-  $("kCol").textContent = col;
-  $("kColK").classList.toggle("good", ds.length > 0 && col === ds.length);
-  const tot = ds.reduce((a, d) => a + (rate[d.name] || 0), 0);
-  $("kRate").textContent = tot >= 1024 ? (tot/1024).toFixed(1) + "K" : tot;
-  const now = Date.now(), bad = [];
-  for (const d of ds){
+function allDevicesForKpi(){
+  const out = status.devices.map(d => ({key: d.name, name: d.name, state: d.state, opens: d.opens, last_data: d.last_data}));
+  if (mesh.enabled)
+    for (const p of mesh.peers)
+      for (const d of (p.devices || []))
+        out.push({key: p.name + "/" + d.name, name: d.name, state: d.state, opens: d.opens, last_data: d.last_data});
+  return out;
+}
+function unhealthyKeys(now){
+  return allDevicesForKpi().filter(d => {
     const silent = d.last_data ? now - d.last_data : Infinity;
     const reopen = Math.max(0, (d.opens || 1) - 1);
-    if (silent > 300000 || reopen >= 3) bad.push(d.name);
-  }
+    return silent > 300000 || reopen >= 3;
+  }).map(d => d.key);
+}
+function updateKpis(){
+  const locals = status.devices, all = allDevicesForKpi();
+  const now = Date.now();
+  $("kDev").textContent = all.length;
+  $("kDevK").title = `本机 ${locals.length} · 远程 ${all.length - locals.length}`;
+  const col = all.filter(d => d.state === "collecting").length;
+  $("kCol").textContent = col;
+  $("kColK").classList.toggle("good", all.length > 0 && col === all.length);
+  $("kColK").title = `本机 ${locals.filter(d=>d.state==="collecting").length} · 远程 ${col - locals.filter(d=>d.state==="collecting").length}`;
+  const tot = locals.reduce((a, d) => a + (rate[d.name] || 0), 0);
+  $("kRate").textContent = tot >= 1024 ? (tot/1024).toFixed(1) + "K" : tot;
+  const bad = unhealthyKeys(now);
   $("kBad").textContent = bad.length;
   $("kBadK").classList.toggle("bad", bad.length > 0);
-  $("kBadK").title = bad.length ? "异常： " + bad.join(", ") : "静默 >5min 或重开 ≥3 记为异常";
+  $("kBadK").classList.toggle("click", bad.length > 0);
+  $("kBadK").title = bad.length ? "异常（静默>5min 或重开≥3）： " + bad.join(", ") + " —— 点击查看日志" :
+    "静默 >5min 或重开 ≥3 记为异常";
   $("kEv").textContent = evStats.total;
   $("kEvK").classList.toggle("bad", evStats.err > 0 || evStats.crit > 0);
-  $("kEvK").title = `崩溃/复位 ${evStats.crit} · 错误 ${evStats.err} · 生命周期 ${evStats.life}`;
+  $("kEvK").title = `崩溃/复位 ${evStats.crit} · 错误 ${evStats.err} · 生命周期 ${evStats.life}（远程节点事件请开其面板）`;
   const mk = $("kMeshK");
   if (mesh.enabled){
     mk.classList.remove("hidden");
     $("kMesh").textContent = mesh.peers.filter(p => p.state === "online").length + "/" + mesh.peers.length;
   } else mk.classList.add("hidden");
 }
+$("kBadK").onclick = () => { const bad = unhealthyKeys(Date.now()); if (bad.length) gotoLogsKeys(bad); };
 
 let toastTimer = null;
 function toast(msg, ok){
@@ -855,12 +899,13 @@ function syncLogGrid(){
   const merge = $("logLayout").value === "merge";
   row.classList.toggle("hidden", merge);
   $("logMerge").classList.toggle("hidden", !merge);
+  row.classList.toggle("solo", !merge && keys.length === 1);
   const sig = keys.join("|") + "#" + merge;
   updateLogInfo(keys, merge);
   if (sig === logGridSig) return;
   logGridSig = sig;
   if (merge || !keys.length){
-    row.innerHTML = !keys.length ? '<div class="dim" style="padding:10px">勾选上方设备开始同时查看日志</div>' : "";
+    row.innerHTML = !keys.length ? '<div class="dim" style="padding:10px">勾选上方设备开始同时查看日志（点设备卡可直达单台）</div>' : "";
     return;
   }
   row.innerHTML = "";
@@ -868,11 +913,12 @@ function syncLogGrid(){
     const m = devMeta(k);
     const el = document.createElement("div");
     el.className = "lpane";
-    el.innerHTML = `<div class="lhd"><b style="color:${devColor(k)}">${esc(m.name)}</b>` +
+    el.innerHTML = `<div class="lhd"><b style="color:${devColor(k)};cursor:pointer" title="只看这台（其余取消勾选）">${esc(m.name)}</b>` +
       (m.remote ? `<span class="dim">⌗ ${esc(m.peer)}</span>` : `<span class="dim">${esc(m.tty)}</span>`) +
       `<span class="chip lstate"></span>` +
       `<span class="dim lrate" style="margin-left:auto;font-size:11px"></span>` +
       `<button class="lwave" title="切到波形页单看这台">波形</button></div><pre></pre>`;
+    el.querySelector(".lhd b").onclick = () => gotoLogs(k);
     el.querySelector(".lwave").onclick = () => {
       waveSel.add(k); localStorage.setItem("st_wavesel", JSON.stringify([...waveSel]));
       waveBigDev = k; setWaveMode("big"); setView("wave");
@@ -955,21 +1001,58 @@ function renderMerge(){
   const el = $("logMerge"), keys = selLogKeys();
   const matcher = logMatcher();
   const N = parseInt($("logLines").value, 10) || 200;
-  const sel = new Set(keys);
-  let pool = mergeQ.filter(e => sel.has(e.d) && (!matcher || !e.l || matcher.test(e.l)));
-  const tail = pool.slice(-N).sort((a, b) => (a.t ?? a.seq) - (b.t ?? b.seq));
+  // 按台配额：每台保底 N/台数（至少 20 行）的最近日志再全局按时间归位——
+  // 高产设备刷屏会把安静设备完全挤出去，合并流就失去了"同时看"的意义
+  const per = Math.max(20, Math.ceil(N / Math.max(1, keys.length)));
+  const byDev = {};
+  for (const e of mergeQ)
+    if (logSel.has(e.d) && (!matcher || !e.l || matcher.test(e.l)))
+      (byDev[e.d] = byDev[e.d] || []).push(e);
+  const quota = [];
+  for (const k of keys) quota.push(...(byDev[k] || []).slice(-per));
+  const tail = quota.sort((a, b) => (a.t ?? a.seq) - (b.t ?? b.seq)).slice(-N);
   const stick = $("autoscroll").checked &&
     el.scrollHeight - el.scrollTop - el.clientHeight < 40;
   el.innerHTML = tail.map(e => {
     const tag = `<span class="devtag" style="color:${devColor(e.d)}">${esc(isRemoteDev(e.d) ? "⌗" + e.d : e.d)}</span>`;
     return `<div class="mline">${tag} ${hitLine(e.l, hlLine(e.l, matcher))}</div>`;
   }).join("");
-  $("logCount").textContent = matcher ? `${pool.length}/${mergeQ.filter(e => sel.has(e.d)).length} 行` : "";
+  $("logCount").textContent = matcher ? `${quota.length} 行（每台 ≤${per}）` : "";
   if (stick) el.scrollTop = el.scrollHeight;
 }
 $("logSearch").oninput = () => renderLogs();
-$("logLayout").onchange = () => { logGridSig = ""; syncLogGrid(); };
-$("logLines").onchange = () => renderLogs();
+// 布局/行数/时间窗持久化（重启浏览器后保持上次习惯）
+$("logLayout").value = localStorage.getItem("st_loglayout") || "grid";
+$("logLines").value = localStorage.getItem("st_loglines") || "200";
+$("waveWin").value = localStorage.getItem("st_wavewin") || "60";
+$("logLayout").onchange = () => {
+  localStorage.setItem("st_loglayout", $("logLayout").value);
+  logGridSig = ""; syncLogGrid();
+};
+$("logLines").onchange = () => { localStorage.setItem("st_loglines", $("logLines").value); renderLogs(); };
+$("waveWin").onchange = () => localStorage.setItem("st_wavewin", $("waveWin").value);
+// 全选/清空：多选的最短路径
+function setSel(sel, keys, storeKey, cid){
+  sel.clear();
+  for (const k of keys) sel.add(k);
+  localStorage.setItem(storeKey, JSON.stringify([...sel]));
+  renderChips(cid, sel, storeKey);
+}
+$("logAll").onclick = () => { setSel(logSel, allDevKeys(), "st_logsel", "logChips"); syncLogGrid(); renderLogs(); };
+$("logNone").onclick = () => { setSel(logSel, [], "st_logsel", "logChips"); syncLogGrid(); renderLogs(); };
+$("waveAll").onclick = () => { setSel(waveSel, allDevKeys(), "st_wavesel", "waveChips"); syncWaveGrid(); };
+$("waveNone").onclick = () => { setSel(waveSel, [], "st_wavesel", "waveChips"); syncWaveGrid(); };
+// 大图设备下拉：不回网格也能换台
+function syncWaveDevSel(){
+  const sel = $("waveDevSel"), keys = allDevKeys();
+  sel.innerHTML = keys.map(k => `<option value="${esc(k)}">${esc(k)}</option>`).join("");
+  if (!waveBigDev && keys.length) waveBigDev = keys[0];
+  if (waveBigDev && keys.includes(waveBigDev)) sel.value = waveBigDev;
+}
+$("waveDevSel").onchange = () => {
+  waveBigDev = $("waveDevSel").value || waveBigDev;
+  waveGridSig = ""; syncWaveGrid();
+};
 $("btnClear").onclick = () => {
   for (const k of selLogKeys()) logs[k + "/serial"] = "";
   mergeQ = mergeQ.filter(e => !logSel.has(e.d));
@@ -1022,6 +1105,7 @@ function setWaveMode(m){
   for (const t of document.querySelectorAll("#waveViewTabs .tab"))
     t.classList.toggle("on", t.dataset.m === m);
   waveGridSig = "";
+  syncWaveDevSel();
   syncWaveGrid();
 }
 for (const t of document.querySelectorAll("#waveViewTabs .tab"))
@@ -1084,7 +1168,7 @@ function xtrTest(){
   const rows = [];
   let hit = 0;
   for (const l of lines){
-    const body = l.replace(/^\[[^\]]*\]\s?/, "");
+    const body = stripAnsi(l.replace(/^\[[^\]]*\]\s?/, ""));
     let vals = [];
     if (hasGroups){
       const m = re.exec(body);
@@ -1107,6 +1191,9 @@ function xtrTest(){
     : "无捕获组 → 行内命中各为一通道";
   pv.textContent = chInfo + "，命中 " + hit + "/" + lines.length + " 行\n\n" + rows.join("\n");
 }
+// stripAnsi: 板子日志常带终端颜色转义（ESC[0;32m…），波形提取/帧型识别和
+// 自定义正则都对干净文本写
+function stripAnsi(s){ return s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, ""); }
 // autoChannels: 一行 → {frame, ch:[{name, val}]}；无可提取数值返回 null。
 // 首记号本身是 key=value（t=23.4 h=55 …无帧型遥测）时整行都是通道，帧型归为
 // 统一 "#kv"——否则帧键每行都变，永远凑不满活跃帧，波形一幅也画不出来。
@@ -1131,8 +1218,8 @@ function waveFeedDev(dev, chunk){
   wv.tail = lines.pop(); // 末段可能是半行，跨 chunk 拼装
   const now = Date.now();
   for (const line of lines){
-    // 剥掉面板加的 [时间戳] 前缀：提取对准板子原始行
-    const body = line.replace(/^\[[^\]]*\]\s?/, "");
+    // 剥掉面板加的 [时间戳] 前缀与 ANSI 颜色码：提取对准板子原始行
+    const body = stripAnsi(line.replace(/^\[[^\]]*\]\s?/, ""));
     if (wv.re){
       let vals = [];
       if (wv.re.source.indexOf("(") >= 0){

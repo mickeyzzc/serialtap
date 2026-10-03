@@ -6,6 +6,7 @@
 package web
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mickeyzzc/serialtap/internal/ctl"
@@ -88,6 +90,7 @@ func Start(addr, root string, status StatusProvider, commander Commander,
 	mux.HandleFunc("/api/flash", s.handleFlash)              // POST 上传镜像并启动刷写
 	mux.HandleFunc("/api/flash/stream", s.flashStream)       // SSE 进度（历史回放+实时）
 	mux.HandleFunc("/api/devices/", s.handleDevice)          // {name}/files|tail|live
+	mux.HandleFunc("/api/live", s.handleLiveMulti)           // 单条 SSE 多路设备尾随（浏览器连接池友好）
 	mux.HandleFunc("/api/mesh/status", s.handleMeshStatus)   // mesh 聚合（未启用时 enabled:false）
 	mux.HandleFunc("/api/mesh/devices/", s.handleMeshDevice) // {peer}/{name}/live（远程 SSE 尾随）
 	s.srv = &http.Server{Addr: addr, Handler: mux}
@@ -438,12 +441,17 @@ func (s *Server) serveLive(w http.ResponseWriter, r *http.Request, dir string) {
 	if !ping() { // 响应头后立刻首帧，逼出缓冲路径的 early flush
 		return
 	}
+	tailLiveDir(r.Context(), dir, kind, send)
+}
 
+// tailLiveDir: 单设备日志目录的文件尾随循环（serveLive 与 handleLiveMulti
+// 共用）。emit 返回 false（客户端断开/写失败）即退出。
+func tailLiveDir(ctx context.Context, dir, kind string, emit func([]byte) bool) {
 	const initBytes = 16 * 1024
 	curName, curSize, has := latestFile(dir, kind)
 	if has {
 		b, err := tailBytes(filepath.Join(dir, curName), initBytes)
-		if err == nil && !send(b) {
+		if err == nil && !emit(b) {
 			return
 		}
 	}
@@ -451,12 +459,8 @@ func (s *Server) serveLive(w http.ResponseWriter, r *http.Request, dir string) {
 	defer tick.Stop()
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
-		case <-heart.C:
-			if !ping() {
-				return
-			}
 		case <-tick.C:
 			name, size, ok := latestFile(dir, kind)
 			if !ok {
@@ -464,7 +468,7 @@ func (s *Server) serveLive(w http.ResponseWriter, r *http.Request, dir string) {
 			}
 			if !has || name != curName || size < curSize { // 轮转/跨天 → 重发末尾
 				b, err := tailBytes(filepath.Join(dir, name), initBytes)
-				if err != nil || !send(b) {
+				if err != nil || !emit(b) {
 					return
 				}
 				curName, curSize, has = name, size, true
@@ -477,10 +481,118 @@ func (s *Server) serveLive(w http.ResponseWriter, r *http.Request, dir string) {
 			if err != nil {
 				continue
 			}
-			if !send(b) {
+			if !emit(b) {
 				return
 			}
 			curSize = size
+		}
+	}
+}
+
+// liveFrame: /api/live 的载荷 —— 设备键 + 日志块。
+type liveFrame struct {
+	Dev   string `json:"dev"`
+	Chunk string `json:"chunk"`
+}
+
+// handleLiveMulti: GET /api/live?kind=serial&devices=a,b,peer/c —— 单条 SSE
+// 复用多路设备尾随。浏览器对同一 HTTP/1.1 host 只有 ~6 条并发连接，每设备
+// 一条常开 SSE 会把连接池吃光（多台板子时页面卡死、第二开面板连首页都进不
+// 来）；合成一条后连接数与设备数无关。帧格式 {"dev":"键","chunk":"..."}；
+// 本地设备读日志目录，"peer/名" 复合键走 mesh 桥。设备集在连接时固定，
+// 前端在设备增减时重连（走自身重连逻辑，成本是各设备 16KB 末尾回放）。
+func (s *Server) handleLiveMulti(w http.ResponseWriter, r *http.Request) {
+	fl, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	kind := r.URL.Query().Get("kind")
+	if kind != "serial" && kind != "events" {
+		kind = "serial"
+	}
+	type remoteKey struct{ peer, name string }
+	var locals []string
+	var remotes []remoteKey
+	for _, dev := range strings.Split(r.URL.Query().Get("devices"), ",") {
+		dev = strings.TrimSpace(dev)
+		if dev == "" {
+			continue
+		}
+		if i := strings.Index(dev, "/"); i > 0 && s.mesh != nil {
+			peer, name := dev[:i], dev[i+1:]
+			if meshPeerRe.MatchString(peer) && safeNameRe.MatchString(name) {
+				remotes = append(remotes, remoteKey{peer, name})
+				continue
+			}
+		}
+		if dir, ok := s.deviceDir(dev); ok { // 已过滤不存在/不安全名
+			locals = append(locals, dev)
+			_ = dir
+		}
+	}
+	if len(locals) == 0 && len(remotes) == 0 {
+		http.Error(w, "no known devices", http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache, no-store")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	var mu sync.Mutex
+	send := func(dev string, b []byte) bool {
+		if len(b) == 0 {
+			return true
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		payload, _ := json.Marshal(liveFrame{Dev: dev, Chunk: string(b)})
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", payload); err != nil {
+			return false
+		}
+		fl.Flush()
+		return true
+	}
+	heart := time.NewTicker(15 * time.Second)
+	defer heart.Stop()
+	ping := func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
+			return false
+		}
+		fl.Flush()
+		return true
+	}
+	if !ping() {
+		return
+	}
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	var wg sync.WaitGroup
+	for _, name := range locals {
+		dir, _ := s.deviceDir(name)
+		wg.Add(1)
+		go func(name, dir string) {
+			defer wg.Done()
+			tailLiveDir(ctx, dir, kind, func(b []byte) bool { return send(name, b) })
+		}(name, dir)
+	}
+	for _, rm := range remotes {
+		wg.Add(1)
+		go func(peer, name string) {
+			defer wg.Done()
+			_ = s.mesh.TailStream(ctx, peer, name, kind, func(b []byte) { send(peer+"/"+name, b) })
+		}(rm.peer, rm.name)
+	}
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-heart.C:
+			if !ping() {
+				return
+			}
 		}
 	}
 }
