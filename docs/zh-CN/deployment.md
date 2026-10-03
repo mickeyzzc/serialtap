@@ -141,6 +141,21 @@ loginctl enable-linger "$USER"
 - `events-*` 通道相比全量很小（只有签名命中与生命周期行），但同样受大小
   轮转兜底，复位循环的板子也撑不爆它
 
+## 从其它机器访问面板
+
+默认面板只听 `127.0.0.1:8801`。要在局域网其它电脑的浏览器里看：
+
+1. config 设 `"web_addr": "0.0.0.0:8801"`，重启守护
+2. 防火墙放行 **TCP 8801**：
+   - Linux ufw：`ufw allow 8801`
+   - Linux firewalld：`firewall-cmd --add-port=8801/tcp --permanent && firewall-cmd --reload`
+   - Windows：Defender 弹窗放行（专用网络）
+3. 浏览器打开 `http://<主机IP>:8801/`
+
+面板**没有任何认证**——能连到这个端口的任何人都能执行全部操作（含刷机）。
+只应在可信网络使用；非回环绑定时守护启动日志会警告。开启 mesh 后每台
+机器的面板都展示全部 peer 的板子，通常放开一台就能管整个台架。
+
 ## mesh 组网（多 PC）
 
 `mesh_enabled` 开启后守护会在所有网卡上开 **TCP 与 UDP 的 `mesh_port`**

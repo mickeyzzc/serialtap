@@ -157,7 +157,9 @@ Linux 的 VID:PID 从 sysfs 读取：从 `/sys/class/tty/<tty>/device` 向上最
 日志（增量推送、自动跟随轮转）；刷机走专用 `/api/flash` 上传端点
 （多镜像+偏移或 flasher_args.json → 落盘 `root/.flash-upload/` → 复用
 daemon 编排 → esptool 输出 SSE 实时回放 + 历史回放）。面板只监听本机
-回环，与 ctl socket 同信任域；**不做任何业务逻辑**。
+回环，与 ctl socket 同信任域；`web_addr` 可把面板暴露到 LAN——这会用便利
+换信任边界，面板无认证，只适用于可信网络（非回环绑定时守护启动告警）；
+**不做任何业务逻辑**。
 
 ## 多 PC mesh（选配）
 

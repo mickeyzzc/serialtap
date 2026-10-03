@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- feat(web): **面板 LAN 访问指引与非回环绑定告警**——`web_addr` 设 `0.0.0.0:8801`
+  即可在其它电脑的浏览器里用面板（mesh 开启时一台面板可见全部 peer 的板子）；
+  面板无认证，非回环绑定时守护启动日志显式告警（只应在可信 LAN 用）。文档：
+  README(en/zh) 面板节 + deployment(en/zh) "从其它机器访问面板"（含三平台防火墙）
+  + configuration(en/zh) `web_addr` 行 + architecture(en/zh) 信任边界说明。
 - feat(mesh): **多 PC mesh 互联——一台 PC 管理全网上每台 PC 接入的板子**。多台机器各配
   同一个 `mesh_key` 并 `mesh_enabled=true` 后:UDP beacon 互发现(定向广播、HMAC 指纹隔离
   不同密钥的实例、3 个间隔未见即过期、静态种子 `mesh_peers` 兜底 AP 隔离/跨网段),控制

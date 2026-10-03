@@ -35,7 +35,7 @@ serialtap is configured by a single JSON file. An annotated example ships in
 | `signatures_extra` | [string] | `[]` | Additional event-signature regexes. See below. |
 | `elf_map` | {name: path} | `{}` | Device name → firmware `.elf`, used by `decode-backtrace`. See below. |
 | `control_socket` | string | `""` | Control socket path. Empty = platform default: on Linux/macOS `$XDG_RUNTIME_DIR/serialtap.sock` (fallback `/tmp/serialtap-<uid>.sock`), on Windows `%LOCALAPPDATA%\serialtap\serialtap.sock`. The `run --sock` flag overrides it. |
-| `web_addr` | string | `""` | Web panel listen address. Empty = `127.0.0.1:8801`; `"off"` disables. The `run --web` flag overrides it. |
+| `web_addr` | string | `""` | Web panel listen address. Empty = `127.0.0.1:8801` (loopback only); `"0.0.0.0:8801"` exposes the panel to the LAN (**no authentication** — trusted networks only, see deployment.md); `"off"` disables. The `run --web` flag overrides it. |
 | `esptool_cmd` | string | `""` | esptool executable for `flash`. Empty = auto-discover (`esptool` then `esptool.py` on PATH). `--esptool` flag wins over this. |
 | `flash_baud` | int | `0` | Baud rate for `flash`. `0` = esptool's default. `--baud` flag wins over this. |
 | `flash_timeout_s` | int | `0` | Per-device flash timeout in seconds (on timeout esptool is killed and capture resumed). `0` = no timeout. |

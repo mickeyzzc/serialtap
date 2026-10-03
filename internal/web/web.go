@@ -93,11 +93,29 @@ func Start(addr, root string, status StatusProvider, commander Commander,
 	s.srv = &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		logf("[web] 观测面板: http://%s/", addr)
+		if !isLoopbackBind(addr) {
+			// 非回环绑定 = 面板全部操作（暂停/刷机/命令/尾随）暴露给 LAN 内
+			// 任意主机且无认证 —— 只应在可信网络（如 WPA2 家庭内网）使用
+			logf("[web] ⚠ 监听非回环地址 %s —— 局域网内任意主机可访问面板全部操作（无认证），请确认网络可信", addr)
+		}
 		if err := s.srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logf("[web] 面板退出: %v", err)
 		}
 	}()
 	return s
+}
+
+// isLoopbackBind: 监听地址是否仅回环（host 为空 = 全接口，算非回环）。
+func isLoopbackBind(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if host == "" {
+		return false // ":8801" 形态 = 全接口
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback() || host == "localhost"
 }
 
 // Close: 停止服务（零值安全）。

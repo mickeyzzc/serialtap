@@ -133,10 +133,19 @@ sees, plus every operation:
 
 The panel is read-only display + forwarding of the existing ctl operations
 through the **same handler path** as the control socket — it introduces no
-second control logic and **no business logic** (serialtap stays a middleware);
-it listens on loopback only, same trust domain as the ctl socket. With mesh
-enabled the panel additionally aggregates peers and bridges their log tails /
+second control logic and **no business logic** (serialtap stays a middleware).
+It listens on loopback by default, same trust domain as the ctl socket; with
+mesh enabled it additionally aggregates peers and bridges their log tails /
 flash uploads through the encrypted channel (see below).
+
+**Accessing the panel from other machines**: set `"web_addr": "0.0.0.0:8801"`
+and open the port in the firewall (`ufw allow 8801`, `firewall-cmd
+--add-port=8801/tcp --permanent && firewall-cmd --reload`, or the Windows
+prompt). The panel has **no authentication** — every operation (including
+flashing) becomes available to anyone on the network, so only do this on a
+trusted LAN (e.g. WPA2 home network); the daemon logs a warning at startup
+when bound non-loopback. Each machine's panel shows the whole mesh, so
+opening one machine's panel is usually enough.
 
 ## Multi-PC mesh
 
