@@ -187,8 +187,11 @@ logic. Observation uses SSE log tailing (incremental pushes, follows
 rotation); flashing goes through the dedicated `/api/flash` upload endpoint
 (images+offsets or a flasher_args.json → stored under `root/.flash-upload/`
 → the same daemon orchestration → esptool output streamed back over SSE with
-history replay). The panel listens on loopback only, same trust domain as
-the ctl socket, and **contains no business logic**.
+history replay). The panel listens on loopback by default (same trust domain
+as the ctl socket); `web_addr` can expose it to the LAN, which trades the
+trust boundary for convenience — the panel is unauthenticated, so that is a
+trusted-network-only posture (the daemon logs a warning when bound
+non-loopback). It **contains no business logic**.
 
 ## Multi-PC mesh (opt-in)
 

@@ -152,6 +152,24 @@ group to the service user), but the user service is the tested setup.
   lines only), but rotates under the same cap so a reset-loop board cannot
   grow it unbounded.
 
+## Panel access from other machines
+
+By default the web panel listens on `127.0.0.1:8801` only. To view it from
+another machine (any browser on the LAN):
+
+1. config: `"web_addr": "0.0.0.0:8801"` and restart the daemon
+2. open the firewall for **TCP 8801**:
+   - Linux ufw: `ufw allow 8801`
+   - Linux firewalld: `firewall-cmd --add-port=8801/tcp --permanent && firewall-cmd --reload`
+   - Windows: allow serialtap in the Defender prompt (private networks)
+3. browse `http://<host>:8801/`
+
+The panel has **no authentication** — every operation, flashing included,
+becomes available to anyone who can reach the port. Only do this on a trusted
+network; the daemon logs a startup warning when bound non-loopback. With mesh
+enabled, each panel shows every peer's boards, so exposing one machine's panel
+is usually enough to manage the whole bench.
+
 ## Mesh networking (multi-PC)
 
 When `mesh_enabled` is set the daemon opens **TCP and UDP on `mesh_port`**

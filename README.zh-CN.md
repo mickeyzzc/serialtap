@@ -106,8 +106,15 @@ Linux 无托盘（systray 需 libappindicator）——用 Web 面板替代。
 
 面板是只读展示 + 既有 ctl 操作的转发，经与 ctl socket **同一条处理路径**
 执行——不引入第二套控制逻辑、**不做任何业务逻辑**（serialtap 定位不变）；
-仅监听本机回环，与 ctl socket 同信任域。开启 mesh 后，面板额外聚合各 peer、
-经加密信道桥接其日志尾随与刷机上传（见下节）。
+默认仅监听本机回环，与 ctl socket 同信任域。开启 mesh 后，面板额外聚合各
+peer、经加密信道桥接其日志尾随与刷机上传（见下节）。
+
+**从其它电脑访问面板**：config 设 `"web_addr": "0.0.0.0:8801"` 并在防火墙
+放行（`ufw allow 8801` / `firewall-cmd --add-port=8801/tcp --permanent &&
+firewall-cmd --reload` / Windows 弹窗放行）。面板**没有任何认证**——全部操作
+（含刷机）对网络上任意主机开放，只应在可信 LAN（如 WPA2 家庭内网）使用；
+非回环绑定时守护会在启动日志里给出警告。每台机器的面板都展示整个 mesh，
+通常放开一台即可。
 
 ## 多 PC mesh 互联
 

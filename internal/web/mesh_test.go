@@ -225,3 +225,18 @@ func TestFlashPeerWithoutMeshFails(t *testing.T) {
 		t.Fatalf("无 mesh 时远程刷机应 503: %d", resp.StatusCode)
 	}
 }
+
+func TestIsLoopbackBind(t *testing.T) {
+	for addr, want := range map[string]bool{
+		"127.0.0.1:8801":    true,
+		"localhost:8801":    true,
+		"0.0.0.0:8801":      false,
+		":8801":             false, // 全接口形态
+		"192.168.63.5:8801": false,
+		"bad":               false,
+	} {
+		if got := isLoopbackBind(addr); got != want {
+			t.Errorf("isLoopbackBind(%q) = %v, want %v", addr, got, want)
+		}
+	}
+}
