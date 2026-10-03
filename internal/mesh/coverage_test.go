@@ -307,3 +307,16 @@ func TestRemoteBoardDumpNoArtifact(t *testing.T) {
 		t.Fatal("无产物必须报错")
 	}
 }
+
+// TestRemoteBoardDumpPeerDown: dump 转发时 peer 不可达——错误原样浮出。
+func TestRemoteBoardDumpPeerDown(t *testing.T) {
+	p := newNodePair(t, func(req ctl.Request, respond func(ctl.Response)) { respond(ctl.Response{OK: true}) }, nil)
+	// 学到 bench-a 后把它停掉，再发起远程 dump → 拨号失败错误浮出
+	p.a.Close()
+	err := p.b.Forward("bench-a", ctl.Request{Cmd: "board", Pattern: "^d$",
+		Board: &board.Spec{Action: "dump", Addr: "0x0", Size: "0x100", OutPath: "unused.bin"}},
+		func(ctl.Response) {})
+	if err == nil {
+		t.Fatal("peer 掉线时远程 dump 必须报错")
+	}
+}
