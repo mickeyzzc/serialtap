@@ -40,6 +40,12 @@ serialtap is configured by a single JSON file. An annotated example ships in
 | `flash_baud` | int | `0` | Baud rate for `flash`. `0` = esptool's default. `--baud` flag wins over this. |
 | `flash_timeout_s` | int | `0` | Per-device flash timeout in seconds (on timeout esptool is killed and capture resumed). `0` = no timeout. |
 | `proxy_tap_exclude` | string | `""` | Per-line regex kept out of the full log during proxy sessions (e.g. `^#S1 ` to drop high-rate telemetry). Empty = log everything. |
+| `mesh_enabled` | bool | `false` | Multi-PC mesh master switch. On: listens on `mesh_port` (TCP encrypted channel + UDP beacon, same number) and joins discovery. Off: no port opened, loopback-only posture unchanged. |
+| `mesh_key` | string | `""` | Pre-shared key passphrase — **the same on every machine**. Generate with `serialtap mesh keygen`. Never enters logs, beacons (HMAC fingerprint only), or the repo. A missing key refuses startup. |
+| `mesh_name` | string | `""` | Node name shown in `mesh status` / the panel. Empty = hostname. A random 8-hex node id (persisted at `<root>/.mesh-node-id`) disambiguates name collisions. |
+| `mesh_port` | int | `8802` | Mesh port. TCP control channel and UDP beacons share the number; open it for **both** protocols in the firewall. `0` is not valid at runtime (tests use ephemeral ports internally). |
+| `mesh_announce_s` | int | `5` | Beacon interval in seconds. Peers not heard from for 3 intervals expire from the registry (static seeds never expire). |
+| `mesh_peers` | []string | `[]` | Static seed peers (`"host:port"`), for AP-isolated or routed networks where broadcast discovery fails; discovery still runs in parallel. Identity is learned on first successful handshake. |
 | `dtr_hold` | [string] | `[]` | Device regexes (any of tty / key / by-id / name) that keep DTR+RTS **asserted** after open. Default releases both for every device — CH340 wires RTS to EN and ESP native USB-JTAG has DTR/RTS reset semantics; pico-sdk (RP2040) USB CDC however gates all stdio output on DTR ("host listening"), so a released DTR makes the firmware silently drop output (verified on rp2040-zero, 2026-09-27). Bad regexes are skipped with a warning. |
 
 ## Device naming

@@ -37,6 +37,12 @@ serialtap 用一个 JSON 文件配置。仓库根目录带了一份带注释的�
 | `flash_baud` | int | `0` | `flash` 的波特率。`0` = esptool 默认。`--baud` 参数优先。 |
 | `flash_timeout_s` | int | `0` | 单台设备刷写超时（秒；超时杀 esptool 并回采）。`0` = 不限时。 |
 | `proxy_tap_exclude` | string | `""` | 透传会话期间不落全量日志的行正则（如 `^#S1 ` 剔除高频遥测）。空 = 全落。 |
+| `mesh_enabled` | bool | `false` | 多 PC mesh 总开关。开：监听 `mesh_port`（TCP 加密信道 + UDP beacon 同号）并加入发现。关：不开任何端口，回环-only 姿态不变。 |
+| `mesh_key` | string | `""` | 预共享密钥口令——**每台机器配同一个**。`serialtap mesh keygen` 生成。永不进日志/beacon（只带 HMAC 指纹）/仓库。缺失时启动拒绝。 |
+| `mesh_name` | string | `""` | `mesh status` / 面板里显示的节点名。空 = hostname。另有随机 8 位 hex 节点 id（持久化于 `<root>/.mesh-node-id`）兜底撞名。 |
+| `mesh_port` | int | `8802` | mesh 端口。TCP 控制信道与 UDP beacon 同号共用；防火墙对**两个协议**都要放行。 |
+| `mesh_announce_s` | int | `5` | beacon 广播间隔秒。连续 3 个间隔未见的 peer 从注册表摘除（静态种子不过期）。 |
+| `mesh_peers` | []string | `[]` | 静态种子 peer（`"host:port"`）——广播发现被 AP 隔离/跨网段掐断时的兜底；广播发现仍并行工作。首次握手成功后学到节点身份。 |
 | `dtr_hold` | [string] | `[]` | open 后**保持** DTR+RTS 断言的设备正则（匹配 tty / key / by-id / 名字任一）。默认全部释放——CH340 的 RTS 接 EN、ESP 原生 USB-JTAG 的 DTR/RTS 有复位语义；但 pico-sdk（RP2040）的 USB CDC 以 DTR 判断"主机在听"，释放会导致固件静默丢弃全部输出（2026-09-27 rp2040-zero 实测）。坏正则跳过并告警。 |
 
 ## 设备命名

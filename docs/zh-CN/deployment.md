@@ -141,6 +141,20 @@ loginctl enable-linger "$USER"
 - `events-*` 通道相比全量很小（只有签名命中与生命周期行），但同样受大小
   轮转兜底，复位循环的板子也撑不爆它
 
+## mesh 组网（多 PC）
+
+`mesh_enabled` 开启后守护会在所有网卡上开 **TCP 与 UDP 的 `mesh_port`**
+（默认 8802）。各平台防火墙要点：
+
+- **Linux**：`ufw allow 8802`（或 `firewall-cmd --add-port=8802/tcp
+  --add-port=8802/udp --permanent`）。以 systemd **用户**服务运行无需提权。
+- **Windows**：第一个 mesh 包会触发 Defender 弹窗——专用网络放行（或为
+  该端口加 TCP+UDP 入站规则）。
+- **macOS 15+**：系统会弹一次**本地网络**权限——必须同意，否则 beacon
+  双向被静默拦截。
+- 路由器 **AP/客户端隔离**会掐断一切站点间流量、mesh 整体不可用；若两机
+  间路由仍通，两边都配 `mesh_peers` 静态种子兜底。
+
 ## 故障排查
 
 | 症状 | 原因 / 处理 |

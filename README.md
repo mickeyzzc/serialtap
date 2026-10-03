@@ -56,6 +56,10 @@ uploading images and flashing — can be done from a browser.
 - **Web panel with full operations**: pause/resume, proxy start/stop, port
   yield, soft reconnect, USB reset, and **image-upload flashing with live SSE
   progress** — remote/terminal-less scenarios never need the CLI
+- **Multi-PC mesh** (opt-in): serialtap instances on several PCs discover each
+  other on the LAN (UDP beacons) and forward control requests over a
+  pre-shared-key encrypted channel — any PC can manage, tail, and flash the
+  boards plugged into any other PC (`--peer`, `mesh status`, remote `at`)
 - **Pure Go static binary**: no CGO (except the opt-in macOS tray), no
   libudev, everything vendored — builds offline, cross-compiles trivially
 - **Three platforms**: full functionality on Linux / macOS / Windows (see the
@@ -130,7 +134,61 @@ sees, plus every operation:
 The panel is read-only display + forwarding of the existing ctl operations
 through the **same handler path** as the control socket — it introduces no
 second control logic and **no business logic** (serialtap stays a middleware);
-it listens on loopback only, same trust domain as the ctl socket.
+it listens on loopback only, same trust domain as the ctl socket. With mesh
+enabled the panel additionally aggregates peers and bridges their log tails /
+flash uploads through the encrypted channel (see below).
+
+## Multi-PC mesh
+
+Several PCs, each with its own boards, one management surface: enable mesh on
+every machine and they discover each other and interoperate.
+
+```jsonc
+// ~/.config/serialtap/config.json — same mesh_key on EVERY machine
+{
+  "mesh_enabled": true,
+  "mesh_key": "run `serialtap mesh keygen` once, paste everywhere",
+  "mesh_name": "bench1",              // optional, defaults to hostname
+  "mesh_port": 8802,                  // TCP channel + UDP beacon, same number
+  "mesh_announce_s": 5,               // beacon interval; peers expire after 3×
+  "mesh_peers": ["192.168.63.9:8802"] // static seeds, optional (AP-isolation /
+                                      // cross-subnet fallback; discovery still
+                                      // tries broadcast)
+}
+```
+
+Then, from **any** machine:
+
+```bash
+serialtap mesh status                 # all peers + their boards, one table
+serialtap status --peer bench2        # that peer's boards
+serialtap flash '^n16r8-u1$' app.bin@0x10000 --peer bench2
+                                      # image is read locally, uploaded over the
+                                      # encrypted channel, flashed there
+serialtap nvs '^n16r8-u1$' --peer bench2          # read NVS on a remote board
+serialtap dump '^n16r8-u1$' 0x9000 0x6000 out.bin --peer bench2  # artifact comes back
+serialtap at '^sense$' "AT+GMR" --peer bench2     # console injection over a tunnel
+serialtap mesh forward bench2 '^sense$'          # local endpoint → remote serial port
+```
+
+The web panel grows a **mesh** section: every peer and its boards, remote log
+tailing, remote pause/reopen, and remote flashing with a target-node selector.
+
+Security model, briefly (details in `docs/en/architecture.md`):
+
+- everything crosses the wire inside an **AES-256-GCM** channel derived from
+  the passphrase (PBKDF2 600k); beacons carry only an HMAC fingerprint —
+  instances with different keys never see each other, and the key itself never
+  leaves the machine
+- firmware images and NVS dumps **do** cross the channel (that's the point) —
+  it is encrypted, but only mesh members should be on the LAN; mesh is off by
+  default and the network surface stays loopback-only until you enable it
+- downloads from a peer are limited to artifacts that peer itself created
+  (dump results) — a mesh peer cannot read arbitrary files
+- allow the port in the firewall (Linux `ufw allow 8802`, Windows firewall
+  prompt, macOS 15+ asks for *Local Network* permission); AP/client isolation
+  on the router blocks mesh entirely — use static `mesh_peers` only if the
+  network still routes between the hosts
 
 ## Quick start
 
@@ -187,13 +245,17 @@ are always CGO-free static builds. On Windows it's `serialtap.exe list`
 | `pause [RE]` / `resume [RE]` | Pause/resume capture (omitted = all) |
 | `proxy RE [--stop]` | **Transparent USB proxy**: open a TCP endpoint per matched device — business software treats it as directly attached; capture continues meanwhile (`proxy_tap_exclude` keeps high-rate telemetry out of the full log) |
 | `release RE [--for 5m]` | **Temporarily yield a port** to an external tool: default re-acquires after 3 idle seconds, or after the given duration |
-| `flash RE <bin>[@0x10000]...` | **Proxy flashing**: yield → esptool → auto re-acquire, output streamed back; retries on failure (`--retries`, default 3 attempts × `--retry-wait` 5 s — Windows USB-CDC devices often fail the first open/SetCommState after a reset and esptool itself never retries); `--args-file build/flasher_args.json` flashes a whole IDF set; `--dry-run` previews the exact esptool commands. RE is a regex; **matching several devices is refused by default** (anti-misflash protection — an unanchored regex would drag other same-chip boards into the flash sequence; the device list is printed and an anchor demanded), `--all` flashes one-by-one on purpose, anchor (`^board$`) flashes exactly one. Remote flashing: see [control protocol · SSH tunnel](docs/en/control-protocol.md#remote-usage-ssh-tunnel) |
+| `flash RE <bin>[@0x10000]...` | **Proxy flashing**: yield → esptool → auto re-acquire, output streamed back; retries on failure (`--retries`, default 3 attempts × `--retry-wait` 5 s — Windows USB-CDC devices often fail the first open/SetCommState after a reset and esptool itself never retries); `--args-file build/flasher_args.json` flashes a whole IDF set; `--dry-run` previews the exact esptool commands. RE is a regex; **matching several devices is refused by default** (anti-misflash protection — an unanchored regex would drag other same-chip boards into the flash sequence; the device list is printed and an anchor demanded), `--all` flashes one-by-one on purpose, anchor (`^board$`) flashes exactly one. Remote flashing: `--peer` over the mesh channel (see [Multi-PC mesh](#multi-pc-mesh)), or an SSH socket forward for single-machine setups |
 | `reopen RE [--all]` | **Serial-layer soft reconnect**: close the port now → skip backoff → reopen now. Fast self-heal for wedged ports (idle-spinning reads, odd driver states); does not change ownership or pause semantics (unlike `release`). Interrupts live proxy sessions (clients just reconnect), and open/close each deliver a reset pulse (see [reset semantics](#reset-semantics-read-this) — on CH340/Espressif native USB this effectively soft-reboots the board). Multi-device gate as `flash` (`--all`) |
 | `reset RE [--all]` | **USB-layer soft replug** (Windows only): yield → `pnputil /restart-device` (disable+enable the device node, a software replug) → verify re-enumeration with the built-in enumerator → re-acquire. Targets the serial interface node; sibling JTAG interfaces are untouched. For devices present on the bus but wedged (won't open, zombie handles). Needs admin: an unelevated daemon auto-pops UAC to retry (cancellable). When the device has vanished from the bus entirely, only a physical replug helps. Multi-device gate as `flash` (`--all`) |
 | `status` | Live daemon and per-device state (collecting/paused/suspended/flashing) |
 | `tray` (Windows) | Resident systray: status, per-device pause/resume, open logs — see above (macOS has no separate `tray`; `run` embeds the menu bar) |
 | `analyze LOG...` | Offline signature tally: counts / first-last / sample-line summary |
 | `decode-backtrace LOG` | Decode `Backtrace:` address frames via addr2line |
+| `mesh status [--json]` | **Mesh aggregate view**: every peer node on the LAN (discovered or static) with state, latency, and its boards |
+| `mesh keygen` | Generate a mesh pre-shared key passphrase (paste into every machine's config; the key never enters logs or beacons) |
+| `mesh forward <peer> <RE>` | Open a **local tunnel endpoint** to a peer's board — business tools treat it as a local serial port |
+| `--peer <node>` | On every control command (`status`/`flash`/`pause`/`resume`/`release`/`proxy`/`reopen`/`reset`/`info`/`partitions`/`nvs`/`dump`/`at`): execute on that peer — images upload from this machine over the encrypted channel, dump artifacts come back here |
 | `version` | Print the version |
 | `info RE` | **芯片信息**：让口 → esptool flash_id（芯片/MAC/flash 容量）→ 回采。与 flash 同编排（opMu 互斥、多台默认拒绝、`--all` 逐台）；**读操作也会让目标板复位**（esptool download 模式进出） |
 | `partitions RE` | **分区表读取并解析**（0x8000 legacy 二进制格式：类型/子类型/偏移/大小/标签） |
@@ -217,6 +279,9 @@ or after positional arguments.
 - [CLI reference](docs/en/cli-reference.md) — every command and flag
 - [Configuration](docs/en/configuration.md) — every field and default,
   device-naming chain, PAUSED file, built-in signatures, log rotation
+- [Control protocol](docs/en/control-protocol.md) — speak the daemon's JSON
+  line protocol from any language; the `peer` field routes requests over the
+  mesh channel
 - [Waveform guide](docs/en/waveform-guide.md) — the panel oscilloscope from
   zero to reading charts: auto-detection, custom-extraction regex tutorial
   (templates + live preview), interpretation methods and examples (the panel's
@@ -329,6 +394,14 @@ Windows installer/Task Scheduler paths.
 
 ## Troubleshooting
 
+- **Mesh peers don't discover each other**: check `serialtap mesh status` on
+  both sides. In order: (1) same `mesh_key` (fingerprints differ → beacons are
+  ignored silently); (2) the port open in the firewall for **both TCP and UDP**
+  (`ufw allow 8802`); (3) router **AP/client isolation** off (it blocks all
+  station-to-station traffic — mesh cannot work across it, configure static
+  `mesh_peers` only if routing still works); (4) macOS 15+ asks once for
+  *Local Network* permission — grant it; (5) clocks within ±10 min
+  (`mesh 握手失败` with a skew hint means NTP is off on one side).
 - **Proxy flash reports "port busy"**: usually another serialtap instance
   (e.g. a demo daemon started from an old checkout) holds the port. Find it
   with `Get-CimInstance Win32_Process -Filter "name='serialtap.exe'" | select ProcessId,CommandLine`
@@ -396,6 +469,7 @@ internal/daemon/           # hot-plug daemon loop (enumerate diff + collector li
 internal/flash/            # proxy flashing (esptool orchestration + flasher_args.json parsing)
 internal/ctl/              # control unix socket (JSON line protocol)
 internal/web/              # observation & operations panel (SSE live tail, flash upload, cmd forwarding)
+   └── internal/mesh/          # opt-in LAN mesh: UDP beacon discovery + PSK-encrypted channel; peers become a third front-end over the same ctl handler
 internal/tray/             # tray/menu bar (darwin+cgo embedded in run; Windows systray process; stubs elsewhere)
 internal/analyze/          # offline analysis (signature tally + addr2line decoding)
 internal/testutil/         # cross-package test helpers (fake serial ports, …)

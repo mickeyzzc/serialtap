@@ -28,6 +28,19 @@ serialtap 循环剥离位置参数绕开了这一点，所以 `attach /dev/ttyAC
 
 各字段详见[配置参考](configuration.md)。
 
+**`--peer <节点>` 把任意控制命令路由到另一台 PC。** 所有走 ctl 的命令
+（`status`、`pause`/`resume`、`release`、`proxy`、`flash`、`reopen`、
+`reset`、`info`/`partitions`/`nvs`/`dump`、`at`）都接受 `--peer`：由**本地
+守护**经其 mesh 加密信道转发（两端都要 `mesh_enabled` + 同 `mesh_key`）。
+`<节点>` 可以是 peer 名、节点 id、唯一前缀或 `host:port`。要点：
+
+- 远程 `flash` 在**本机**读镜像并上传（`--args-file` 本地展开、逐 bin
+  上传、chip 提示随迁）
+- 远程 `dump` 的产物**落本机**你给的 `--out` 路径
+- 远程 `at`/`proxy` 返回**本地**隧道端点——当本地串口口拨即可，字节走
+  加密信道
+- 带 `--peer` 的 `pause`/`resume` 没有文件直改回退：守护必须可达
+
 **设备匹配模式（`RE`）是正则。** 凡是接受设备模式的命令，模式都是 Go 正则，
 与设备的任一身份做匹配：tty 路径（`/dev/ttyUSB0`）、设备名（`ch340`、
 `board-a`…）、by-path key（物理 USB 口）、by-id 字符串。**未锚定的正则按
@@ -97,6 +110,20 @@ TTY             NAME            VID:PID   BY-ID                                 
 BY-PATH 列即设备稳定 key；写匹配模式时可用它（或设备名）。非 USB 串口
 （如主板 `ttyS*`）不会列出 —— serialtap 只管理有 `/dev/serial/by-path`
 条目的口。
+
+## `mesh status` / `mesh keygen` / `mesh forward` —— 多 PC mesh
+
+```
+serialtap mesh status [--json] [--sock S]      # 聚合：全部 peer + 各自板子
+serialtap mesh keygen                          # 打印一个新口令，配进 mesh_key
+serialtap mesh forward <peer> <RE> [--sock S]  # 本地 TCP 端点 → peer 的板子
+```
+
+`status` 每 peer 一行（名字、id、地址、online/offline、延迟），板子缩进
+列在下面；离线 peer 附错误原因。`--json` 输出 `{"peers":[...]}` 供脚本
+消费。`keygen` 打印 32 字符口令——粘到每台机器的 config；它永不进日志与
+beacon。`forward` 是 `at --peer` 的通用形态：开一个本地监听桥进 peer 的
+代理端点——任意串口工具指过去即可。
 
 ## `status` —— 守护状态
 

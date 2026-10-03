@@ -27,7 +27,8 @@
 
 ```json
 {
-  "cmd": "status | pause | resume | release | flash | proxy | reopen | reset",
+  "cmd": "status | pause | resume | release | flash | proxy | reopen | reset | mesh",
+  "peer": "bench-a",         // 可选：经 mesh 加密信道转发到该节点执行
   "action": "stop",          // 仅 proxy：停止透传（缺省 = 开启）
   "pattern": "正则，匹配 tty / 设备名 / by-path key / by-id",
   "for_ms": 300000,
@@ -39,6 +40,7 @@
 | 字段 | 使用者 | 含义 |
 |---|---|---|
 | `cmd` | 全部 | 命令名。未知命令得到 `ok:false` 与 `unknown cmd`。 |
+| `peer` | 全部 | mesh 节点名 / 节点 id / 唯一前缀 / `host:port`。非空 = **本地守护**经它的 mesh 加密信道转发执行（本地须 `mesh_enabled` 且同 `mesh_key`）；响应（含 `flash` 的流式多行）原样回传。带 `peer` 的 `proxy` 返回**本地**隧道端点（而非对端回环端点）。远程 `flash` 会先把本机可读的镜像上传过去；远程 `board dump` 带 `OutPath` 时产物自动取回写本机该路径。 |
 | `pattern` | pause/resume/release/flash/proxy/reopen/reset | 设备正则。pause/resume 省略 = 全部设备。其余命令必填且须命中至少一个在线采集器。 |
 | `action` | proxy | `stop` = 停止匹配设备的透传；缺省 = 开启透传。 |
 | `all` | flash/reopen/reset | 模式匹配多台时仍逐台执行（默认拒绝并列出设备名，防误伤在测设备）。 |
@@ -80,9 +82,17 @@
 | `error` | 人类可读的失败原因（守护进程消息为中文）。 |
 | `event` | `flash-log`：每行流式回传的 esptool 输出一条（内容在 `line`）；命令以恰好一条 `flash-done` 收尾。 |
 | `devices` | 仅 `status`：每设备 `{name, tty, key, state}`，state 为 `collecting` / `paused` / `suspended` / `flashing`。 |
+| `peers` | 仅 `mesh`：每 peer `{id, name, addr, state(online/offline), static, latency_ms, devices[], err}` —— `serialtap mesh status` 与面板 mesh 区背后的聚合视图。 |
 | `line` | `release` 成功时把让出的采集器数量以字符串放在这里。 |
 
 ## 命令详解
+
+### `mesh`（仅本机节点）
+
+聚合全部已知 peer：并行拨号、每个 5 秒预算、收集其 `status`；不可达的
+peer 以 `state:"offline"` + `err` 返回，不拖垮整体查询。此命令忽略
+`peer` 字段（它描述的是**本节点**的视野）。要求 `mesh_enabled`，否则
+`ok:false` 并附提示。
 
 ### `status`
 
@@ -158,7 +168,16 @@ Windows 没有 socat，用 Python（或直接用 `serialtap status` 等子命令
 python -c "import socket,json; s=socket.socket(socket.AF_UNIX); s.connect(r'$env:LOCALAPPDATA\serialtap\serialtap.sock'); s.sendall(b'{\"cmd\":\"status\"}\n'); print(s.recv(65536).decode())"
 ```
 
-## 远程使用（SSH 隧道）
+## 远程使用
+
+两条路，按优先级：
+
+1. **mesh**（`--peer`）：多台机器各接板子、任意一台全管 —— 见 README
+   「多 PC mesh 互联」节。加密、预共享密钥认证、自带发现。
+2. **SSH socket 转发**（下文）：单台远端机器、不想配 mesh —— 反正你多半
+   本来就要 SSH 过去。
+
+### SSH 隧道
 
 板子接在工位机/树莓派上常驻采集、从笔记本远程刷写的场景：ctl 是 unix
 socket，用 SSH 把远端 socket 转发到本地即可，零额外代码：

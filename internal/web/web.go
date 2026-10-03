@@ -44,12 +44,14 @@ func WithFlasher(f Flasher) Option { return func(s *Server) { s.flasher = f } }
 
 // Server: 面板 HTTP 服务（默认只听本机回环）。
 type Server struct {
-	root      string
-	status    StatusProvider
-	commander Commander
-	flasher   Flasher
-	job       flashJob // 当前/最近一次刷机任务（单任务槽，opMu 天然串行）
-	srv       *http.Server
+	root        string
+	status      StatusProvider
+	commander   Commander
+	flasher     Flasher
+	mesh        MeshService // nil = mesh 未启用（聚合/远程尾随隐藏）
+	meshFlasher MeshFlasher // nil = 面板远程刷机不可用
+	job         flashJob    // 当前/最近一次刷机任务（单任务槽，opMu 天然串行）
+	srv         *http.Server
 }
 
 // PickAddr: 归一化面板地址。空/缺省 → 默认本机回环端口；"off" → ""（关闭）。
@@ -83,9 +85,11 @@ func Start(addr, root string, status StatusProvider, commander Commander,
 	mux.HandleFunc("/api/status", s.handleStatus)
 	mux.HandleFunc("/api/events", s.handleEvents)
 	mux.HandleFunc("/api/cmd", s.handleCmd)
-	mux.HandleFunc("/api/flash", s.handleFlash)        // POST 上传镜像并启动刷写
-	mux.HandleFunc("/api/flash/stream", s.flashStream) // SSE 进度（历史回放+实时）
-	mux.HandleFunc("/api/devices/", s.handleDevice)    // {name}/files|tail|live
+	mux.HandleFunc("/api/flash", s.handleFlash)              // POST 上传镜像并启动刷写
+	mux.HandleFunc("/api/flash/stream", s.flashStream)       // SSE 进度（历史回放+实时）
+	mux.HandleFunc("/api/devices/", s.handleDevice)          // {name}/files|tail|live
+	mux.HandleFunc("/api/mesh/status", s.handleMeshStatus)   // mesh 聚合（未启用时 enabled:false）
+	mux.HandleFunc("/api/mesh/devices/", s.handleMeshDevice) // {peer}/{name}/live（远程 SSE 尾随）
 	s.srv = &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		logf("[web] 观测面板: http://%s/", addr)

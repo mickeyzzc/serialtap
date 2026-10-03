@@ -105,7 +105,11 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
 .cmp{margin-top:12px}
 .cmp summary{padding:8px 12px;cursor:pointer;font-weight:600;user-select:none}
 .cmp summary .dim{font-weight:400;margin-left:8px}
-#cmpRow{display:flex;gap:10px;padding:0 12px 12px;overflow-x:auto;flex-wrap:wrap}
+#cmpRow,#meshRow{display:flex;gap:10px;padding:0 12px 12px;overflow-x:auto;flex-wrap:wrap}
+.mdev{display:flex;gap:8px;align-items:center;padding:6px 10px;border-bottom:1px solid rgba(48,54,61,.4);font:12px/1.4 sans-serif}
+.mdev .mname{cursor:pointer;color:var(--teal)}
+.mdev .macts{margin-left:auto;display:flex;gap:6px}
+.mdev .macts button{padding:1px 8px;font-size:11px}
 .cmp-dev{background:#0a0e14;border:1px solid var(--border);border-radius:8px;
 min-width:300px;flex:1;font:12px/1.4 Consolas,monospace}
 .cmp-dev .hd2{display:flex;gap:8px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--border);color:var(--teal)}
@@ -181,6 +185,10 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
     <summary>多设备对比<span class="dim">各设备实时尾随并排（关闭即断开附加流）</span></summary>
     <div id="cmpRow"></div>
   </details>
+  <details class="panel cmp" id="meshPanel" style="display:none">
+    <summary>mesh 多机互联<span class="dim" id="meshSum">同密钥 LAN 节点 · 点设备即远程尾随/操作/刷机</span></summary>
+    <div id="meshRow"></div>
+  </details>
 </main>
 
 <div id="flashModal" class="modal hidden">
@@ -188,6 +196,8 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
     <div class="mhd"><b>代理刷机</b> <span class="dim" id="fmDev" style="font-size:12px"></span>
       <button id="fmClose" style="margin-left:auto">关闭</button></div>
     <div class="mbody">
+      <label>目标节点（mesh 远端 = 镜像从本机加密上传到对端再刷）</label>
+      <select id="fmPeer"><option value="">本机</option></select>
       <label>设备正则（多板同名时请锚定，如 ^board$）</label>
       <input id="fmPattern" size="18" placeholder="^board$">
       <label>镜像文件（可多选；顺序 = 刷写顺序）</label>
@@ -307,12 +317,19 @@ let evES = null;             // 事件流按需开（选中设备的事件 tab�
 let cardSig = ""; // 卡片结构签名：不变则只就地更新数字，绝不重建 DOM —— 每秒全量重建会把进行中的点击吞掉
 const LOG_CAP = 256 * 1024, SPARK_N = 120;
 function logKey(){ return (selDev || "") + "/" + (selKind === "events" ? "events" : "serial"); }
+// 远程设备键 "peer/dev"：SSE 走 mesh 桥接端点，其余管线（缓冲/波形/对比）与本地完全一致
+function isRemoteDev(dev){ return (dev || "").includes("/"); }
+function liveURL(dev, kind){
+  if (!isRemoteDev(dev)) return `/api/devices/${encodeURIComponent(dev)}/live?kind=${kind}`;
+  const i = dev.indexOf("/");
+  return `/api/mesh/devices/${encodeURIComponent(dev.slice(0,i))}/${encodeURIComponent(dev.slice(i+1))}/live?kind=${kind}`;
+}
 
 // ensureSerial: 每设备一条常开 serial SSE，喂三处：波形缓冲（后台采样）、
 // 日志缓冲（切设备即刻满屏尾随）、对比面板文本。断线由 EventSource 自动重连。
 function ensureSerial(dev){
   if (serialES[dev]) return;
-  const s = serialES[dev] = new EventSource(`/api/devices/${encodeURIComponent(dev)}/live?kind=serial`);
+  const s = serialES[dev] = new EventSource(liveURL(dev, "serial"));
   s.onmessage = ev => {
     let chunk; try { chunk = JSON.parse(ev.data); } catch { return; }
     const k = dev + "/serial";
@@ -340,12 +357,12 @@ function pollStatus(){
     }
     for (const d of s.devices) ensureSerial(d.name);
     for (const n of Object.keys(serialES))
-      if (!s.devices.some(d=>d.name === n)){ serialES[n].close(); delete serialES[n]; }
+      if (!isRemoteDev(n) && !s.devices.some(d=>d.name === n)){ serialES[n].close(); delete serialES[n]; }
     const names = s.devices.map(d=>d.name);
     if (names.length && !selDev){
       const saved = localStorage.getItem("st_dev") || "";
       selectDev(names.includes(saved) ? saved : names[0]); // 恢复上次选择；失效则选首台
-    } else if (selDev && !names.includes(selDev)){
+    } else if (selDev && !isRemoteDev(selDev) && !names.includes(selDev)){
       // 粘性：短暂缺席（软重连/让口/刷机）不跳台；超过宽限（拔出/改名）切回首台
       if (!selAbsentSince) selAbsentSince = Date.now();
       else if (Date.now() - selAbsentSince > SEL_GRACE_MS){ selAbsentSince = 0; selectDev(names[0]); }
@@ -356,6 +373,67 @@ function pollStatus(){
   }).catch(()=>{ $("conn").textContent = "○ 守护进程不可达"; });
 }
 setInterval(pollStatus, 1000); pollStatus();
+
+// —— mesh 多机互联：peer 聚合（6s 一轮；对端查询本身带 5s 超时，别更快） ——
+let mesh = {enabled:false, peers:[]}, meshSig = "";
+function meshDevKey(pn, d){ return pn + "/" + d.name; }
+function pollMesh(){
+  fetch("/api/mesh/status").then(r=>r.json()).then(m=>{
+    mesh = m && m.enabled ? m : {enabled:false, peers:[]};
+    renderMesh();
+    syncDevSel();   // 远程设备进查看下拉
+    syncFmPeers();  // 刷机弹窗目标节点下拉
+  }).catch(()=>{});
+}
+function renderMesh(){
+  const panel = $("meshPanel"), row = $("meshRow");
+  panel.style.display = mesh.enabled ? "" : "none";
+  if (!mesh.enabled) return;
+  const sig = JSON.stringify(mesh.peers.map(p=>[p.id,p.name,p.state,p.latency_ms,(p.devices||[]).map(d=>[d.name,d.state])]));
+  if (sig === meshSig) return;
+  meshSig = sig;
+  if (!mesh.peers.length){
+    row.innerHTML = '<div class="dim" style="padding:6px 0">暂无 peer —— 其它 PC 配同一 mesh_key 并 mesh_enabled=true 后自动出现（UDP 广播被隔离时配 mesh_peers 静态种子）</div>';
+    $("meshSum").textContent = "同密钥 LAN 节点";
+    return;
+  }
+  $("meshSum").textContent = `${mesh.peers.length} 节点 · ${mesh.peers.filter(p=>p.state==="online").length} 在线`;
+  row.innerHTML = "";
+  for (const p of mesh.peers){
+    const el = document.createElement("div");
+    el.className = "cmp-dev";
+    const devRows = (p.devices || []).map(d => `
+      <div class="mdev" data-key="${esc(p.name)}/${esc(d.name)}" data-state="${esc(d.state)}">
+        <b class="mname">${esc(d.name)}</b>
+        <span class="chip ${esc(d.state)}">${esc(d.state)}</span>
+        <span class="dim">${esc(d.tty)}</span>
+        <span class="macts">
+          <button data-a="log">日志</button>
+          <button data-a="toggle">${d.state === "collecting" ? "⏸" : "▶"}</button>
+          <button data-a="reo" title="串口层软重连">⟳</button>
+          <button data-a="flash">刷机…</button>
+        </span>
+      </div>`).join("");
+    el.innerHTML = `<div class="hd2"><b>${esc(p.name)}</b><span class="dim">${esc(p.id)} · ${esc(p.addr)}</span>` +
+      `<span class="chip ${p.state === "online" ? "collecting" : "paused"}" style="margin-left:8px">${esc(p.state)}</span>` +
+      `<span class="dim" style="margin-left:auto">${p.state === "online" ? p.latency_ms + "ms" : ""}</span></div>` +
+      (devRows || '<div class="dim" style="padding:8px 10px">（无设备接入）</div>') +
+      (p.err ? `<div class="dim" style="padding:2px 10px 8px">⚠ ${esc(p.err)}</div>` : "");
+    el.querySelectorAll(".mdev").forEach(dv => {
+      const key = dv.dataset.key, pn = key.slice(0, key.indexOf("/")), dn = key.slice(key.indexOf("/")+1);
+      const anchor = "^" + dn.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$";
+      dv.querySelector('.mname').onclick = () => selectDev(key);
+      dv.querySelector('[data-a="log"]').onclick = () => selectDev(key);
+      const collecting = dv.dataset.state === "collecting";
+      dv.querySelector('[data-a="toggle"]').onclick = () =>
+        cmd(collecting ? "pause" : "resume", anchor, "", {peer: pn});
+      dv.querySelector('[data-a="reo"]').onclick = () => cmd("reopen", anchor, "", {peer: pn});
+      dv.querySelector('[data-a="flash"]').onclick = () => openFlash(dn, pn);
+    });
+    row.appendChild(el);
+  }
+}
+setInterval(pollMesh, 6000); pollMesh();
 
 // devSig: 卡片结构签名（影响 DOM 结构/按钮文案的字段）。易变的速率/大小
 // 不参与签名 —— 就地更新，不触发重建。
@@ -467,9 +545,15 @@ function drawSpark(cv, hist){
 // syncDevSel: 日志区设备下拉与卡片选择双向同步。
 function syncDevSel(){
   const sel = $("devSel");
-  sel.innerHTML = status.devices
+  let html = status.devices
     .map(d=>`<option value="${esc(d.name)}">${esc(d.name)} · ${esc(d.tty)}</option>`).join("");
-  if (selDev && status.devices.some(d=>d.name === selDev)) sel.value = selDev;
+  const rDevs = [];
+  for (const p of (mesh.enabled ? mesh.peers : []))
+    for (const d of (p.devices || [])) rDevs.push([p.name, d]);
+  if (rDevs.length)
+    html += rDevs.map(([pn, d])=>`<option value="${esc(pn)}/${esc(d.name)}">⌗ ${esc(pn)} · ${esc(d.name)}</option>`).join("");
+  sel.innerHTML = html;
+  if (selDev && (status.devices.some(d=>d.name === selDev) || rDevs.some(([pn,d])=>pn+"/"+d.name === selDev))) sel.value = selDev;
 }
 
 let toastTimer = null;
@@ -500,9 +584,18 @@ function cmd(c, pattern, action, extra){
 // —— 刷机模态：上传镜像/args → POST /api/flash → SSE 进度流 ——
 let fmES = null;
 function anchorRe(name){ return "^" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$"; }
-function openFlash(name){
+function syncFmPeers(){
+  const sel = $("fmPeer"), cur = sel.value;
+  let html = '<option value="">本机</option>';
+  for (const p of (mesh.enabled ? mesh.peers : []))
+    html += `<option value="${esc(p.name)}">${esc(p.name)}${p.state === "online" ? "" : "（离线）"}</option>`;
+  sel.innerHTML = html;
+  if ([...sel.options].some(o=>o.value === cur)) sel.value = cur;
+}
+function openFlash(name, peer){
   $("fmDev").textContent = name ? "· " + name : "";
   $("fmPattern").value = name ? anchorRe(name) : "";
+  $("fmPeer").value = peer || "";
   $("fmLog").textContent = ""; $("fmState").textContent = ""; $("fmGo").disabled = false;
   $("flashModal").classList.remove("hidden");
 }
@@ -518,6 +611,8 @@ $("fmGo").onclick = () => {
   const pattern = $("fmPattern").value.trim();
   if (!pattern) { fmState("设备正则必填", true); return; }
   fd.append("pattern", pattern);
+  const peer = $("fmPeer").value;
+  if (peer) fd.append("peer", peer);
   const args = $("fmArgs").files[0];
   if (args) fd.append("args_file", args, args.name || "flasher_args.json");
   else {
@@ -527,11 +622,11 @@ $("fmGo").onclick = () => {
     const off = $("fmOffsets").value.trim();
     if (off) fd.append("offsets", off);
   }
-  $("fmGo").disabled = true; fmState("上传中…");
+  $("fmGo").disabled = true; fmState(peer ? "上传中（随后经加密信道推送到 " + peer + "）…" : "上传中…");
   fetch("/api/flash", {method:"POST", body:fd}).then(r=>{
     if (!r.ok) return r.text().then(t=>Promise.reject(t));
   }).then(()=>{
-    fmState("刷写中（让口 → esptool → 回采）…");
+    fmState((peer ? "远端 " + peer + " 刷写中（让口 → esptool → 回采）…" : "刷写中（让口 → esptool → 回采）…"));
     if (fmES) fmES.close();
     fmES = new EventSource("/api/flash/stream");
     fmES.onmessage = ev => {
@@ -903,7 +998,7 @@ function openStream(){
     // 事件流按需重开（从末尾 16KB 起步）；serial/波形用常开缓冲不清零
     const key = selDev + "/events";
     logs[key] = ""; $("log").textContent = "";
-    evES = new EventSource(`/api/devices/${encodeURIComponent(selDev)}/live?kind=events`);
+    evES = new EventSource(liveURL(selDev, "events"));
     evES.onmessage = ev => {
       let chunk; try { chunk = JSON.parse(ev.data); } catch { return; }
       const k = selDev + "/events";
@@ -919,7 +1014,7 @@ function openStream(){
 // updateViewerLabels: 日志区角标与波形标题的设备名（含缺席等待态）。
 function updateViewerLabels(){
   const kindZh = selKind === "serial" ? "全量" : selKind === "events" ? "事件流" : "波形";
-  const absent = !!selDev && status.devices.length > 0 &&
+  const absent = !!selDev && !isRemoteDev(selDev) && status.devices.length > 0 &&
     !status.devices.some(d=>d.name === selDev);
   $("viewerDev").textContent = selDev ? selDev + " · " + kindZh + (absent ? " · ⏳ 等待接入" : "") : "";
   $("waveDev").textContent = selDev ? selDev + (absent ? " · ⏳ 等待接入" : "") : "";

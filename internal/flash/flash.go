@@ -239,6 +239,18 @@ func parsedChip(path string) (string, bool) {
 	return "", false
 }
 
+// ParseArgsFile: flasher_args.json → bins（含 chip 提示）。mesh 远程刷机用：
+// 发起机本地解析后逐 bin 上传，args 文件本身不过网。
+func ParseArgsFile(path string) (bins []BinSpec, chip string, err error) {
+	if bins, err = parseFlasherArgs(path); err != nil {
+		return nil, "", err
+	}
+	if c, ok := parsedChip(path); ok {
+		chip = c
+	}
+	return bins, chip, nil
+}
+
 // Run: 执行 esptool，stdout/stderr 按行流式回调（\r 与 \n 都算行界 ——
 // esptool 进度条用 \r 刷新）。timeout > 0 时超时杀进程（挂死的 esptool 会
 // 永远持有串口）。返回进程退出码错误。

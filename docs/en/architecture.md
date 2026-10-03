@@ -26,6 +26,7 @@ internal/cli/              subcommand dispatch, flag parsing, command orchestrat
    │     └── internal/pause/       PAUSED file + pattern state
    ├── internal/ctl/           control socket server/client (JSON lines; AF_UNIX on Windows)
    ├── internal/web/           observation & operations panel (SSE live tail, flash upload, cmd forwarding)
+   │     └── internal/mesh/    opt-in LAN mesh: UDP beacon discovery + PSK-encrypted channel; a peer is a third front-end over the same handler (uploads, tail bridging, proxy tunnels)
    ├── internal/tray/          tray/menu bar (darwin+cgo embedded in run; Windows systray process; stubs elsewhere)
    └── internal/analyze/       offline: signature tally + addr2line decoding
 
@@ -188,6 +189,64 @@ rotation); flashing goes through the dedicated `/api/flash` upload endpoint
 → the same daemon orchestration → esptool output streamed back over SSE with
 history replay). The panel listens on loopback only, same trust domain as
 the ctl socket, and **contains no business logic**.
+
+## Multi-PC mesh (opt-in)
+
+`internal/mesh` turns N serialtap instances on one LAN into one management
+surface. The design rule is the same as the web panel's: **no second control
+logic** — a remote peer is just a third front-end over the same handler
+closure, so every command, streaming included (flash-log lines), behaves
+identically local or remote.
+
+- **Discovery**: each node broadcasts a small UDP beacon (`serialtap-mesh
+  {v,id,name,port,fp}`) every `mesh_announce_s` seconds to the directed
+  broadcast address of every non-loopback interface. `fp` is an HMAC
+  fingerprint of the key over the node id — same-key instances recognize each
+  other, different-key instances ignore each other silently, and the key never
+  appears on the wire. Peers not seen for 3 intervals expire. Static seeds
+  (`mesh_peers`) add explicit `host:port` entries for AP-isolated or routed
+  networks; they learn the node's identity on first successful handshake.
+- **Channel**: the client dials the peer's TCP port and both sides derive
+  per-connection keys — a random salt travels in a plaintext hello frame, then
+  HKDF(master, salt, "c2s"/"s2c") gives one AES-256-GCM key per direction
+  (reflection-proof). The master key comes from PBKDF2-SHA256(passphrase,
+  600k iters) computed once at startup. Successfully decrypting a frame *is*
+  the authentication — there is no separate handshake token to phish. Every
+  frame seals `(type, per-direction counter)` as AAD, so replayed or reordered
+  frames are rejected; the handshake ident carries a timestamp (±10 min
+  tolerance) and the peer's listen port so incoming connections can register
+  unknown nodes before their beacons arrive.
+- **Why encryption and not just a token**: firmware images, esptool output and
+  NVS extracts (which can contain real credentials) cross this channel.
+- **Frame kinds** (1 length-prefixed byte of type + payload): `req/resp`
+  (ctl Request/Response envelopes, `end` flag terminates a streamed command),
+  `up/upAck` (1 MB chunked uploads — acks carry the server-side absolute path,
+  which is how flash specs written on the originator get rewritten to paths
+  that exist on the peer), `down/block` (artifact downloads), `tail`
+  (log following, same latest-file + size-diff + rotation logic as the panel),
+  `dial/ack/wire` (raw byte tunnel for the proxy — after `dial` the connection
+  switches to opaque `wire` frames in both directions).
+- **Remote flash**: images readable on the originating machine are chunked up
+  into `<root>/.flash-upload/mesh-<sid>/` on the peer, the spec is rewritten
+  to those paths, and the ordinary flash orchestration runs there. An
+  `--args-file` is parsed locally, its referenced bins uploaded, and the chip
+  hint carried over.
+- **Remote dump**: the originator blanks `OutPath`, the peer writes into its
+  `<root>/.mesh-share/` and returns a one-time token with the `end` frame;
+  the originator downloads by token and writes the user's local path.
+  **Tokens only ever name files the peer itself created** — a mesh member
+  cannot read arbitrary files. Used tokens are revoked on first download.
+- **Proxy tunnel**: `proxy --peer` / `mesh forward` dial the peer, which runs
+  ProxyStart on the matched device and bridges its loopback endpoint into the
+  encrypted channel; the originator gets a local `127.0.0.1:<ephemeral>`
+  listener. `at --peer` is this plus the usual console injection, so the CLI
+  code is unchanged beyond the flag.
+- **Audit discipline**: mesh logs carry command names, peer identities and
+  byte counts only — frame bodies (which may contain NVS values) are never
+  logged, the same rule as `daemon/board.go`.
+- **Off by default**: with `mesh_enabled=false` no port is opened; the
+  loopback-only posture is unchanged. CLI never holds the key — `--peer` just
+  sets a field on the request, and the local daemon does the forwarding.
 
 ## Control socket
 

@@ -33,6 +33,14 @@ type Config struct {
 	ProxyTapExclude string            `json:"proxy_tap_exclude"` // 透传会话期间不落全量日志的行正则（如 "^#S1 " 剔除高频遥测；空 = 全落）
 	DTRHold         []string          `json:"dtr_hold"`          // open 后保持 DTR+RTS 断言的设备正则（匹配 tty/by-id/by-path/名字任一）。默认全释放——CH340 的 RTS 接 EN；RP2040 pico-sdk CDC 以 DTR 判"主机在听"，释放即静默丢输出
 	WebAddr         string            `json:"web_addr"`          // Web 观测面板监听地址（空 = 默认 127.0.0.1:8801；"off" = 关闭）
+
+	// —— mesh：多台 PC 上的 serialtap 在局域网内互发现、互管理（默认关）——
+	MeshEnabled   bool     `json:"mesh_enabled"`    // 总开关。开启后监听 mesh_port（TCP 控制信道 + UDP beacon 同号）
+	MeshName      string   `json:"mesh_name"`       // 节点名（默认 hostname；node id 另有随机身份兜底防撞名）
+	MeshPort      int      `json:"mesh_port"`       // mesh 端口（TCP 加密信道 + UDP 广播 beacon 同号，默认 8802）
+	MeshKey       string   `json:"mesh_key"`        // 预共享密钥口令。所有互管 PC 配同一值；beacon 只带 HMAC 指纹不带密钥
+	MeshAnnounceS int      `json:"mesh_announce_s"` // beacon 广播间隔秒（默认 5；peer 超 3 个间隔未见即摘除）
+	MeshPeers     []string `json:"mesh_peers"`      // 静态种子 peer（"host:port"，广播被 AP 隔离/跨网段时的兜底）
 }
 
 func DefaultConfig() Config {
@@ -47,6 +55,8 @@ func DefaultConfig() Config {
 		RetentionDays: 14,
 		FlashTimeoutS: 600, // 10 分钟兜底；注意：LoadConfig 不回填此字段，显式 0 = 不限时
 		WebAddr:       "127.0.0.1:8801",
+		MeshPort:      8802,
+		MeshAnnounceS: 5,
 	}
 }
 
@@ -84,6 +94,12 @@ func LoadConfig(path string) (Config, error) {
 	}
 	if cfg.Root == "" {
 		cfg.Root = def.Root
+	}
+	if cfg.MeshPort == 0 {
+		cfg.MeshPort = def.MeshPort
+	}
+	if cfg.MeshAnnounceS == 0 {
+		cfg.MeshAnnounceS = def.MeshAnnounceS
 	}
 	return cfg, nil
 }

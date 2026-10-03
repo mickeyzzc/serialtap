@@ -42,6 +42,9 @@
 - **零丢失**：跨读取块行拼装，端口关闭时的残余半行以 `…partial` 标记落盘
 - **Web 面板操作全覆盖**：暂停/恢复、代理开停、让口、软重连、USB 重置，以及
   **上传镜像刷机 + SSE 实时进度**——远程/无终端场景完全不需要 CLI
+- **多 PC mesh 互联**（选配开启）：多台 PC 上的 serialtap 在局域网内经
+  UDP beacon 互发现，控制请求经预共享密钥加密信道转发——任意一台 PC 即可
+  管理、尾随、刷写其余任意 PC 接入的板子（`--peer`、`mesh status`、远程 `at`）
 - **纯 Go 静态二进制**：无 CGO（macOS 托盘可选开）、无 libudev 依赖，vendor
   已含全部依赖，离线可构建，交叉编译即拷即用
 - **三平台**：Linux / macOS / Windows 全功能可用（平台差异见下节），
@@ -103,7 +106,53 @@ Linux 无托盘（systray 需 libappindicator）——用 Web 面板替代。
 
 面板是只读展示 + 既有 ctl 操作的转发，经与 ctl socket **同一条处理路径**
 执行——不引入第二套控制逻辑、**不做任何业务逻辑**（serialtap 定位不变）；
-仅监听本机回环，与 ctl socket 同信任域。
+仅监听本机回环，与 ctl socket 同信任域。开启 mesh 后，面板额外聚合各 peer、
+经加密信道桥接其日志尾随与刷机上传（见下节）。
+
+## 多 PC mesh 互联
+
+多台 PC 各自接板子、一个管理面：在每台机器上开启 mesh，它们互相发现、互相操作。
+
+```jsonc
+// ~/.config/serialtap/config.json —— 每台机器配同一个 mesh_key
+{
+  "mesh_enabled": true,
+  "mesh_key": "跑一次 serialtap mesh keygen，粘到每台机器",
+  "mesh_name": "bench1",              // 可选，默认 hostname
+  "mesh_port": 8802,                  // TCP 信道 + UDP beacon 同号
+  "mesh_announce_s": 5,               // beacon 间隔；peer 连续 3 个间隔未见即摘除
+  "mesh_peers": ["192.168.63.9:8802"] // 静态种子，可选（AP 隔离/跨网段兜底；
+                                      // 广播发现仍然并行工作）
+}
+```
+
+之后在**任意一台**机器上：
+
+```bash
+serialtap mesh status                 # 全部 peer 与它们的板子，一张表
+serialtap status --peer bench2        # 看那台机器的板子
+serialtap flash '^n16r8-u1$' app.bin@0x10000 --peer bench2
+                                      # 镜像从本机读取 → 加密信道上传 → 对端刷写
+serialtap nvs '^n16r8-u1$' --peer bench2          # 读远端板子的 NVS
+serialtap dump '^n16r8-u1$' 0x9000 0x6000 out.bin --peer bench2  # 产物自动取回本机
+serialtap at '^sense$' "AT+GMR" --peer bench2     # 经隧道注入远端控制台
+serialtap mesh forward bench2 '^sense$'          # 本地端点 → 远端串口
+```
+
+Web 面板会多出一个 **mesh** 区：每个 peer 及其板子、远程日志尾随、远程
+暂停/软重连、带目标节点选择器的远程刷机。
+
+安全模型速记（细节见 `docs/zh-CN/architecture.md`）：
+
+- 跨网数据全部走 **AES-256-GCM** 加密信道（口令经 PBKDF2 600k 派生）；
+  beacon 只带 HMAC 指纹——不同密钥的实例互相不可见，密钥本身永不出机
+- 刷机镜像与 NVS dump **确实会过网**（这正是功能本意）——信道加密，但
+  LAN 上应当只有 mesh 成员；mesh 默认关闭，未开启前网络面只有回环
+- 从 peer 下载仅限该 peer 自己产出的工件（dump 结果）——mesh peer 不能
+  读任意文件
+- 防火墙放行端口（Linux `ufw allow 8802`、Windows 首次弹窗放行、macOS 15+
+  的"本地网络"权限）；路由器 AP/客户端隔离会整体掐断 mesh——若两机之间
+  路由仍通，可用静态 `mesh_peers` 兜底
 
 ## 快速开始
 
@@ -165,6 +214,10 @@ Windows 上是 `serialtap.exe list`（设备形如 `COM3`）、单口采集 `ser
 | `tray`（Windows） | 托盘常驻：接入状态、按设备暂停/恢复、打开日志，见上节（macOS 无独立 `tray` 子命令，`run` 自带菜单栏） |
 | `analyze LOG...` | 离线签名扫描：计数 / 首末时间 / 样本行汇总表 |
 | `decode-backtrace LOG` | `Backtrace:` 地址帧 addr2line 解码 |
+| `mesh status [--json]` | **mesh 聚合视图**：LAN 上全部 peer 节点（广播发现 + 静态种子）的状态/延迟/板子 |
+| `mesh keygen` | 生成 mesh 预共享密钥口令（粘进每台机器的 config；密钥永不进日志/beacon） |
+| `mesh forward <peer> <RE>` | 为 peer 上的板子开**本地隧道端点**——业务工具当本地串口用 |
+| `--peer <节点>` | 所有控制命令（`status`/`flash`/`pause`/`resume`/`release`/`proxy`/`reopen`/`reset`/`info`/`partitions`/`nvs`/`dump`/`at`）加它即在该 peer 上执行——镜像从本机经加密信道上传，dump 产物取回本机 |
 | `version` | 打印版本号 |
 
 flags（`--root/--baud/--config/--poll-ms/--exclude/--sock`）可写在位置参数前后任意位置。
@@ -174,6 +227,8 @@ flags（`--root/--baud/--config/--poll-ms/--exclude/--sock`）可写在位置参
 - [架构](docs/zh-CN/architecture.md) —— 包分层与依赖规则、采集器状态机、
   open-once-and-hold、release/flash/reopen 编排、可测性 seam 一览
 - [CLI 参考](docs/zh-CN/cli-reference.md) —— 全部命令与 flag
+- [控制协议](docs/zh-CN/control-protocol.md) —— 用任意语言直连守护进程的
+  JSON 行协议；`peer` 字段经 mesh 信道路由到远端节点
 - [配置参考](docs/zh-CN/configuration.md) —— 全部字段与默认值、设备命名链、
   PAUSED 文件、内置签名表、日志轮转
 - [波形观测指南](docs/zh-CN/waveform-guide.md) —— 面板示波器从零到会读图：
@@ -272,6 +327,13 @@ macOS / Windows 无需权限配置——launchd agent 与 Windows 安装包/任�
 
 ## 故障排查
 
+- **mesh peer 互相发现不了**：两边都跑 `serialtap mesh status` 依次查：
+  (1) `mesh_key` 一致（指纹不同 → beacon 被静默忽略）；(2) 防火墙对
+  **TCP 和 UDP** 都放行该端口（`ufw allow 8802`）；(3) 路由器 **AP/客户端
+  隔离**已关（它掐断一切站点间流量——mesh 无法穿过，只有两机间路由仍通
+  时静态 `mesh_peers` 才有用）；(4) macOS 15+ 首次要授权"本地网络"；
+  (5) 两机时钟差 ±10 分钟内（握手报 `时钟偏差过大` = 有机器没对时）。
+
 - **代理刷写报"端口忙"**：多半是另一个 serialtap 实例（比如旧检出目录里
   起的 demo 守护）占着口。`Get-CimInstance Win32_Process -Filter "name='serialtap.exe'" | select ProcessId,CommandLine`
   找到后结束它；本守护的采集器会按退避自动接管。
@@ -315,6 +377,7 @@ internal/daemon/           # 热插拔守护循环（枚举 diff + 起停采集�
 internal/flash/            # 代理刷固件（esptool 编排 + flasher_args.json 解析）
 internal/ctl/              # 控制 unix socket（JSON 行协议）
 internal/web/              # 观测与操作面板（SSE 实时尾随、刷机上传、命令转发）
+   └── internal/mesh/          # 选配 LAN mesh：UDP beacon 发现 + PSK 加密信道；peer 是同一 ctl handler 的第三个前端
 internal/tray/             # 托盘/菜单栏（darwin+cgo 内嵌于 run；Windows 托盘进程；其余平台桩）
 internal/analyze/          # 离线分析（签名汇总 + addr2line 解码）
 internal/testutil/         # 跨包测试助手（假串口等）
