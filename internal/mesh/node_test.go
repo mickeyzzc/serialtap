@@ -63,13 +63,14 @@ type nodePair struct {
 func startNode(t *testing.T, name, root string, forward ctl.Handler, proxy ProxyAPI) *Node {
 	t.Helper()
 	n, err := NewNode(Options{
-		Name:    name,
-		Key:     "test-mesh-key",
-		Root:    root,
-		Forward: forward,
-		Proxy:   proxy,
-		NoUDP:   true,
-		Logf:    func(string, ...any) {},
+		Name:        name,
+		Key:         "test-mesh-key",
+		Root:        root,
+		Forward:     forward,
+		Proxy:       proxy,
+		NoUDP:       true,
+		AutoApprove: true, // 本文件测转发链路，非配对流（配对见 pairing_test）
+		Logf:        func(string, ...any) {},
 	})
 	if err != nil {
 		t.Fatalf("节点 %s 启动失败: %v", name, err)

@@ -52,14 +52,17 @@ type DevState struct {
 
 // PeerStatus: mesh 节点状态（cmd:"mesh" 聚合查询返回）。
 type PeerStatus struct {
-	ID        string     `json:"id"`
-	Name      string     `json:"name"`
-	Addr      string     `json:"addr"`
-	State     string     `json:"state"` // online | offline
-	Static    bool       `json:"static,omitempty"`
-	LatencyMs int64      `json:"latency_ms,omitempty"`
-	Devices   []DevState `json:"devices,omitempty"`
-	Err       string     `json:"err,omitempty"`
+	ID         string     `json:"id"`
+	Name       string     `json:"name"`
+	Addr       string     `json:"addr"`
+	State      string     `json:"state"` // online | offline
+	Static     bool       `json:"static,omitempty"`
+	LatencyMs  int64      `json:"latency_ms,omitempty"`
+	Devices    []DevState `json:"devices,omitempty"`
+	Err        string     `json:"err,omitempty"`
+	Auth       string     `json:"auth,omitempty"`        // 本机视角的入站授权: approved（其余见 mesh pair）
+	PeerAuthed bool       `json:"peer_authed,omitempty"` // 对端是否已授权本节点（链接 ack 得知）
+	At         int64      `json:"at,omitempty"`          // mesh-pair: 敲门/批准时间（UnixMilli）
 }
 
 // Response: 服务端响应（一行 JSON；flash 会流式多行）。

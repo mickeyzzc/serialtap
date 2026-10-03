@@ -34,9 +34,13 @@ type Options struct {
 	Forward     ctl.Handler // 本机业务分发（cli 的 handler 闭包）——mesh 是它的第三个前端
 	Proxy       ProxyAPI    // 隧道用（daemon 的 ProxyStart/Stop）
 	Logf        func(string, ...any)
+	AutoApprove bool // 配对自动批准（PSK-only 旧行为；默认 false=需显式 mesh approve）
+
 	// 测试缝
-	BeaconTargets func(port int) []string // nil = 定向广播（生产）
-	NoUDP         bool                    // 纯 TCP 节点（测试）
+	BeaconTargets   func(port int) []string // nil = 定向广播（生产）
+	NoUDP           bool                    // 纯 TCP 节点（测试）
+	PairRetryWait   time.Duration           // 未授权重试间隔（0=30s；测试缩短）
+	LinkDialBackoff time.Duration           // 链接拨号退避基数（0=5s）
 }
 
 // Node: mesh 节点 = TCP 服务端 + UDP beacon + 客户端拨号器 + 注册表。
@@ -62,6 +66,15 @@ type Node struct {
 	dlAuth  map[string]string            // token → 可下载绝对路径（只登记本节点自建产物）
 	tunnels map[string]*tunnel           // pattern → 隧道
 	callSeq uint64
+
+	pairs *PairStore // 配对授权表（被链侧闸门）
+
+	pairConnMu sync.Mutex
+	pairConns  map[string]map[net.Conn]struct{} // peer id → 活动连接（撤销授权立即断链）
+
+	linkMu sync.Mutex
+	links  map[string]*linkLoop // peer id → 自动链接循环（发现即拨、心跳保活、断线重连）
+	linkSt map[string]linkState // peer id → 对端是否已授权本节点（Call 快速失败提示）
 }
 
 // NewNode: 构造并启动（监听 + beacon + 注册表清扫）。Close 时全停。
@@ -86,17 +99,24 @@ func NewNode(opt Options) (*Node, error) {
 		}
 	}
 	n := &Node{
-		opt:     opt,
-		sec:     sec,
-		reg:     NewRegistry(3 * announce),
-		uploads: map[string]map[string]string{},
-		dlAuth:  map[string]string{},
-		tunnels: map[string]*tunnel{},
-		conns:   map[net.Conn]struct{}{},
+		opt:       opt,
+		sec:       sec,
+		reg:       NewRegistry(3 * announce),
+		uploads:   map[string]map[string]string{},
+		dlAuth:    map[string]string{},
+		tunnels:   map[string]*tunnel{},
+		conns:     map[net.Conn]struct{}{},
+		pairConns: map[string]map[net.Conn]struct{}{},
+		links:     map[string]*linkLoop{},
+		linkSt:    map[string]linkState{},
 	}
 	n.ctx, n.cancel = context.WithCancel(context.Background())
 
 	id, err := loadOrCreateID(opt.Root)
+	if err != nil {
+		return nil, err
+	}
+	n.pairs, err = LoadPairStore(opt.Root)
 	if err != nil {
 		return nil, err
 	}
@@ -128,6 +148,7 @@ func (n *Node) start(announce time.Duration) error {
 		n.udp, err = ListenBeacons(port, n.self.ID, n.sec, func(b Beacon, from net.Addr) {
 			if ua, ok := from.(*net.UDPAddr); ok {
 				n.reg.UpsertBeacon(b, ua.IP)
+				n.ensureLink(b.ID, net.JoinHostPort(ua.IP.String(), fmt.Sprintf("%d", b.Port)))
 			}
 		}, n.logf)
 		if err != nil {
@@ -147,6 +168,10 @@ func (n *Node) start(announce time.Duration) error {
 		n.ann = NewAnnouncer(self, port, announce, func() []string { return targets(port) }, n.logf)
 	}
 	n.reg.SetStatic(n.opt.StaticPeers)
+	// 静态种子：无 beacon 也要主动链接（身份在握手时学到）
+	for _, a := range n.opt.StaticPeers {
+		n.ensureLink("static:"+a, a)
+	}
 
 	n.wg.Add(2)
 	go func() {
@@ -199,6 +224,15 @@ func (n *Node) Close() {
 	}
 	n.tunnels = map[string]*tunnel{}
 	n.mu.Unlock()
+	n.linkMu.Lock()
+	links := make([]*linkLoop, 0, len(n.links))
+	for _, l := range n.links {
+		links = append(links, l)
+	}
+	n.linkMu.Unlock()
+	for _, l := range links {
+		n.stopLink(l.key)
+	}
 	n.wg.Wait()
 	n.cancel = nil
 }
@@ -254,6 +288,11 @@ func (n *Node) serveConn(conn net.Conn) {
 		return
 	}
 	n.registerIncoming(ch, peer)
+	// 任何持钥来话本身就是一次敲门：未知 peer 记 pending（或按
+	// auto_approve 直接批准），授权状态随 Knock 落定，下方闸门复查。
+	n.pairs.Knock(peer.ID, peer.Name, ch.PeerAddr(), n.opt.AutoApprove)
+	n.trackPairConn(peer.ID, conn)
+	defer n.untrackPairConn(peer.ID, conn)
 	n.logf("[mesh] peer %s(%s) 接入 %s", peer.Name, peer.ID, ch.PeerAddr())
 	ctx, cancel := context.WithCancel(n.ctx)
 	defer cancel()
@@ -268,27 +307,50 @@ func (n *Node) serveConn(conn net.Conn) {
 			if err := ch.Send(ftPong, payload); err != nil {
 				return
 			}
+		case ftPair:
+			if err := n.handlePair(ch, peer, payload); err != nil {
+				return
+			}
 		case ftReq:
+			if !n.pairs.Approved(peer.ID) {
+				// 第二道门：持钥但未授权——操作帧一律拒绝并说明出路
+				resp := ctl.Response{OK: false, Error: fmt.Sprintf(
+					"本节点未授权 %s(%s) —— 在本机执行 serialtap mesh approve %s 后重试", peer.Name, peer.ID, peer.ID)}
+				_ = ch.Send(ftResp, mustJSON(respFrame{ID: 1, Resp: &resp, End: true}))
+				return
+			}
 			if err := n.handleReq(ch, payload); err != nil {
 				return
 			}
-		case ftUp:
-			if err := n.handleUpload(ch, payload); err != nil {
+		case ftUp, ftDown, ftTail, ftDial:
+			if !n.pairs.Approved(peer.ID) {
+				n.logf("[mesh] 拒绝未授权 peer %s(%s) 的 %q 帧", peer.Name, peer.ID, string(t))
+				if t == ftDial {
+					_ = ch.Send(ftDialA, mustJSON(dialAckFrame{OK: false,
+						Err: fmt.Sprintf("本节点未授权 %s(%s) —— serialtap mesh approve %s", peer.Name, peer.ID, peer.ID)}))
+				}
 				return
 			}
-		case ftDown:
-			if err := n.handleDownload(ch, ctx, payload); err != nil {
+			// fallthrough 原分发逻辑（保持原 case 体，见下重排）
+			switch t {
+			case ftUp:
+				if err := n.handleUpload(ch, payload); err != nil {
+					return
+				}
+			case ftDown:
+				if err := n.handleDownload(ch, ctx, payload); err != nil {
+					return
+				}
+			case ftTail:
+				n.wg.Add(1)
+				go func() {
+					defer n.wg.Done()
+					_ = n.handleTail(ch, ctx, payload)
+				}()
+			case ftDial:
+				n.handleDial(ch, payload) // 占用连接直到隧道结束
 				return
 			}
-		case ftTail:
-			n.wg.Add(1)
-			go func() {
-				defer n.wg.Done()
-				_ = n.handleTail(ch, ctx, payload)
-			}()
-		case ftDial:
-			n.handleDial(ch, payload) // 占用连接直到隧道结束
-			return
 		}
 	}
 }
@@ -385,6 +447,10 @@ func (n *Node) Call(peerName string, req ctl.Request, onResp func(ctl.Response) 
 	if err != nil {
 		return nil, err
 	}
+	// 快速失败：链接循环已知对端未授权本节点时不白拨（状态最多 2 个重试周期旧）
+	if authed, known := n.peerAuthedFresh(peer.ID); known && !authed {
+		return nil, fmt.Errorf("%s", gateMessage(peer.ID, peer.NameOrAddr(), n.self.ID))
+	}
 	conn, err := net.DialTimeout("tcp", peer.Addr, 3*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("连不上 peer %s(%s): %w", peer.NameOrAddr(), peer.Addr, err)
@@ -458,6 +524,14 @@ func (n *Node) AggregateStatus(timeout time.Duration) []ctl.PeerStatus {
 		go func(i int, p Peer) {
 			defer wg.Done()
 			ps := ctl.PeerStatus{ID: p.ID, Name: p.NameOrAddr(), Addr: p.Addr, Static: p.Static}
+			if p.ID != "" {
+				if n.pairs.Approved(p.ID) {
+					ps.Auth = "approved"
+				}
+				if authed, known := n.peerAuthedFresh(p.ID); known {
+					ps.PeerAuthed = authed
+				}
+			}
 			type res struct {
 				devs []ctl.DevState
 				err  error

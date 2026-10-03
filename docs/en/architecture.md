@@ -247,6 +247,17 @@ identically local or remote.
 - **Audit discipline**: mesh logs carry command names, peer identities and
   byte counts only — frame bodies (which may contain NVS values) are never
   logged, the same rule as `daemon/board.go`.
+- **Auto-link & pairing (the second gate)**: nodes dial every discovered peer
+  automatically and keep the link alive (pair frame + ping heartbeat, a
+  read-side liveness probe, exponential reconnect backoff). Any authenticated
+  incoming connection is a *knock*: the peer lands in a pending list and every
+  operation frame is refused with the exact `mesh approve` command to run,
+  until the owner approves (`mesh pair` / `mesh approve` / panel ✓✗). The
+  approval table lives in `<root>/.mesh-peers.json` (approved/pending/revoked)
+  and survives restarts; revocation drops the peer's active connections so it
+  takes effect immediately. `mesh_auto_approve: true` collapses the model back
+  to key-only trust. `mesh status` shows both directions (`auth` /
+  `peer_authed`, "双向✓" when each side approved the other).
 - **Off by default**: with `mesh_enabled=false` no port is opened; the
   loopback-only posture is unchanged. CLI never holds the key — `--peer` just
   sets a field on the request, and the local daemon does the forwarding.

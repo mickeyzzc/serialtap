@@ -556,7 +556,8 @@ func (s *Server) handleCmd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch req.Cmd {
-	case "status", "pause", "resume", "proxy", "release", "reopen", "reset":
+	case "status", "pause", "resume", "proxy", "release", "reopen", "reset",
+		"mesh-pair", "mesh-approve", "mesh-revoke":
 	default:
 		http.Error(w, "cmd not allowed from web (use CLI): "+req.Cmd, http.StatusBadRequest)
 		return

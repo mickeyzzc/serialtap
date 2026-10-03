@@ -46,6 +46,8 @@ const (
 	ftDial  = 'X' // 密封隧道拨号: {"key"} → ftDialAck
 	ftDialA = 'Y' // 密封隧道确认: {"ok","device","device_key","err"}；此后双向均为 ftWire
 	ftWire  = 'W' // 密封裸字节（隧道模式，payload=串口字节流）
+	ftPair  = 'Z' // 密封配对/链接: {"id","name","port"} → ftPairAck
+	ftPairA = 'z' // 密封配对应答: {"id","name","approved","auto"}
 )
 
 const (

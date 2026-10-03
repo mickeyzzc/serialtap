@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- feat(mesh): **自动链接与配对授权——mesh 的第二道门**。节点对发现的每个 peer（beacon/
+  静态种子）自动拨链并保活（配对帧 + ping 心跳 + 读侧活性探针 + 指数重连退避）；
+  被链接侧任何持钥来话即"敲门"：`pending` 名单 + 操作帧一律拒绝（拒绝信息附
+  要跑的 approve 命令），owner 批准后 ≤ 一个敲门周期（30s）自动转正；撤销立即
+  掐断活动连接、即时生效。授权表 `<root>/.mesh-peers.json`（approved/pending/
+  revoked）重启不丢；`mesh_auto_approve: true`（默认 false）收回持钥即信任的
+  旧行为。新增 `mesh pair`/`mesh approve`/`mesh revoke` 子命令、`mesh status`
+  授权列（双向✓/已授/待批）、面板 mesh 区待授权横幅 + ✓/✗ 按钮、ctl 协议
+  `mesh-pair`/`mesh-approve`/`mesh-revoke` 命令。测试：敲门/闸门/批准转正/
+  撤销断链/持久化/auto-approve/beacon 自动链接/e2e 未授权首连拒绝全链。
+
 - feat(web): **面板 LAN 访问指引与非回环绑定告警**——`web_addr` 设 `0.0.0.0:8801`
   即可在其它电脑的浏览器里用面板（mesh 开启时一台面板可见全部 peer 的板子）；
   面板无认证，非回环绑定时守护启动日志显式告警（只应在可信 LAN 用）。文档：

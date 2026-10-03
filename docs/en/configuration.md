@@ -46,6 +46,7 @@ serialtap is configured by a single JSON file. An annotated example ships in
 | `mesh_port` | int | `8802` | Mesh port. TCP control channel and UDP beacons share the number; open it for **both** protocols in the firewall. `0` is not valid at runtime (tests use ephemeral ports internally). |
 | `mesh_announce_s` | int | `5` | Beacon interval in seconds. Peers not heard from for 3 intervals expire from the registry (static seeds never expire). |
 | `mesh_peers` | []string | `[]` | Static seed peers (`"host:port"`), for AP-isolated or routed networks where broadcast discovery fails; discovery still runs in parallel. Identity is learned on first successful handshake. |
+| `mesh_auto_approve` | bool | `false` | Pairing auto-approve. `false` (default): a same-key node that connects is *knocking* — its operations are refused until `serialtap mesh approve <id>` (or the panel's ✓); approvals persist in `<root>/.mesh-peers.json`. `true`: key-only trust, every same-key node is let in without prompts (the pre-pairing behavior). |
 | `dtr_hold` | [string] | `[]` | Device regexes (any of tty / key / by-id / name) that keep DTR+RTS **asserted** after open. Default releases both for every device — CH340 wires RTS to EN and ESP native USB-JTAG has DTR/RTS reset semantics; pico-sdk (RP2040) USB CDC however gates all stdio output on DTR ("host listening"), so a released DTR makes the firmware silently drop output (verified on rp2040-zero, 2026-09-27). Bad regexes are skipped with a warning. |
 
 ## Device naming

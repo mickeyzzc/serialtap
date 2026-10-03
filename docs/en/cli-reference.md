@@ -123,6 +123,9 @@ manages ports that have a `/dev/serial/by-path` entry.
 serialtap mesh status [--json] [--sock S]   # aggregate: every peer + its boards
 serialtap mesh keygen                       # print a fresh passphrase for mesh_key
 serialtap mesh forward <peer> <RE> [--sock S]  # local TCP endpoint → peer's board
+serialtap mesh pair [--sock S]                 # pairing overview: pending/approved/revoked
+serialtap mesh approve <id|name> [--sock S]    # approve a pending pairing
+serialtap mesh revoke  <id|name> [--sock S]    # revoke an approved peer (drops its conns)
 ```
 
 `status` shows one row per peer (name, id, addr, online/offline, latency) with
@@ -131,6 +134,13 @@ emits `{"peers":[...]}` for scripts. `keygen` prints a 32-char passphrase —
 paste it into every machine's config; it never appears in logs or beacons.
 `forward` is the generic form of `at --peer`: it opens a local listener that
 bridges into the peer's proxy endpoint — point any serial tool at it.
+
+Nodes auto-link to every discovered peer; a same-key peer that connects is
+*knocking* and its operations are refused until approved. `pair` lists the
+knocks (with the exact `approve` command to copy), `approve` lets a peer in
+(effective within one knock cycle, ≤30 s), `revoke` cuts an approved peer off
+immediately. `<id|name>` accepts a node id prefix or name. The panel's mesh
+section shows pending knocks with ✓/✗ buttons.
 
 ## `status` — daemon state
 

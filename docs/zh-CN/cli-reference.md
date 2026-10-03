@@ -117,6 +117,9 @@ BY-PATH 列即设备稳定 key；写匹配模式时可用它（或设备名）�
 serialtap mesh status [--json] [--sock S]      # 聚合：全部 peer + 各自板子
 serialtap mesh keygen                          # 打印一个新口令，配进 mesh_key
 serialtap mesh forward <peer> <RE> [--sock S]  # 本地 TCP 端点 → peer 的板子
+serialtap mesh pair [--sock S]                 # 配对总览：待授权/已授权/已拒绝
+serialtap mesh approve <id|名字> [--sock S]     # 批准待授权配对
+serialtap mesh revoke  <id|名字> [--sock S]     # 撤销已批 peer（立即断其连接）
 ```
 
 `status` 每 peer 一行（名字、id、地址、online/offline、延迟），板子缩进
@@ -124,6 +127,11 @@ serialtap mesh forward <peer> <RE> [--sock S]  # 本地 TCP 端点 → peer 的�
 消费。`keygen` 打印 32 字符口令——粘到每台机器的 config；它永不进日志与
 beacon。`forward` 是 `at --peer` 的通用形态：开一个本地监听桥进 peer 的
 代理端点——任意串口工具指过去即可。
+
+节点对发现的 peer 自动拨链；同密钥 peer 来话即敲门，批准前操作被拒。
+`pair` 列出敲门（附可复制的 `approve` 命令），`approve` 放行（一个敲门
+周期 ≤30s 内生效），`revoke` 立即掐断已批 peer。`<id|名字>` 支持节点 id
+前缀或名字。面板 mesh 区对敲门显示 ✓/✗ 按钮。
 
 ## `status` —— 守护状态
 

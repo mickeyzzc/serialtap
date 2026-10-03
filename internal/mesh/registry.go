@@ -193,7 +193,17 @@ func (r *Registry) Match(prefix string) (Peer, error) {
 	return Peer{}, fmt.Errorf("未找到 peer %q（serialtap mesh status 查看已知节点）", prefix)
 }
 
-// Addr2Peer: 直接按地址找（转发兜底：peer 名填了 host:port 也能走）。
+// ByKey: 按内部键查（链接循环用：beacon peer 键=id，静态占位键="static:addr"）。
+func (r *Registry) ByKey(key string) (Peer, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if p, ok := r.peers[key]; ok {
+		return *p, true
+	}
+	return Peer{}, false
+}
+
+// ByAddr: 直接按地址找（转发兜底：peer 名填了 host:port 也能走）。
 func (r *Registry) ByAddr(addr string) (Peer, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

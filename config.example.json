@@ -24,5 +24,6 @@
   "mesh_name": "bench1",
   "mesh_port": 8802,
   "mesh_announce_s": 5,
-  "mesh_peers": []
+  "mesh_peers": [],
+  "mesh_auto_approve": false
 }

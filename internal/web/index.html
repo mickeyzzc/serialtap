@@ -377,12 +377,19 @@ setInterval(pollStatus, 1000); pollStatus();
 // —— mesh 多机互联：peer 聚合（6s 一轮；对端查询本身带 5s 超时，别更快） ——
 let mesh = {enabled:false, peers:[]}, meshSig = "";
 function meshDevKey(pn, d){ return pn + "/" + d.name; }
+let meshPending = [];   // 待授权配对请求（mesh-pair 查询）
 function pollMesh(){
   fetch("/api/mesh/status").then(r=>r.json()).then(m=>{
     mesh = m && m.enabled ? m : {enabled:false, peers:[]};
     renderMesh();
     syncDevSel();   // 远程设备进查看下拉
     syncFmPeers();  // 刷机弹窗目标节点下拉
+  }).catch(()=>{});
+  fetch("/api/cmd", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({cmd:"mesh-pair", pattern:"", action:""})}
+  ).then(r=>r.json()).then(j=>{
+    meshPending = (j.ok && j.peers || []).filter(p=>p.state==="pending");
+    renderMesh();
   }).catch(()=>{});
 }
 function renderMesh(){
@@ -397,8 +404,29 @@ function renderMesh(){
     $("meshSum").textContent = "同密钥 LAN 节点";
     return;
   }
-  $("meshSum").textContent = `${mesh.peers.length} 节点 · ${mesh.peers.filter(p=>p.state==="online").length} 在线`;
+  $("meshSum").textContent = `${mesh.peers.length} 节点 · ${mesh.peers.filter(p=>p.state==="online").length} 在线` +
+    (meshPending.length ? ` · ${meshPending.length} 待授权` : "");
   row.innerHTML = "";
+  if (meshPending.length){
+    const banner = document.createElement("div");
+    banner.className = "cmp-dev";
+    banner.innerHTML = `<div class="hd2"><b>待授权配对</b><span class="dim">同密钥节点请求链接（批准后放行全部操作）</span></div>` +
+      meshPending.map(p=>`
+      <div class="mdev" data-pid="${esc(p.id)}">
+        <b class="mname">${esc(p.name)||"?"}</b>
+        <span class="dim">${esc(p.id)} · @${esc(p.addr)}</span>
+        <span class="macts">
+          <button data-a="ok">✓ 批准</button>
+          <button data-a="no" class="danger">✗ 拒绝</button>
+        </span>
+      </div>`).join("");
+    banner.querySelectorAll(".mdev").forEach(dv=>{
+      const pid = dv.dataset.pid;
+      dv.querySelector('[data-a="ok"]').onclick = ()=>{ cmd("mesh-approve", pid); setTimeout(pollMesh, 400); };
+      dv.querySelector('[data-a="no"]').onclick = ()=>{ cmd("mesh-revoke", pid); setTimeout(pollMesh, 400); };
+    });
+    row.appendChild(banner);
+  }
   for (const p of mesh.peers){
     const el = document.createElement("div");
     el.className = "cmp-dev";
@@ -566,7 +594,8 @@ function toast(msg, ok){
   toastTimer = setTimeout(()=>el.classList.remove("show"), 4000);
 }
 
-const CMD_LABEL = {pause:"暂停", resume:"恢复", proxy:"代理", release:"让口", reopen:"软重连", reset:"USB 重置"};
+const CMD_LABEL = {pause:"暂停", resume:"恢复", proxy:"代理", release:"让口", reopen:"软重连", reset:"USB 重置",
+  "mesh-approve":"配对批准", "mesh-revoke":"配对拒绝"};
 function cmd(c, pattern, action, extra){
   fetch("/api/cmd", {method:"POST", headers:{"Content-Type":"application/json"},
     body: JSON.stringify(Object.assign({cmd:c, pattern:pattern||"", action:action||""}, extra||{}))}

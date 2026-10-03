@@ -95,6 +95,14 @@ auto-detect (esptool, or `flasher_args.json`'s `extra_esptool_args["--chip"]`).
 
 Returns `devices`. The field is omitted entirely when no device is attached.
 
+### `mesh-pair` / `mesh-approve` / `mesh-revoke` (local node only)
+
+`mesh-pair` returns `peers` with `state` = `pending` (knocked, awaiting
+approval) / `approved` / `revoked`, each carrying `{id, name, addr, at}`.
+`mesh-approve`/`mesh-revoke` take the selector in `pattern` (node id prefix
+or name) and return the resolved id in `line`. These are also what the
+panel's pairing buttons send.
+
 ### `mesh` (local node only)
 
 Aggregates every known peer: each is dialed in parallel with a 5 s budget and

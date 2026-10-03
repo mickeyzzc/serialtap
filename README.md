@@ -183,12 +183,25 @@ serialtap mesh forward bench2 '^sense$'          # local endpoint → remote ser
 The web panel grows a **mesh** section: every peer and its boards, remote log
 tailing, remote pause/reopen, and remote flashing with a target-node selector.
 
+**Auto-link & pairing.** Discovery is not passive: each node automatically
+dials every peer it learns (beacon or static seed) and keeps the link alive.
+A peer that connects is *knocking*: with the same key it passes the crypto
+gate, but its operations are refused until you **approve** it once —
+`serialtap mesh pair` lists pending requests, `serialtap mesh approve <id>`
+lets it in (the panel's mesh section shows ✓/✗ buttons). Approvals persist
+at `<root>/.mesh-peers.json`; `mesh revoke` cuts an approved peer off
+immediately (active connections are dropped). Set `"mesh_auto_approve": true`
+to return to key-only trust (everything with the key is let in, no prompts).
+
 Security model, briefly (details in `docs/en/architecture.md`):
 
 - everything crosses the wire inside an **AES-256-GCM** channel derived from
   the passphrase (PBKDF2 600k); beacons carry only an HMAC fingerprint —
   instances with different keys never see each other, and the key itself never
   leaves the machine
+- the key is the **first** gate; **pairing approval is the second** — a
+  same-key node still cannot operate until explicitly approved
+  (`mesh_auto_approve` disables the second gate for key-only trust)
 - firmware images and NVS dumps **do** cross the channel (that's the point) —
   it is encrypted, but only mesh members should be on the LAN; mesh is off by
   default and the network surface stays loopback-only until you enable it
@@ -263,6 +276,8 @@ are always CGO-free static builds. On Windows it's `serialtap.exe list`
 | `decode-backtrace LOG` | Decode `Backtrace:` address frames via addr2line |
 | `mesh status [--json]` | **Mesh aggregate view**: every peer node on the LAN (discovered or static) with state, latency, and its boards |
 | `mesh keygen` | Generate a mesh pre-shared key passphrase (paste into every machine's config; the key never enters logs or beacons) |
+| `mesh pair` | **Pairing overview**: pending knocks (same-key nodes asking to link), approved peers, revoked peers |
+| `mesh approve <id>` / `mesh revoke <id>` | Approve a pending pairing (operations unblocked within one knock cycle) / revoke an approved peer — its active connections are dropped immediately |
 | `mesh forward <peer> <RE>` | Open a **local tunnel endpoint** to a peer's board — business tools treat it as a local serial port |
 | `--peer <node>` | On every control command (`status`/`flash`/`pause`/`resume`/`release`/`proxy`/`reopen`/`reset`/`info`/`partitions`/`nvs`/`dump`/`at`): execute on that peer — images upload from this machine over the encrypted channel, dump artifacts come back here |
 | `version` | Print the version |
@@ -403,6 +418,10 @@ Windows installer/Task Scheduler paths.
 
 ## Troubleshooting
 
+- **`--peer` says "尚未授权/未授权"**: the remote node hasn't approved yours
+  yet — run `serialtap mesh pair` **on that node** and `mesh approve <id>`,
+  or set `mesh_auto_approve: true` on it. Approval takes effect within one
+  knock cycle (≤30 s); revocation is immediate.
 - **Mesh peers don't discover each other**: check `serialtap mesh status` on
   both sides. In order: (1) same `mesh_key` (fingerprints differ → beacons are
   ignored silently); (2) the port open in the firewall for **both TCP and UDP**
