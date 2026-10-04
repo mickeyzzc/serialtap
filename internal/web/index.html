@@ -86,6 +86,8 @@ cursor:pointer;color:var(--dim);user-select:none;background:#0a0e14}
 .lpane{background:#0a0e14;border:1px solid var(--border);border-radius:8px;display:flex;flex-direction:column;min-width:0}
 .lpane .lhd{display:flex;gap:8px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--border);font-size:12px;flex-wrap:wrap}
 .lpane .lhd b{font-weight:600}
+.lacts2{margin-left:auto;display:flex;gap:4px}
+.lacts2 button{padding:1px 7px;font-size:11px}
 .lpane pre{margin:0;padding:8px 10px;height:44vh;overflow-y:auto;font:12px/1.45 Consolas,monospace;
 white-space:pre-wrap;word-break:break-all}
 #logGrid.solo .lpane pre{height:62vh}
@@ -169,9 +171,9 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
   <svg class="logo" width="26" height="26" viewBox="0 0 100 100" aria-hidden="true"><rect x="2" y="2" width="96" height="96" rx="22" fill="#0F172A"/><path d="M14 32 H28 V52 H42 V32 H56 V52 H70 V32 H86" fill="none" stroke="#E2E8F0" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><path d="M49 52 V76" fill="none" stroke="#2DD4BF" stroke-width="8" stroke-linecap="round"/><circle cx="49" cy="82" r="6.5" fill="#2DD4BF"/></svg>
   <h1>serialtap · 观测面板</h1>
   <nav id="views">
-    <span class="nv on" data-v="dash">仪表盘</span>
-    <span class="nv" data-v="logs">日志</span>
+    <span class="nv on" data-v="logs">日志</span>
     <span class="nv" data-v="wave">波形</span>
+    <span class="nv" data-v="dash">仪表盘</span>
   </nav>
   <span class="dim" id="root">—</span>
   <span class="dim" id="conn"></span>
@@ -180,8 +182,8 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
 </header>
 <main>
 
-  <!-- ═══ 视图一：仪表盘 —— 全网健康总览 ═══ -->
-  <section id="view-dash">
+<!-- ═══ 视图三：仪表盘 —— 全网健康总览（参考页，按需查看）═══ -->
+<section id="view-dash" class="hidden">
     <div class="kpis">
       <div class="kpi" id="kDevK"><div class="n" id="kDev">0</div><div class="l">接入设备 · 全网</div></div>
       <div class="kpi" id="kColK"><div class="n" id="kCol">0</div><div class="l">采集中 · 全网</div></div>
@@ -206,8 +208,8 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
     </div>
   </section>
 
-  <!-- ═══ 视图二：多机日志 —— 并排 / 合并 ═══ -->
-  <section id="view-logs" class="hidden">
+<!-- ═══ 视图一：多机日志工作台（首页——实干工具打开就能干活）═══ -->
+<section id="view-logs">
     <div class="panel">
       <div class="hd">
         <span class="t">多机日志</span>
@@ -238,8 +240,8 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
     </div>
   </section>
 
-  <!-- ═══ 视图三：多机波形 —— 网格 / 单机大图 ═══ -->
-  <section id="view-wave" class="hidden">
+<!-- ═══ 视图二：多机波形 —— 网格 / 单机大图 ═══ -->
+<section id="view-wave" class="hidden">
     <div class="panel">
       <div class="hd">
         <span class="t">多机波形</span>
@@ -331,12 +333,12 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
       <button id="helpClose" style="margin-left:auto">关闭</button></div>
     <div class="mbody hbody">
       <h3>三个页面</h3>
-      <p>顶部导航切换（记忆上次页面，也可用 <code>#dash / #logs / #wave</code> 直达）：</p>
+      <p>打开即落在<b>多机日志工作台</b>（首页用来干活）；顶部导航切换，<code>#logs / #wave / #dash</code> 可直达：</p>
       <table>
-        <tr><th>页面</th><th>看什么</th></tr>
-        <tr><td><b>仪表盘</b></td><td>全网健康总览：KPI 指标条（设备数/采集中/总吞吐/异常/事件/mesh 节点）、设备卡（速率迷你图、静默、重开）、30 分钟事件时间线、mesh 节点管理</td></tr>
-        <tr><td><b>日志</b></td><td>多机同时看日志：勾选多台设备，<b>并排</b>（每台一个窗格）或<b>合并</b>（按时间交织、每台保底配额防刷屏，每行带彩色设备标签）；「全选/清空」一键改选，点设备卡或窗格标题 = 只看这台；搜索/正则过滤与高亮跨设备生效</td></tr>
+        <tr><th>页面</th><th>干什么</th></tr>
+        <tr><td><b>日志</b>（首页）</td><td>多机同时看日志 + 全局操作台：勾选多台设备，<b>并排</b>（每台一个窗格）或<b>合并</b>（按时间交织、每台保底配额防刷屏，每行带彩色设备标签）；窗格头部直接<b>暂停/恢复、软重连、刷机</b>（本地与 mesh 远端同权）；「全选/清空」一键改选，点设备卡或窗格标题 = 只看这台；搜索/正则过滤与高亮跨设备生效</td></tr>
         <tr><td><b>波形</b></td><td>多机同时看波形：<b>多机网格</b>每台一块实时示波器；「大图」进单机分析（冻结/悬停读值/高级提取/导出 CSV），大图里用设备下拉随时换台</td></tr>
+        <tr><td><b>仪表盘</b></td><td>全网健康总览（参考页）：KPI 指标条（设备数/采集中/吞吐/异常/事件/mesh 节点）、设备卡（操作按钮全量）、30 分钟事件时间线、mesh 节点管理</td></tr>
       </table>
       <p>所有设备（含 mesh 远端）都在后台持续采样与缓冲——勾选、切换、换页都不会丢数据。</p>
 
@@ -431,13 +433,13 @@ function parseTs(l){
   return new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +m[6], +m[7]).getTime();
 }
 
-// —— 视图路由：dash | logs | wave（hash 可直达，记忆上次页面）——
-const VIEWS = ["dash", "logs", "wave"];
-let view = "dash";
+// —— 视图路由：logs（首页工作台）| wave | dash（总览参考页）——
+// 实干工具打开就落在干活的多机日志页；仪表盘按需去看。hash 可直达。
+const VIEWS = ["logs", "wave", "dash"];
+let view = "logs";
 function setView(v, fromHash){
-  if (!VIEWS.includes(v)) v = "dash";
+  if (!VIEWS.includes(v)) v = "logs";
   view = v;
-  localStorage.setItem("st_view", v);
   if (!fromHash && location.hash !== "#" + v) history.replaceState(null, "", "#" + v);
   for (const b of document.querySelectorAll("#views .nv")) b.classList.toggle("on", b.dataset.v === v);
   for (const s of VIEWS) $("view-" + s).classList.toggle("hidden", s !== v);
@@ -916,9 +918,19 @@ function syncLogGrid(){
     el.innerHTML = `<div class="lhd"><b style="color:${devColor(k)};cursor:pointer" title="只看这台（其余取消勾选）">${esc(m.name)}</b>` +
       (m.remote ? `<span class="dim">⌗ ${esc(m.peer)}</span>` : `<span class="dim">${esc(m.tty)}</span>`) +
       `<span class="chip lstate"></span>` +
-      `<span class="dim lrate" style="margin-left:auto;font-size:11px"></span>` +
-      `<button class="lwave" title="切到波形页单看这台">波形</button></div><pre></pre>`;
+      `<span class="dim lrate" style="font-size:11px"></span>` +
+      `<span class="lacts2">` +
+      `<button class="la-toggle" title="暂停/恢复采集"></button>` +
+      `<button class="la-reo" title="串口层软重连：立即关口→重开">⟳</button>` +
+      `<button class="la-flash" title="上传镜像刷机">刷</button>` +
+      `<button class="lwave" title="切到波形页单看这台">波</button></span></div><pre></pre>`;
+    const anchor = "^" + m.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$";
+    const peerArg = m.remote ? {peer: m.peer} : undefined;
     el.querySelector(".lhd b").onclick = () => gotoLogs(k);
+    el.querySelector(".la-toggle").onclick = () => cmd(
+      devMeta(k).state === "collecting" ? "pause" : "resume", anchor, "", peerArg);
+    el.querySelector(".la-reo").onclick = () => cmd("reopen", anchor, "", peerArg);
+    el.querySelector(".la-flash").onclick = () => openFlash(m.name, m.remote ? m.peer : "");
     el.querySelector(".lwave").onclick = () => {
       waveSel.add(k); localStorage.setItem("st_wavesel", JSON.stringify([...waveSel]));
       waveBigDev = k; setWaveMode("big"); setView("wave");
@@ -983,6 +995,9 @@ function renderGrid(){
     st.textContent = m.state || "—";
     st.className = "chip lstate " + (m.state || "");
     pane.querySelector(".lrate").textContent = m.remote ? "" : (rate[k] || 0) + " B/s";
+    const tog = pane.querySelector(".la-toggle");
+    tog.textContent = m.state === "collecting" ? "⏸" : "▶";
+    tog.title = m.state === "collecting" ? "暂停采集" : "恢复采集";
     let lines = (logs[k + "/serial"] || "").split("\n");
     if (lines.length && lines[lines.length-1] === "") lines.pop();
     total += lines.length;
@@ -1515,9 +1530,8 @@ function pollEvents(){
 }
 setInterval(pollEvents, 5000); pollEvents();
 
-// —— 启动：hash > 上次页面 > 仪表盘 ——
-setView(VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1)
-  : (localStorage.getItem("st_view") || "dash"), false);
+// —— 启动：hash 直达 > 日志工作台（首页）——
+setView(VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "logs", false);
 </script>
 </body>
 </html>
