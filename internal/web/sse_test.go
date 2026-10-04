@@ -10,7 +10,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
 	"time"
+
+	"github.com/mickeyzzc/serialtap/internal/ctl"
 )
 
 // /api/live 多路复用：两台设备的增量都必须到达，且帧带正确设备键。
@@ -154,6 +157,63 @@ func TestLiveMultiMeshRemoteBranch(t *testing.T) {
 	fm.mu.Unlock()
 	if len(reqs) == 0 || !strings.HasPrefix(reqs[0], "bench-a|n16r8-u1|serial") {
 		t.Fatalf("TailStream 参数错误: %v", reqs)
+	}
+}
+
+// 重拨Mesh stub：TailStream 立即返回（模拟对端重启/断链），统计调用次数。
+type redialMesh struct {
+	mu     sync.Mutex
+	calls  int
+	onCall func()
+}
+
+func (r *redialMesh) AggregateStatus(timeout time.Duration) []ctl.PeerStatus { return nil }
+func (r *redialMesh) TailStream(ctx context.Context, peer, device, kind string, onData func([]byte)) error {
+	r.mu.Lock()
+	r.calls++
+	r.mu.Unlock()
+	if r.onCall != nil {
+		r.onCall()
+	}
+	return nil // 立即返回：handler 必须退避后重拨
+}
+
+// 回归：远端 TailStream 返回（peer 重启/断链）后，多路复用流必须自动重拨——
+// 背景（真机）：多路复用连接因本地设备活跃而长存，远端子流断了不重拨 = 远端
+// 波形/日志永久停更（peer 换装重启后全部远端停更 8 分钟才被发现）。
+func TestLiveMultiRemoteTailRetry(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "dev-a"), 0o755)
+	os.WriteFile(filepath.Join(root, "dev-a", "serial-20260921.log"), []byte("init\n"), 0o644)
+
+	rm := &redialMesh{}
+	s := &Server{root: root, mesh: rm}
+	ts := httptest.NewServer(http.HandlerFunc(s.handleLiveMulti))
+	defer ts.Close()
+
+	req, _ := http.NewRequest("GET", ts.URL+"/api/live?kind=serial&devices=dev-a,bench-a/dev-r", nil)
+	ctx, cancel := context.WithCancel(req.Context())
+	req = req.WithContext(ctx)
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { cancel(); resp.Body.Close() }()
+
+	// 重拨周期 2s：等 5s 应看到 ≥3 次调用（首轮 + 至少两次重拨）
+	deadline := time.After(6 * time.Second)
+	for {
+		rm.mu.Lock()
+		c := rm.calls
+		rm.mu.Unlock()
+		if c >= 3 {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("5s 内远端尾随未重拨（calls=%d，期望 ≥3）", c)
+		case <-time.After(300 * time.Millisecond):
+		}
 	}
 }
 

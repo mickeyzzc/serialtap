@@ -582,7 +582,17 @@ func (s *Server) handleLiveMulti(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func(peer, name string) {
 			defer wg.Done()
-			_ = s.mesh.TailStream(ctx, peer, name, kind, func(b []byte) { send(peer+"/"+name, b) })
+			// 对端重启/断链后 TailStream 会返回——自动重拨直到本 SSE 客户端断开。
+			// 多路复用连接因本地设备仍然活跃而不会重建，远端子流若不重拨就永久
+			// 停更（真机：peer 换装重启后全部远端波形/日志停更，页面毫无察觉）
+			for {
+				_ = s.mesh.TailStream(ctx, peer, name, kind, func(b []byte) { send(peer+"/"+name, b) })
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(2 * time.Second):
+				}
+			}
 		}(rm.peer, rm.name)
 	}
 	for {

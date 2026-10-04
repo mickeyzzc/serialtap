@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- fix(web): **mesh 远端尾随断流自动重拨**——多路复用 `/api/live` 里远端子流的
+  TailStream 在对端重启/断链后直接退出且无人重拨：连接本身因本地设备活跃而
+  长存，EventSource 不会重连，全部远端板子的日志/波形**永久停更**（真机：
+  peer 换装重启后远端停更 8 分钟才被发现）。现在远端子流 2s 退避重拨直到本
+  SSE 客户端断开。顺带：窗口内无更新的命名通道键不再占泳道（开机一次性键
+  如 quality=/framesize= 不再把位置通道挤成空白道）。回归测试
+  TestLiveMultiRemoteTailRetry。
+
 - fix(web): **命名通道全局聚合——"其它的波形不显示"的根治**。此前每台板子只画
   一个"最活跃帧型"的波形：ESP-IDF 日志 tag 众多（wifi/csi_motion/wclock…），
   只有刷得最凶的 tag 上位，其它 tag 的测量（如 wclock 温湿度）永远不显示；
