@@ -349,7 +349,7 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
       <table>
         <tr><th>记号形态</th><th>通道</th><th>例</th></tr>
         <tr><td>ESP-IDF 日志行</td><td>帧型 <code>级别·tag</code>；开机 tick + 行内独立数字</td><td><code>I (2944) st7735: retry 3</code> → I·st7735</td></tr>
-        <tr><td><code>key=数字</code></td><td>命名通道（用 key 当名字）</td><td><code>t=23.4</code> → 通道 t</td></tr>
+        <tr><td><code>key=数字</code></td><td>命名通道（<b>全局聚合</b>：哪个 tag 输出的都进同一条泳道，低频测量不会被高频帧挤掉；带单位 <code>T=28.1C</code> 亦认可）</td><td><code>t=23.4</code> / <code>T=28.1C</code> → 通道 t / T</td></tr>
         <tr><td>纯数字</td><td>位置通道（v2、v3…按记号次序）</td><td><code>-49</code> → 通道 v3</td></tr>
         <tr><td>十六进制块 / 文本</td><td>自动排除</td><td><code>09fb0e02…</code></td></tr>
       </table>
@@ -1111,12 +1111,12 @@ const waveBufs = new Map();  // dev → {samples, tail, re, reG, chNames, frameS
 function wstate(dev){
   let w = waveBufs.get(dev);
   if (!w){
-    w = {samples: [], tail: "", re: null, reG: null, chNames: [], frameStats: {}};
+    w = {samples: [], tail: "", re: null, reG: null, chNames: [], frameStats: {}, kv: {}};
     waveBufs.set(dev, w);
   }
   return w;
 }
-const WAVE_MAX_CH = 6, WAVE_MAX = 60000, WAVE_NUM = /^-?\d+(?:\.\d+)?$/, WAVE_KV = /^([A-Za-z_][\w-]*)=(-?\d+(?:\.\d+)?)$/;
+const WAVE_MAX_CH = 6, WAVE_MAX = 60000, WAVE_NUM = /^-?\d+(?:\.\d+)?$/;
 
 function setWaveMode(m){
   waveMode = m;
@@ -1170,7 +1170,7 @@ function applyXtr(dev, src){
   }
   const wv = wstate(dev);
   wv.re = re; wv.reG = reG;
-  wv.samples = []; wv.chNames = []; wv.frameStats = {};
+  wv.samples = []; wv.chNames = []; wv.frameStats = {}; wv.kv = {};
   return true;
 }
 // xtrTest: 对大图设备最近 20 行原始日志逐行试跑当前输入，应用前先看见每行提出什么。
@@ -1213,42 +1213,57 @@ function xtrTest(){
 // stripAnsi: 板子日志常带终端颜色转义（ESC[0;32m…），波形提取/帧型识别和
 // 自定义正则都对干净文本写
 function stripAnsi(s){ return s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, ""); }
-// autoChannels: 一行 → {frame, ch:[{name, val}]}；无可提取数值返回 null。
-// 三种形态：
-//  ① ESP-IDF 日志 "I (2944) tag: msg" → 帧型 "I·tag"，开机 tick 为第一通道，
-//    消息里的独立数字顺次为通道（前后是字母/点/下划线的数字跳过——0x1F、
-//    abc12、版本号 1.5.2 天然排除）——普通日志板子（无遥测帧）也能出波形；
-//  ② 行首 key=value（t=23.4 h=55）→ 整行都是通道，帧型统一 "#kv"（否则帧键
-//    每行都变，永远凑不满活跃帧）；
-//  ③ 记号式遥测（#S1 … 纯数字/key=value 记号）。
+// autoChannels: 一行 → {frame, ch:[{name,val}], kv:[{name,val}]}；两者皆空返回 null。
+// 命名通道（kv：key=数值，含带单位 T=28.1C）跨帧型全局聚合——低频但重要的测量
+//（如每秒一条的温度）不该被更高频的帧型挤出画面；位置通道（ch：tick/v2…）
+// 语义依赖行格式，按帧型分组、绘制时只画当前活跃帧型的。
+// 形态：① ESP-IDF 日志 "I (2944) tag: msg"（帧型 级别·tag）；② 行首 key=value；
+// ③ 记号式遥测（#S1 … 纯数字/key=value 记号）。
 const IDF_RE = /^\s*([EIVWD])\s*\((\d+)\)\s*([\w.-]+):/;
+// kvToken: "T=28.1C"→T:28.1（小数+单位字母=测量值）；"heap=123"→heap:123；
+// "RDDID=41BB07FF"/"paddr=0x3c"→null（整数+字母 / 0x 前缀 = 十六进制寄存器值）
+function kvToken(t){
+  const m = /^([A-Za-z_][\w-]*)=(-?\d+(?:\.\d+)?)(.*)$/.exec(t);
+  if (!m) return null;
+  if (/^[xX]/.test(m[3])) return null;
+  if (m[2].indexOf(".") < 0 && /^[A-Za-z]/.test(m[3])) return null;
+  return {name: m[1], val: parseFloat(m[2])};
+}
 function idfChannels(body){
   const m = IDF_RE.exec(body);
   if (!m) return null;
   const ch = [{name: "tick", val: parseFloat(m[2])}];
+  const kv = [];
   const rest = body.slice(m.index + m[0].length);
   for (const mm of rest.matchAll(/-?\d+(?:\.\d+)?/g)){
     if (ch.length >= WAVE_MAX_CH) break;
     const before = rest[mm.index - 1] || " ", after = rest[mm.index + mm[0].length] || " ";
-    if (/[\w.]/.test(before) || /[\w.]/.test(after)) continue; // 嵌在词/十六进制里
+    if (/[\w.]/.test(before) || /[\w.]/.test(after)) continue; // 嵌在词/十六进制/单位数
+    if (before === "=") continue; // key=数值 → 命名通道，不重复计数
     ch.push({name: "v" + (ch.length + 1), val: parseFloat(mm[0])});
   }
-  return {frame: m[1] + "·" + m[3], ch};
+  for (const t of rest.split(/\s+/)){
+    const k = kvToken(t);
+    if (k && kv.length < 8) kv.push(k);
+  }
+  return {frame: m[1] + "·" + m[3], ch, kv};
 }
 function autoChannels(body){
   const idf = idfChannels(body);
   if (idf) return idf;
   const toks = body.split(/\s+/);
   if (toks.length < 2) return null;
-  const ch = [];
-  const kvHead = WAVE_KV.test(toks[0]);
+  const ch = [], kv = [];
+  const kvHead = !!kvToken(toks[0]);
   const frame = kvHead ? "#kv" : toks[0];
-  for (let i = kvHead ? 0 : 1; i < toks.length && ch.length < WAVE_MAX_CH; i++){
-    const kv = WAVE_KV.exec(toks[i]);
-    if (kv) ch.push({name: kv[1], val: parseFloat(kv[2])});
-    else if (WAVE_NUM.test(toks[i]) && !kvHead) ch.push({name: "v"+i, val: parseFloat(toks[i])});
+  for (let i = kvHead ? 0 : 1; i < toks.length; i++){
+    const k = kvToken(toks[i]);
+    if (k){ if (kv.length < 8) kv.push(k); continue; }
+    if (!kvHead && WAVE_NUM.test(toks[i]) && ch.length < WAVE_MAX_CH)
+      ch.push({name: "v"+i, val: parseFloat(toks[i])});
   }
-  return ch.length ? {frame, ch} : null;
+  if (!ch.length && !kv.length) return null;
+  return {frame, ch, kv};
 }
 function waveFeedDev(dev, chunk){
   // 注意：采样永不停（冻结只冻结显示窗口）——停采样会丢历史，冻结的意义
@@ -1281,6 +1296,17 @@ function waveFeedDev(dev, chunk){
     } else {
       const fr = autoChannels(body);
       if (!fr) continue;
+      // 命名通道（key=数值）：跨帧型全局系列，每个 key 一条独立泳道——
+      // 不管哪个 tag 输出、频率多低都不丢（温度 1Hz 不会被 10Hz 的 wifi 挤掉）
+      for (const e of (fr.kv || [])){
+        let s = wv.kv[e.name];
+        if (!s) s = wv.kv[e.name] = {s: [], at: 0};
+        s.s.push({t: now, v: e.val}); s.at = now;
+        if (s.s.length > 20000) s.s = s.s.slice(-20000);
+      }
+      for (const k of Object.keys(wv.kv))
+        if (now - wv.kv[k].at > 600000) delete wv.kv[k]; // 10 分钟无更新的 key 退场
+      if (!fr.ch.length) continue; // 纯命名行（t=… h=…）：不进帧型统计
       const st = wv.frameStats[fr.frame] = wv.frameStats[fr.frame] || {n: 0, names: null, t: 0};
       st.n++; st.t = now; st.names = fr.ch.map(c => c.name);
       const best = dominantFrame(wv, now);
@@ -1337,8 +1363,18 @@ function drawScope(dev, cv, o){
   // 缓冲不做时窗裁剪（切页/换窗后历史都在）；绘制按当前帧型过滤样本
   const curFrame = wv.frameStats.__cur || null;
   const vis = wv.samples.filter(s => s.t >= start && (wv.re ? true : s.f === curFrame));
-  const nCh = Math.min(WAVE_MAX_CH, Math.max(wv.chNames.length,
-    vis.reduce((m,s)=>Math.max(m,s.v.length),0)));
+  // 泳道 = 命名通道（key=数值 全局系列，按最近活跃排序）优先 + 当前帧型位置
+  // 通道（tick/v2…）补足。命名通道不依赖帧型——低频测量（温度 1Hz）不会被
+  // 高频帧型（wifi 10Hz）挤掉，这正是"其它的波形不显示"的根因。
+  const MAXL = o.mini ? 4 : 8;
+  const lanes = [];
+  if (!wv.re)
+    for (const k of Object.keys(wv.kv).sort((a, b) => wv.kv[b].at - wv.kv[a].at))
+      lanes.push({kind: "kv", name: k});
+  for (let i = 0; i < wv.chNames.length; i++)
+    lanes.push({kind: "pos", name: wv.chNames[i], i});
+  const shown = lanes.slice(0, MAXL);
+  const nCh = shown.length;
   const AX = o.mini ? 0 : 20; // 底部时间轴高（小图省略）
   const laneH = nCh ? (h - AX) / nCh : h - AX;
 
@@ -1357,39 +1393,45 @@ function drawScope(dev, cv, o){
   }
 
   const hoverT = (!o.mini && waveHover !== null) ? start + waveHover/w*winMs : null;
-  let nearest = null;
-  if (hoverT !== null){
-    for (const s of vis) if (!nearest || Math.abs(s.t-hoverT) < Math.abs(nearest.t-hoverT)) nearest = s;
-  }
-  for (let ch = 0; ch < nCh; ch++){
-    const y0 = ch*laneH, name = wv.chNames[ch] || ("ch"+(ch+1));
-    const color = WAVE_COLORS[ch % WAVE_COLORS.length];
+  let hoverNear = null; // 悬停：跨泳道最近样本（十字线时间基准，各泳道内再各自找最近）
+  shown.forEach((lane, li) => {
+    const y0 = li*laneH;
+    const color = WAVE_COLORS[li % WAVE_COLORS.length];
+    // 本泳道样本序列：命名通道取自己的系列（二分定位窗口起点），位置通道取帧样本第 i 路
+    let series;
+    if (lane.kind === "kv"){
+      const arr = wv.kv[lane.name].s;
+      let lo = 0, hi = arr.length;
+      while (lo < hi){ const m2 = (lo+hi)>>1; if (arr[m2].t < start) lo = m2+1; else hi = m2; }
+      series = arr.slice(lo);
+    } else {
+      series = [];
+      for (const s of vis) if (lane.i < s.v.length) series.push({t: s.t, v: s.v[lane.i]});
+    }
     // 泳道分隔线与名称
     ctx.strokeStyle = "rgba(48,54,61,.9)";
     ctx.beginPath(); ctx.moveTo(0, y0+.5); ctx.lineTo(w, y0+.5); ctx.stroke();
     ctx.fillStyle = color; ctx.textBaseline = "top";
     ctx.font = o.mini ? "9px Consolas,monospace" : "10px Consolas,monospace";
-    ctx.fillText(name, 6, y0+4);
-    // 通道 min/max（含 8% 余量）
+    ctx.fillText(lane.name, 6, y0+4);
+    // 泳道 min/max（含 8% 余量）
     let mn = Infinity, mx = -Infinity, cur = null;
-    for (const s of vis) if (ch < s.v.length){
-      if (s.v[ch] < mn) mn = s.v[ch]; if (s.v[ch] > mx) mx = s.v[ch];
-      cur = s.v[ch];
+    for (const e of series){
+      if (e.v < mn) mn = e.v; if (e.v > mx) mx = e.v;
+      cur = e.v;
     }
-    if (!Number.isFinite(mn)){ continue; }
+    if (!Number.isFinite(mn)){ return; }
     if (mn === mx){ mn -= 1; mx += 1; }
     const pad = (mx-mn)*.08; mn -= pad; mx += pad;
     const yOf = v => y0 + laneH - 4 - (v-mn)/(mx-mn)*(laneH-12);
     // 每像素列 min/max 降采样：包络填充 + 中心线
     const cols = Math.max(1, Math.floor(w));
     const colMin = new Float64Array(cols).fill(Infinity), colMax = new Float64Array(cols).fill(-Infinity), colCnt = new Float64Array(cols);
-    for (const s of vis){
-      if (ch >= s.v.length) continue;
-      const cx = Math.floor((s.t - start)/winMs * cols);
+    for (const e of series){
+      const cx = Math.floor((e.t - start)/winMs * cols);
       if (cx < 0 || cx >= cols) continue;
-      const v = s.v[ch];
-      if (v < colMin[cx]) colMin[cx] = v;
-      if (v > colMax[cx]) colMax[cx] = v;
+      if (e.v < colMin[cx]) colMin[cx] = e.v;
+      if (e.v > colMax[cx]) colMax[cx] = e.v;
       colCnt[cx]++;
     }
     // 包络
@@ -1410,22 +1452,25 @@ function drawScope(dev, cv, o){
     }
     ctx.strokeStyle = color; ctx.lineWidth = 1.5;
     ctx.lineJoin = "round"; ctx.lineCap = "round"; ctx.stroke();
+    // 悬停：本泳道最近样本（命名与位置通道时间戳不同，各找各的）
+    let hNear = null;
+    if (hoverT !== null)
+      for (const e of series) if (!hNear || Math.abs(e.t-hoverT) < Math.abs(hNear.t-hoverT)) hNear = e;
+    if (hNear && (!hoverNear || Math.abs(hNear.t-hoverT) < Math.abs(hoverNear.t-hoverT))) hoverNear = hNear;
     // 读值标注：小图只标当前值；大图标当前值 + 区间 + 悬停读值
-    let hv = null;
-    if (nearest && ch < nearest.v.length) hv = nearest.v[ch];
     ctx.fillStyle = "#e6edf3"; ctx.textBaseline = "top";
     if (o.mini){
-      ctx.fillText(cur === null ? "–" : cur.toFixed(2), Math.min(w-40, 6 + ctx.measureText(name).width + 8), y0+4);
+      ctx.fillText(cur === null ? "–" : cur.toFixed(2), Math.min(w-40, 6 + ctx.measureText(lane.name).width + 8), y0+4);
     } else {
-      const rt = hv !== null ? hv.toFixed(2) : (cur === null ? "–" : cur.toFixed(2));
-      ctx.fillText(`${rt}  (${mn.toFixed(1)}~${mx.toFixed(1)})`, Math.min(w-150, 6 + ctx.measureText(name).width + 10), y0+4);
-      if (hv !== null){
-        const hx = (nearest.t - start)/winMs * w;
+      const rt = hNear ? hNear.v.toFixed(2) : (cur === null ? "–" : cur.toFixed(2));
+      ctx.fillText(`${rt}  (${mn.toFixed(1)}~${mx.toFixed(1)})`, Math.min(w-150, 6 + ctx.measureText(lane.name).width + 10), y0+4);
+      if (hNear){
+        const hx = (hNear.t - start)/winMs * w;
         ctx.fillStyle = color;
-        ctx.beginPath(); ctx.arc(hx, yOf(hv), 3, 0, 7); ctx.fill();
+        ctx.beginPath(); ctx.arc(hx, yOf(hNear.v), 3, 0, 7); ctx.fill();
       }
     }
-  }
+  });
   if (nCh === 0){
     ctx.fillStyle = "#8b949e";
     ctx.font = o.mini ? "11px 'Segoe UI',sans-serif" : "13px 'Segoe UI',sans-serif";
@@ -1434,21 +1479,23 @@ function drawScope(dev, cv, o){
   }
   // 十字线（大图最上层）+ 状态条
   if (!o.mini){
-    if (waveHover !== null && nearest){
+    if (waveHover !== null && hoverNear){
       ctx.strokeStyle = "rgba(230,237,243,.35)";
       ctx.beginPath(); ctx.moveTo(waveHover+.5, 0); ctx.lineTo(waveHover+.5, h-AX); ctx.stroke();
       ctx.fillStyle = "#e6edf3"; ctx.font = "10px Consolas,monospace"; ctx.textBaseline = "top";
-      const dt = (nearest.t - end)/1000;
+      const dt = (hoverNear.t - end)/1000;
       ctx.fillText((dt >= 0 ? "" : "T-") + Math.abs(dt).toFixed(1) + "s", waveHover+5, h-AX-14);
     }
-    const m = waveBigDev ? devMeta(waveBigDev) : null;
-    const absent = m && !m.remote && status.devices.length > 0 &&
+    const dm = waveBigDev ? devMeta(waveBigDev) : null;
+    const absent = dm && !dm.remote && status.devices.length > 0 &&
       !status.devices.some(d => d.name === waveBigDev);
     $("waveDev").textContent = waveBigDev ? waveBigDev + (absent ? " · ⏳ 等待接入" : "") : "";
     const hzWin = vis.filter(s=>s.t >= end-5000).length;
     $("waveMode").textContent = wv.re ? "自定义" : "自动";
     $("waveInfo").innerHTML = (wv.re ? "自定义 · " : "自动(" + esc(wv.frameStats.__cur || "…") + ") · ") +
-      `${(hzWin/5).toFixed(1)} Hz · ${vis.length} 样本` + (waveFrozen ? " · 已冻结" : "");
+      `${(hzWin/5).toFixed(1)} Hz · ${vis.length} 样本` +
+      (!wv.re && Object.keys(wv.kv).length ? " · 命名通道 " + Object.keys(wv.kv).length : "") +
+      (waveFrozen ? " · 已冻结" : "");
   }
 }
 function drawAll(){
@@ -1493,17 +1540,23 @@ $("waveFreeze").onclick = () => {
 $("waveClear").onclick = () => {
   if (!waveBigDev) return;
   const wv = wstate(waveBigDev);
-  wv.samples = []; wv.tail = ""; wv.frameStats = {}; wv.chNames = [];
+  wv.samples = []; wv.tail = ""; wv.frameStats = {}; wv.chNames = []; wv.kv = {};
 };
 $("btnExportWave").onclick = () => {
   if (!waveBigDev){ toast("✗ 先勾选一台设备", false); return; }
   const wv = wstate(waveBigDev);
-  if (!wv.samples.length){ toast("✗ 无样本可导出", false); return; }
+  if (!wv.samples.length && !Object.keys(wv.kv).length){ toast("✗ 无样本可导出", false); return; }
   const curFrame = wv.frameStats.__cur || null;
   const rows = wv.samples.filter(s => wv.re ? true : s.f === curFrame);
-  if (!rows.length){ toast("✗ 无样本可导出", false); return; }
-  const head = "t_ms," + (wv.chNames.length ? wv.chNames.join(",") : rows[0].v.map((_,i)=>"ch"+(i+1)).join(","));
-  const csv = [head, ...rows.map(s => s.t + "," + s.v.join(","))].join("\n");
+  let csv = "";
+  // 命名通道（每 key 一段，时间戳各自独立）+ 位置通道段
+  for (const k of Object.keys(wv.kv).sort((a, b) => wv.kv[b].at - wv.kv[a].at).slice(0, 8))
+    csv += `# ${k}\nt_ms,${k}\n` + wv.kv[k].s.map(e => e.t + "," + e.v).join("\n") + "\n\n";
+  if (rows.length){
+    const head = "t_ms," + (wv.chNames.length ? wv.chNames.join(",") : rows[0].v.map((_,i)=>"ch"+(i+1)).join(","));
+    csv += `# ${wv.re ? "custom" : curFrame}\n` + [head, ...rows.map(s => s.t + "," + s.v.join(","))].join("\n");
+  }
+  if (!csv.trim()){ toast("✗ 无样本可导出", false); return; }
   download(`${waveBigDev}-wave-${stamp()}.csv`, csv, "text/csv");
 };
 
