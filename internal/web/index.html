@@ -259,6 +259,7 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
           <option value="60" selected>60s</option>
           <option value="300">5min</option>
           <option value="1800">30min</option>
+          <option value="-1">全部</option>
         </select>
         <span class="dim" style="font-size:11px">每台设备都在后台持续采样，切换/勾选随时可看，历史不丢</span>
       </div>
@@ -347,6 +348,7 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
       面板按<b>行首记号</b>（帧型，如 <code>#S1</code>）给行分组，取近 5 秒最活跃的帧型绘制，偶发的心跳/握手行自动让位。行内：</p>
       <table>
         <tr><th>记号形态</th><th>通道</th><th>例</th></tr>
+        <tr><td>ESP-IDF 日志行</td><td>帧型 <code>级别·tag</code>；开机 tick + 行内独立数字</td><td><code>I (2944) st7735: retry 3</code> → I·st7735</td></tr>
         <tr><td><code>key=数字</code></td><td>命名通道（用 key 当名字）</td><td><code>t=23.4</code> → 通道 t</td></tr>
         <tr><td>纯数字</td><td>位置通道（v2、v3…按记号次序）</td><td><code>-49</code> → 通道 v3</td></tr>
         <tr><td>十六进制块 / 文本</td><td>自动排除</td><td><code>09fb0e02…</code></td></tr>
@@ -371,7 +373,9 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
       泳道内曲线贴顶说明触到区间上沿。曲线是<b>每像素 min/max 包络 + 中心线</b>：高频数据下
       包络的"毛边"是真实的波动幅度，中心线是趋势。<b>Hz</b> 是采样速率（每秒多少行命中）。
       大图里<b>悬停</b>出十字线：跨所有泳道同时读该时刻各通道值，底部显示时间偏移。
-      <b>冻结</b>停采样定格画面（窗口停在冻结时刻），<b>清除</b>清空缓冲，时间窗 15s~30min 可选。</p>
+      <b>冻结</b>定格显示（后台照常采样，恢复后间隙自动补全），<b>清除</b>清空缓冲。
+      时间窗 15s~30min，另有<b>全部</b>——回看自打开面板起保留的全部样本（按条数封顶，
+      切页/换窗历史不丢）。</p>
       <p class="dim">读图示例：RSSI 泳道缓慢漂移是信道变化；骤降常是干扰或距离变化；计数类通道（v1/v2）
       呈斜线属正常——它单调递增，斜率不变=流速稳定，斜率突变=丢行或重启。</p>
 
@@ -1210,9 +1214,30 @@ function xtrTest(){
 // 自定义正则都对干净文本写
 function stripAnsi(s){ return s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, ""); }
 // autoChannels: 一行 → {frame, ch:[{name, val}]}；无可提取数值返回 null。
-// 首记号本身是 key=value（t=23.4 h=55 …无帧型遥测）时整行都是通道，帧型归为
-// 统一 "#kv"——否则帧键每行都变，永远凑不满活跃帧，波形一幅也画不出来。
+// 三种形态：
+//  ① ESP-IDF 日志 "I (2944) tag: msg" → 帧型 "I·tag"，开机 tick 为第一通道，
+//    消息里的独立数字顺次为通道（前后是字母/点/下划线的数字跳过——0x1F、
+//    abc12、版本号 1.5.2 天然排除）——普通日志板子（无遥测帧）也能出波形；
+//  ② 行首 key=value（t=23.4 h=55）→ 整行都是通道，帧型统一 "#kv"（否则帧键
+//    每行都变，永远凑不满活跃帧）；
+//  ③ 记号式遥测（#S1 … 纯数字/key=value 记号）。
+const IDF_RE = /^\s*([EIVWD])\s*\((\d+)\)\s*([\w.-]+):/;
+function idfChannels(body){
+  const m = IDF_RE.exec(body);
+  if (!m) return null;
+  const ch = [{name: "tick", val: parseFloat(m[2])}];
+  const rest = body.slice(m.index + m[0].length);
+  for (const mm of rest.matchAll(/-?\d+(?:\.\d+)?/g)){
+    if (ch.length >= WAVE_MAX_CH) break;
+    const before = rest[mm.index - 1] || " ", after = rest[mm.index + mm[0].length] || " ";
+    if (/[\w.]/.test(before) || /[\w.]/.test(after)) continue; // 嵌在词/十六进制里
+    ch.push({name: "v" + (ch.length + 1), val: parseFloat(mm[0])});
+  }
+  return {frame: m[1] + "·" + m[3], ch};
+}
 function autoChannels(body){
+  const idf = idfChannels(body);
+  if (idf) return idf;
   const toks = body.split(/\s+/);
   if (toks.length < 2) return null;
   const ch = [];
@@ -1226,7 +1251,8 @@ function autoChannels(body){
   return ch.length ? {frame, ch} : null;
 }
 function waveFeedDev(dev, chunk){
-  if (waveFrozen) return;
+  // 注意：采样永不停（冻结只冻结显示窗口）——停采样会丢历史，冻结的意义
+  // 是"定格看"，不是"漏掉这段"
   const wv = wstate(dev);
   wv.tail += chunk;
   const lines = wv.tail.split("\n");
@@ -1251,7 +1277,7 @@ function waveFeedDev(dev, chunk){
       if (!vals.length) continue;
       if (wv.chNames.length !== vals.length)
         wv.chNames = vals.map((_, i) => "ch" + (i+1));
-      wv.samples.push({t: now, v: vals});
+      wv.samples.push({t: now, v: vals, f: null});
     } else {
       const fr = autoChannels(body);
       if (!fr) continue;
@@ -1260,13 +1286,16 @@ function waveFeedDev(dev, chunk){
       const best = dominantFrame(wv, now);
       if (!best) continue;
       if (best !== (wv.frameStats.__cur || "")){
+        // 帧型切换：只换标签，样本带帧型、绘制时按帧过滤——历史不清
+        //（多帧型交替的板子——如 ESP-IDF 的 I/E 级别轮换——以前每次切换
+        // 都 samples=[]，波形"一切换就重来"就是这个）
         wv.frameStats.__cur = best;
-        wv.chNames = wv.frameStats[best].names; wv.samples = [];
+        wv.chNames = wv.frameStats[best].names;
       } else if (wv.frameStats[best].names.length !== wv.chNames.length){
         // 同帧型但通道数变化（行内数字个数漂移）：只更新标签，样本按自身长度画
         wv.chNames = wv.frameStats[best].names;
       }
-      wv.samples.push({t: now, v: fr.ch.map(c => c.val)});
+      wv.samples.push({t: now, v: fr.ch.map(c => c.val), f: best});
     }
   }
   for (const k of Object.keys(wv.frameStats))
@@ -1298,10 +1327,16 @@ function drawScope(dev, cv, o){
   const ctx = cv.getContext("2d");
   ctx.setTransform(dpr,0,0,dpr,0,0);
   ctx.clearRect(0,0,w,h);
-  const winMs = (parseInt($("waveWin").value,10)||60) * 1000;
-  const end = waveEnd(), start = end - winMs;
-  wv.samples = wv.samples.filter(s => s.t >= start - winMs);
-  const vis = wv.samples.filter(s => s.t >= start);
+  let winMs = (parseInt($("waveWin").value,10)||60) * 1000;
+  const end = waveEnd();
+  if (winMs < 0){ // 「全部」：从最早保留样本起画（历史保留量由 WAVE_MAX 条数封顶）
+    const first = wv.samples.length ? wv.samples[0].t : end - 60000;
+    winMs = Math.max(15000, end - first);
+  }
+  const start = end - winMs;
+  // 缓冲不做时窗裁剪（切页/换窗后历史都在）；绘制按当前帧型过滤样本
+  const curFrame = wv.frameStats.__cur || null;
+  const vis = wv.samples.filter(s => s.t >= start && (wv.re ? true : s.f === curFrame));
   const nCh = Math.min(WAVE_MAX_CH, Math.max(wv.chNames.length,
     vis.reduce((m,s)=>Math.max(m,s.v.length),0)));
   const AX = o.mini ? 0 : 20; // 底部时间轴高（小图省略）
@@ -1464,8 +1499,11 @@ $("btnExportWave").onclick = () => {
   if (!waveBigDev){ toast("✗ 先勾选一台设备", false); return; }
   const wv = wstate(waveBigDev);
   if (!wv.samples.length){ toast("✗ 无样本可导出", false); return; }
-  const head = "t_ms," + (wv.chNames.length ? wv.chNames.join(",") : wv.samples[0].v.map((_,i)=>"ch"+(i+1)).join(","));
-  const csv = [head, ...wv.samples.map(s => s.t + "," + s.v.join(","))].join("\n");
+  const curFrame = wv.frameStats.__cur || null;
+  const rows = wv.samples.filter(s => wv.re ? true : s.f === curFrame);
+  if (!rows.length){ toast("✗ 无样本可导出", false); return; }
+  const head = "t_ms," + (wv.chNames.length ? wv.chNames.join(",") : rows[0].v.map((_,i)=>"ch"+(i+1)).join(","));
+  const csv = [head, ...rows.map(s => s.t + "," + s.v.join(","))].join("\n");
   download(`${waveBigDev}-wave-${stamp()}.csv`, csv, "text/csv");
 };
 
