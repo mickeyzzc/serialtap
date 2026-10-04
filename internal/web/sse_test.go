@@ -2,14 +2,160 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+// /api/live 多路复用：两台设备的增量都必须到达，且帧带正确设备键。
+// 背景：浏览器对同 host 有 ~6 连接上限，每设备一条常开 SSE 会耗尽连接池，
+// 面板改为单连接多路复用后，此测试守住"每路都不丢"。
+func TestLiveMultiDeliversAllDevices(t *testing.T) {
+	root := t.TempDir()
+	for _, dev := range []string{"dev-a", "dev-b"} {
+		dir := filepath.Join(root, dev)
+		os.MkdirAll(dir, 0o755)
+		os.WriteFile(filepath.Join(dir, "serial-20260921.log"), []byte(dev+"-init\n"), 0o644)
+	}
+
+	s := &Server{root: root}
+	ts := httptest.NewServer(http.HandlerFunc(s.handleLiveMulti))
+	defer ts.Close()
+
+	req, _ := http.NewRequest("GET", ts.URL+"/api/live?kind=serial&devices=dev-a,dev-b", nil)
+	ctx, cancel := context.WithCancel(req.Context())
+	req = req.WithContext(ctx)
+	defer cancel()
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// 读到两台设备的初始尾随为止（每台各一个帧）
+	seen := map[string]bool{}
+	deadline := time.After(5 * time.Second)
+	buf := make([]byte, 0, 8192)
+	tmp := make([]byte, 4096)
+	for len(seen) < 2 {
+		select {
+		case <-deadline:
+			t.Fatalf("5s 内未收齐两台设备帧: got %v", seen)
+		default:
+		}
+		n, err := resp.Body.Read(tmp)
+		if n > 0 {
+			buf = append(buf, tmp[:n]...)
+			for {
+				i := strings.Index(string(buf), "\n\n")
+				if i < 0 {
+					break
+				}
+				frame := string(buf[:i])
+				buf = buf[i+2:]
+				if !strings.HasPrefix(frame, "data: ") {
+					continue
+				}
+				var m liveFrame
+				if json.Unmarshal([]byte(frame[6:]), &m) == nil && m.Chunk != "" {
+					seen[m.Dev] = true
+				}
+			}
+		}
+		if err != nil {
+			t.Fatalf("读流出错（已见 %v）: %v", seen, err)
+		}
+	}
+	if !seen["dev-a"] || !seen["dev-b"] {
+		t.Fatalf("帧缺失: %v", seen)
+	}
+}
+
+// 未知设备名必须被拒（不安全名/不存在的目录不进流）。
+func TestLiveMultiRejectsUnknownDevices(t *testing.T) {
+	s := &Server{root: t.TempDir()}
+	ts := httptest.NewServer(http.HandlerFunc(s.handleLiveMulti))
+	defer ts.Close()
+	resp, err := ts.Client().Get(ts.URL + "/api/live?devices=nope,../etc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("期望 400，得 %d", resp.StatusCode)
+	}
+}
+
+// mesh 远端分支："peer/名" 复合键走 TailStream，帧带完整复合键；
+// 本地与远端混编时两路都到。
+func TestLiveMultiMeshRemoteBranch(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "dev-a"), 0o755)
+	os.WriteFile(filepath.Join(root, "dev-a", "serial-20260921.log"), []byte("local-init\n"), 0o644)
+
+	fm := &fakeMesh{pump: func(onData func([]byte)) {
+		onData([]byte("remote-telemetry-line\n"))
+	}}
+	s := &Server{root: root, mesh: fm}
+	ts := httptest.NewServer(http.HandlerFunc(s.handleLiveMulti))
+	defer ts.Close()
+
+	req, _ := http.NewRequest("GET", ts.URL+"/api/live?kind=serial&devices=dev-a,bench-a/n16r8-u1", nil)
+	ctx, cancel := context.WithCancel(req.Context())
+	req = req.WithContext(ctx)
+	defer cancel()
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	seen := map[string]bool{}
+	deadline := time.After(5 * time.Second)
+	buf := make([]byte, 0, 8192)
+	tmp := make([]byte, 4096)
+	for !seen["dev-a"] || !seen["bench-a/n16r8-u1"] {
+		select {
+		case <-deadline:
+			t.Fatalf("5s 内未收齐: %v", seen)
+		default:
+		}
+		n, err := resp.Body.Read(tmp)
+		if n > 0 {
+			buf = append(buf, tmp[:n]...)
+			for {
+				i := strings.Index(string(buf), "\n\n")
+				if i < 0 {
+					break
+				}
+				frame := string(buf[:i])
+				buf = buf[i+2:]
+				if !strings.HasPrefix(frame, "data: ") {
+					continue
+				}
+				var m liveFrame
+				if json.Unmarshal([]byte(frame[6:]), &m) == nil && m.Chunk != "" {
+					seen[m.Dev] = true
+				}
+			}
+		}
+		if err != nil {
+			t.Fatalf("读流出错（已见 %v）: %v", seen, err)
+		}
+	}
+	fm.mu.Lock()
+	reqs := append([]string(nil), fm.tailReq...)
+	fm.mu.Unlock()
+	if len(reqs) == 0 || !strings.HasPrefix(reqs[0], "bench-a|n16r8-u1|serial") {
+		t.Fatalf("TailStream 参数错误: %v", reqs)
+	}
+}
 
 // 回归：serveLive 在初始尾随之后必须持续增量推送（发现于真机面板：
 // 2 个 data 事件后流停滞）。写入 → sleep >700ms → 写入，断言 >=3 个事件。

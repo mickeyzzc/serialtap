@@ -112,6 +112,7 @@ func (s *Server) handleMeshDevice(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-r.Context().Done():
+			<-done // 等 TailStream 退出，避免其仍在写响应体时 handler 已返回（同 handleLiveMulti 的竞态）
 			return
 		case <-done:
 			return
