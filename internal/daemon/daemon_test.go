@@ -510,3 +510,42 @@ func TestFlashMultiDeviceGate(t *testing.T) {
 		t.Fatalf("all=true 应逐台刷: %v", err)
 	}
 }
+
+// 换板事件：同名牌下实例 key 变化（拔一只同型号板换插另一只）必须写
+// [board-swap] 事件——否则换板在面板上完全不可见（名字/日志目录/曲线无缝继承）。
+func TestBoardSwapEvent(t *testing.T) {
+	root := t.TempDir()
+	old := collector.OpenPort
+	collector.OpenPort = func(tty string, baud int) (collector.Port, error) {
+		return &testutil.FakePort{Chunks: [][]byte{[]byte("x\n")}}, nil
+	}
+	t.Cleanup(func() { collector.OpenPort = old })
+
+	cfg := config.DefaultConfig()
+	cfg.Root = root
+	cfg.PollMs = 10
+
+	devs := []device.DeviceInfo{{Tty: "COM10", Key: "keyA", Name: "esp32s3-jtag", ByID: "idA"}}
+	d, err := New(cfg, nil, func() ([]device.DeviceInfo, error) { return devs, nil }, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(d.Shutdown)
+	d.Tick() // 第一块板
+	devs = nil
+	d.Tick() // 拔出（单独一轮，名字释放）
+	devs = []device.DeviceInfo{{Tty: "COM11", Key: "keyB", Name: "esp32s3-jtag", ByID: "idB"}}
+	d.Tick() // 换上的第二块板：同名、不同实例
+
+	evs, _ := filepath.Glob(filepath.Join(root, "esp32s3-jtag", "events-*.log"))
+	if len(evs) == 0 {
+		t.Fatal("没有 events 文件")
+	}
+	b, err := os.ReadFile(evs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "[board-swap] 物理板已更换：COM10 → COM11") {
+		t.Fatalf("换板事件缺失，events 内容:\n%s", b)
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +29,7 @@ type daemon struct {
 	pauseMTime time.Time
 	collectors map[string]*collector.Collector
 	namesUsed  map[string]bool
+	prevInst   map[string]string // 名 → "key\x00tty"：同名牌换实例 = 物理板更换（换板事件）
 	enum       func() ([]device.DeviceInfo, error)
 	logf       func(format string, args ...any)
 	wg         sync.WaitGroup // 采集器 Run 协程追踪（shutdown 等待，防泄漏）
@@ -96,6 +98,7 @@ func New(cfg config.Config, excl []*regexp.Regexp,
 		pauseMTime: mtime,
 		collectors: map[string]*collector.Collector{},
 		namesUsed:  map[string]bool{},
+		prevInst:   map[string]string{},
 		proxies:    map[string]net.Listener{},
 		enum:       enum,
 		logf:       logf,
@@ -130,6 +133,16 @@ func (d *daemon) Tick() {
 		}
 		c := collector.NewCollector(inf, d.cfg, w, d.eng, d.pause, d.logf)
 		d.collectors[inf.Key] = c
+		// 换板检测：同名牌下的实例 key 变了 = 物理板被换过（同型号板共享内置
+		// 名，如两只乐鑫原生 USB-JTAG 都叫 esp32s3-jtag——不写这条事件的
+		// 话，换板在面板上完全不可见：名字/日志目录/曲线全部无缝继承）
+		if prev, ok := d.prevInst[name]; ok {
+			if pk, pt, _ := strings.Cut(prev, "\x00"); pk != inf.Key {
+				c.LogEvent("[board-swap] 物理板已更换：%s → %s（同名牌继承，日志沿用本目录）", pt, inf.Tty)
+				d.logf("[watch] 换板 %s: 实例 %s → %s", name, pk, inf.Key)
+			}
+		}
+		d.prevInst[name] = inf.Key + "\x00" + inf.Tty
 		d.logf("[watch] 设备接入 %s → %s (key=%s by-id=%s vid:pid=%s:%s)",
 			inf.Tty, name, inf.Key, inf.ByID, inf.VID, inf.PID)
 		d.wg.Add(1)
