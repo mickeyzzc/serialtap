@@ -115,8 +115,9 @@ Linux has no tray (systray needs libappindicator) — use the web panel instead.
 **http://127.0.0.1:8801/**, `--web off` to disable) — everything the daemon
 sees, plus every operation:
 
-- **Three-view navigation**: dashboard / logs / waveforms (remembers the last
-  view; `#dash`/`#logs`/`#wave` deep-link)
+- **Three-view navigation**: logs first — the multi-device workbench the panel
+  opens on — then waveforms, then the dashboard (fleet-health overview,
+  opened on demand; `#logs`/`#wave`/`#dash` deep-link)
 - **Dashboard**: KPI strip (devices, collecting, total throughput, unhealthy
   boards, events in the last 30 min, mesh nodes online) + device cards + a
   30-minute event timeline + mesh peer management — whole-fleet health on one
@@ -124,12 +125,14 @@ sees, plus every operation:
 - **Device cards**: state (collecting/paused/suspended/flashing), proxy-session
   badge, live write rate (log-size delta), full/event log sizes and total
   retention usage
-- **Multi-device logs**: tick any number of boards (mesh remotes included) and
-  watch them together — **side-by-side** panes or a **merged** stream
-  interleaved by timestamp with per-device colored tags; regex/substring
-  search + highlight works across devices; export the buffered logs of every
-  selected board. SSE tailing (700 ms incremental pushes, follows day and
-  size rotation)
+- **Multi-device logs (the landing workbench)**: tick any number of boards
+  (mesh remotes included) and watch them together — **side-by-side** panes
+  (each header carries quick actions: pause/resume, soft reconnect, flash —
+  local and remote alike) or a **merged** stream interleaved by timestamp
+  with per-device colored tags and a per-device quota so chatty boards cannot
+  flush quiet ones out; regex/substring search + highlight works across
+  devices; export the buffered logs of every selected board. SSE tailing
+  (700 ms incremental pushes, follows day and size rotation)
 - **Multi-device waveforms**: every board is sampled continuously in the
   background (switching views or selection never loses data) — the **grid**
   shows one live scope per board on one screen, and "大图" (detail view) opens
