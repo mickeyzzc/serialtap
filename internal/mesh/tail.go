@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -30,27 +32,34 @@ type tailFrame struct {
 var tailKindRe = regexp.MustCompile(`^(serial|events)$`)
 
 // latestTailFile: 设备目录下最新的 kind-*.log（轮转感知排序，与面板同规则）。
+// 排序键必须是 (日期, 数字后缀) 语义：同日内 .001/.002 比基础文件**新**（写满
+// 基础文件后写入序号文件）——字典序会把基础文件排最大（'l' > '0'），轮转后
+// 就永远跟在读满的旧文件上：初始回放一次末尾后永久静默（真机：相机板当天
+// 日志轮转后远端尾随全断，只出过一帧 16KB 回放）。
 func latestTailFile(root, device, kind string) (string, bool) {
 	matches, err := filepath.Glob(filepath.Join(root, device, kind+"-*.log"))
 	if err != nil || len(matches) == 0 {
 		return "", false
 	}
 	sort.Slice(matches, func(i, j int) bool {
-		// 无后缀的当日主文件 > 带序号后缀；同后缀按名字
-		pi, pj := matches[i], matches[j]
-		ei, eji := len(pi), len(pj)
-		for ei > 0 && pi[ei-1] >= '0' && pi[ei-1] <= '9' {
-			ei--
+		di, si := tailSortKey(kind, matches[i])
+		dj, sj := tailSortKey(kind, matches[j])
+		if di != dj {
+			return di < dj
 		}
-		for eji > 0 && pj[eji-1] >= '0' && pj[eji-1] <= '9' {
-			eji--
-		}
-		if ei != eji {
-			return ei < eji // 主文件（更短）在后缀比较时更大
-		}
-		return pi > pj
+		return si < sj
 	})
 	return matches[len(matches)-1], true
+}
+
+// tailSortKey: kind-YYYYMMDD[.NNN].log → (日期串, 序号；基础文件=0)。
+func tailSortKey(kind, path string) (string, int) {
+	n := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(path), kind+"-"), ".log")
+	if i := strings.IndexByte(n, '.'); i >= 0 {
+		sfx, _ := strconv.Atoi(n[i+1:])
+		return n[:i], sfx
+	}
+	return n, 0
 }
 
 // handleTail: peer 侧——尾随推送直到连接关闭（ctx 取消/写失败即止）。
@@ -160,8 +169,17 @@ func (n *Node) TailStream(ctx context.Context, peerName, device, kind string, on
 		<-ctx.Done()
 		_ = ch.Close() // 解除 Recv 阻塞
 	}()
+	// 空闲看门狗：对端尾随每 15s 发一帧保活。半死连接（TCP 未发 FIN/RST，
+	// 如对端在重启窗口内握过手又消失）会让 Recv 永久阻塞——上层重拨依赖
+	// TailStream 返回，于是远端数据永久停更（真机：peer 重启后重拨一次成功
+	// 回放 16KB，随后流静默死亡 60s+ 不恢复）。45s 无任何帧 = 死连接，撕开。
+	watch := time.AfterFunc(1<<62, func() { _ = ch.Close() })
+	defer watch.Stop()
+	reset := func() { watch.Reset(45 * time.Second) }
+	reset()
 	for {
 		t, payload, rerr := ch.Recv()
+		reset()
 		if rerr != nil || ctx.Err() != nil {
 			return nil // 尾随是无限流：取消/断链都算正常结束
 		}
