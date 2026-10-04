@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- feat(web): **面板自愈刷新——守护换装后旧页面 1s 内自动升级**。背景：面板连发
+  三版修复期间，用户浏览器还开着旧 JS 页（旧 bug 全在），"还是没修好"实为
+  旧页在跑。服务端把嵌入 HTML 的 sha256 指纹注入 `<meta name="panel-rev">`
+  并随 `/api/status` 下发；页面轮询比对自己的 meta 与服务端指纹，不符即
+  `location.reload()`。只对带指纹的页面生效（本版起），无指纹的更旧页面不
+  动作——不可能刷新循环。index 响应改 `Cache-Control: no-store`，浏览器绝不
+  再端出缓存旧页。
+
 - fix(web): **mesh 远端尾随断流自动重拨**——多路复用 `/api/live` 里远端子流的
   TailStream 在对端重启/断链后直接退出且无人重拨：连接本身因本地设备活跃而
   长存，EventSource 不会重连，全部远端板子的日志/波形**永久停更**（真机：

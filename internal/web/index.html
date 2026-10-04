@@ -541,6 +541,10 @@ let mergeQ = [], mergeTail = {}, mergeSeq = 0;   // 合并流：到达序入队�
 function pollStatus(){
   fetch("/api/status").then(r=>r.json()).then(s=>{
     $("conn").textContent = "● 已连接";
+    // 面板自愈：守护已换装新面板而本页还是旧 JS 时自动刷新（只对带指纹的
+    // 页面生效——本版起的页面都有 meta；无 meta 的更旧页面不动，不会循环）
+    const meta = document.querySelector('meta[name="panel-rev"]');
+    if (s.panel_rev && meta && meta.content !== s.panel_rev) location.reload();
     status = s; $("root").textContent = s.root;
     for (const d of s.devices){
       const r = prevSize[d.name] !== undefined && prevSize[d.name] <= d.serial_size
