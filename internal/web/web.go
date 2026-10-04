@@ -7,6 +7,7 @@ package web
 
 import (
 	"context"
+	"crypto/sha256"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -27,6 +28,21 @@ import (
 
 //go:embed index.html
 var indexHTML []byte
+
+// panelRev/indexServed: 面板自愈。服务端把嵌入 HTML 的指纹注入 <meta>，页面
+// 每次轮询 /api/status 比对自己的 meta 与服务端指纹——守护换装了新面板而浏
+// 览器还开着旧页（旧 JS 带着旧 bug 跑）时 1s 内自动刷新，不再依赖用户记得
+// 强刷。指纹只对含 meta 的页面生效（本版起的页面），无 meta 的旧页不动作，
+// 因此不可能刷新循环。
+var (
+	panelRev    = fmt.Sprintf("%x", sha256.Sum256(indexHTML))[:8]
+	indexServed = injectPanelRev(indexHTML, panelRev)
+)
+
+func injectPanelRev(b []byte, rev string) []byte {
+	return []byte(strings.Replace(string(b), "</head>",
+		`<meta name="panel-rev" content="`+rev+`"></head>`, 1))
+}
 
 // Commander: 单响应命令通道（status/pause/resume/proxy），由 CLI 层桥接到
 // ctl 处理函数。flash/release 等流式/长操作不进面板（走 CLI）。
@@ -134,8 +150,8 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache") // 面板升级后浏览器别再端出旧页面
-	_, _ = w.Write(indexHTML)
+	w.Header().Set("Cache-Control", "no-store") // 面板升级后浏览器绝不端出旧页面
+	_, _ = w.Write(indexServed)
 }
 
 // —— 设备名安全：面板 URL 里的 name 必须是目录安全名（SanitizeName 产物）——
@@ -227,13 +243,14 @@ type deviceDTO struct {
 }
 
 type snapshotDTO struct {
-	Ts      int64       `json:"ts"`
-	Root    string      `json:"root"`
-	Devices []deviceDTO `json:"devices"`
+	Ts       int64       `json:"ts"`
+	Root     string      `json:"root"`
+	PanelRev string      `json:"panel_rev,omitempty"` // 嵌入面板指纹（页面 meta 与此不符 = 旧页，自动刷新）
+	Devices  []deviceDTO `json:"devices"`
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
-	dto := snapshotDTO{Ts: time.Now().UnixMilli(), Root: s.root, Devices: []deviceDTO{}}
+	dto := snapshotDTO{Ts: time.Now().UnixMilli(), Root: s.root, PanelRev: panelRev, Devices: []deviceDTO{}}
 	var devs []ctl.DevState
 	if s.status != nil {
 		devs = s.status()
