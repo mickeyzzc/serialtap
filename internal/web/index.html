@@ -593,6 +593,7 @@ $("btnLang").textContent = LANG === "en" ? t("中文") : "EN";
 $("btnLang").onclick = () => { localStorage.setItem("st_lang", LANG === "en" ? "zh" : "en"); location.reload(); };
 
 let status = {devices:[]}, prevSize = {}, rate = {}, rateHist = {};
+let cfgInfo = null;          // /api/config 载荷（mesh 区"本机"行与配置速览共用）
 const logs = {};             // "dev/serial" → 日志缓冲（常开复用 SSE 后台喂，换页不丢）
 let knownDevs = new Set();   // 见过的设备键：新设备自动进多选（默认勾上）
 const LOG_CAP = 256 * 1024, SPARK_N = 120;
@@ -787,17 +788,22 @@ function renderMesh(){
   const panel = $("meshPanel"), row = $("meshRow");
   panel.style.display = mesh.enabled ? "" : "none";
   if (!mesh.enabled) return;
-  const sig = JSON.stringify(mesh.peers.map(p=>[p.id,p.name,p.state,p.latency_ms,(p.devices||[]).map(d=>[d.name,d.state])]));
+  // 本机节点进 mesh 拓扑（顶部固定行）：设备增减/状态变化也要触发重渲染
+  const selfMesh = (cfgInfo && cfgInfo.mesh && cfgInfo.mesh.enabled) ? cfgInfo.mesh : null;
+  const sig = JSON.stringify(mesh.peers.map(p=>[p.id,p.name,p.state,p.latency_ms,(p.devices||[]).map(d=>[d.name,d.state])])) +
+    "#" + (selfMesh ? status.devices.map(d=>[d.name,d.state]).join(",") : "");
   if (sig === meshSig) return;
   meshSig = sig;
-  if (!mesh.peers.length){
+  row.innerHTML = "";
+  if (!mesh.peers.length && !selfMesh){
     row.innerHTML = '<div class="dim" style="padding:6px 0">' + t("暂无") + ' peer ' + t("—— 其它") + ' PC ' + t("配同一") + ' mesh_key ' + t("并") + ' mesh_enabled=true ' + t("后自动出现（") + 'UDP ' + t("广播被隔离时配") + ' mesh_peers ' + t("静态种子）") + '</div>';
     $("meshSum").textContent = t("同密钥") + " LAN " + t("节点");
     return;
   }
-  $("meshSum").textContent = `${mesh.peers.length} ${t("节点 ·")} ${mesh.peers.filter(p=>p.state==="online").length} ${t("在线")}` +
+  const online = mesh.peers.filter(p=>p.state==="online").length;
+  $("meshSum").textContent = (selfMesh ? t("本机") + " + " : "") +
+    `${mesh.peers.length} ${t("节点 ·")} ${online} ${t("在线")}` +
     (meshPending.length ? ` · ${meshPending.length} ${t("待授权")}` : "");
-  row.innerHTML = "";
   if (meshPending.length){
     const banner = document.createElement("div");
     banner.className = "cmp-dev";
@@ -818,43 +824,60 @@ function renderMesh(){
     });
     row.appendChild(banner);
   }
+  // meshDevRow: 本机与远程设备共用一套行模板/按钮（本地命令不带 peer 转发）
+  function meshDevRow(d, pn){
+    const key = pn ? pn + "/" + d.name : d.name;
+    const el = document.createElement("div");
+    el.className = "mdev";
+    el.dataset.key = key;
+    el.dataset.state = d.state || "";
+    el.innerHTML =
+      `<b class="mname" title="${t("日志页只看这台")}">${esc(d.name)}</b>` +
+      `<span class="chip ${esc(d.state || "")}">${esc(d.state || "—")}</span>` +
+      `<span class="mtty">${esc(d.tty)}</span>` +
+      `<span class="mident">${esc(identLine(d.info))}</span>` +
+      `<span class="macts">` +
+      `<button class="sbtn m-log">${t("日志")}</button>` +
+      `<button class="iconbtn m-toggle" title="${t("暂停/恢复采集")}"></button>` +
+      `<button class="iconbtn m-reo" title="${t("串口层软重连：立即关口→重开")}">⟳</button>` +
+      `<button class="sbtn m-flash" title="${pn ? t("上传镜像刷机（镜像经加密信道推送到该节点）") : t("上传镜像刷机")}">${t("刷机")}</button>` +
+      `</span>`;
+    const anchor = "^" + d.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$";
+    const peerArg = pn ? {peer: pn} : undefined;
+    el.querySelector(".mname").onclick = () => gotoLogs(key);
+    el.querySelector(".m-log").onclick = () => gotoLogs(key);
+    const tog = el.querySelector(".m-toggle");
+    tog.textContent = d.state === "collecting" ? "⏸" : "▶";
+    tog.onclick = () => cmd(d.state === "collecting" ? "pause" : "resume", anchor, "", peerArg);
+    el.querySelector(".m-reo").onclick = () => cmd("reopen", anchor, "", peerArg);
+    el.querySelector(".m-flash").onclick = () => openFlash(d.name, pn);
+    return el;
+  }
+  // —— 本机节点（拓扑第一行：面板所在这台也是 mesh 的一员）——
+  if (selfMesh){
+    const el = document.createElement("div");
+    el.className = "cmp-dev";
+    const accessTxt = selfMesh.access === "ro" ? t("只读 ro") : t("读写 rw");
+    el.innerHTML = `<div class="hd2"><b>${esc(selfMesh.name || t("本机"))}</b>` +
+      `<span class="chip collecting">${t("本机")}</span>` +
+      `<span class="dim">${t("端口 mesh_port")} ${esc(selfMesh.port)}</span>` +
+      `<span class="dim" style="margin-left:auto">${accessTxt}</span></div>` +
+      (status.devices.length ? "" : '<div class="dim" style="padding:8px 10px">' + t("（无设备接入）") + '</div>');
+    for (const d of status.devices) el.appendChild(meshDevRow(d, ""));
+    row.appendChild(el);
+  }
   for (const p of mesh.peers){
     const el = document.createElement("div");
     el.className = "cmp-dev";
-    // 设备行与日志窗格头部同一套按钮语言：日志（文字）+ 暂停/重连（图标）+ 刷机
-    const devRows = (p.devices || []).map(d => `
-      <div class="mdev" data-key="${esc(p.name)}/${esc(d.name)}" data-state="${esc(d.state)}">
-        <b class="mname" title="${t("日志页只看这台")}">${esc(d.name)}</b>
-        <span class="chip ${esc(d.state)}">${esc(d.state)}</span>
-        <span class="mtty">${esc(d.tty)}</span>
-        <span class="mident">${esc(identLine(d.info))}</span>
-        <span class="macts">
-          <button class="sbtn m-log">${t("日志")}</button>
-          <button class="iconbtn m-toggle" title="${t("暂停/恢复采集")}"></button>
-          <button class="iconbtn m-reo" title="${t("串口层软重连：立即关口→重开")}">⟳</button>
-          <button class="sbtn m-flash" title="${t("上传镜像刷机（镜像经加密信道推送到该节点）")}">${t("刷机")}</button>
-        </span>
-      </div>`).join("");
     const roBadge = p.access === "ro"
       ? `<span class="chip" style="color:var(--amber);border-color:var(--amber)" title="${t("该节点以只读模式接入：状态/日志/身份可读，暂停/刷机/重置/隧道等写操作会被拒绝")}">🔒 ${t("只读")}</span>` : "";
     el.innerHTML = `<div class="hd2"><b>${esc(p.name)}</b><span class="dim">${esc(p.id)} · ${esc(p.addr)}</span>` +
       roBadge +
       `<span class="chip ${p.state === "online" ? "collecting" : "paused"}">${esc(p.state)}</span>` +
       `<span class="dim num" style="margin-left:auto">${p.state === "online" ? p.latency_ms + "ms" : ""}</span></div>` +
-      (devRows || '<div class="dim" style="padding:8px 10px">' + t("（无设备接入）") + '</div>') +
+      (!(p.devices || []).length ? '<div class="dim" style="padding:8px 10px">' + t("（无设备接入）") + '</div>' : "") +
       (p.err ? `<div class="dim" style="padding:2px 10px 8px">⚠ ${esc(p.err)}</div>` : "");
-    el.querySelectorAll(".mdev").forEach(dv => {
-      const key = dv.dataset.key, pn = key.slice(0, key.indexOf("/")), dn = key.slice(key.indexOf("/")+1);
-      const anchor = "^" + dn.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$";
-      dv.querySelector(".mname").onclick = () => gotoLogs(key);
-      dv.querySelector(".m-log").onclick = () => gotoLogs(key);
-      const collecting = dv.dataset.state === "collecting";
-      const tog = dv.querySelector(".m-toggle");
-      tog.textContent = collecting ? "⏸" : "▶";
-      tog.onclick = () => cmd(collecting ? "pause" : "resume", anchor, "", {peer: pn});
-      dv.querySelector(".m-reo").onclick = () => cmd("reopen", anchor, "", {peer: pn});
-      dv.querySelector(".m-flash").onclick = () => openFlash(dn, pn);
-    });
+    for (const d of (p.devices || [])) el.appendChild(meshDevRow(d, p.name));
     row.appendChild(el);
   }
 }
@@ -1191,7 +1214,7 @@ $("fmGo").onclick = () => {
 
 // —— 运行配置速览（只读）：/api/config（cli 层组装脱敏；端点缺失 = 入口隐藏）——
 // 面板不提供写配置：改配置 = 编辑 config.json + 重启守护，这里只做"看得见"。
-let cfgInfo = null;
+// cfgInfo 声明在文件头部状态区（renderMesh 的"本机"行也读它）。
 function cfgEsc(v){
   if (v === undefined || v === null || v === "") return '<span class="muted">—</span>';
   return esc(String(v));
