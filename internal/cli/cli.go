@@ -277,6 +277,13 @@ func cmdRun(args []string) error {
 		switch req.Cmd {
 		case "status":
 			respond(ctl.Response{OK: true, Devices: d.Status()})
+		case "facts":
+			fs, err := d.Facts(req.Pattern)
+			if err != nil {
+				respond(ctl.Response{OK: false, Error: err.Error()})
+				return
+			}
+			respond(ctl.Response{OK: true, Facts: fs})
 		case "pause":
 			pats := []string{}
 			if req.Pattern != "" {
@@ -428,7 +435,7 @@ func cmdRun(args []string) error {
 	// 直调 daemon.Flash（同一次编排，进度 SSE 流回浏览器）。
 	webCmd := func(req ctl.Request) (ctl.Response, error) {
 		switch req.Cmd {
-		case "status", "pause", "resume", "proxy", "release", "reopen", "reset",
+		case "status", "pause", "resume", "proxy", "release", "reopen", "reset", "facts",
 			"mesh-pair", "mesh-approve", "mesh-revoke":
 			var resp ctl.Response
 			handler(req, func(r ctl.Response) { resp = r })
@@ -438,7 +445,7 @@ func cmdRun(args []string) error {
 	}
 	// mesh 启用时另注聚合查询/远程尾随/远程刷机（peer 请求经 handler 的
 	// peer 分支同路转发；flash-done !ok 要转成错误让面板红字显示）
-	webOpts := []web.Option{web.WithFlasher(d.Flash)}
+	webOpts := []web.Option{web.WithFlasher(d.Flash), web.WithBoarder(d.Board)}
 	if node != nil {
 		webOpts = append(webOpts,
 			web.WithMesh(node),
@@ -458,7 +465,25 @@ func cmdRun(args []string) error {
 					return ferr
 				}
 				return flashErr
-			}))
+			}),
+			web.WithMeshBoarder(func(peer, pattern string, all bool, spec board.Spec, out func(string)) error {
+				var boardErr error
+				berr := node.Forward(peer, ctl.Request{Cmd: "board", Pattern: pattern, All: all, Board: &spec}, func(r ctl.Response) {
+					switch r.Event {
+					case "board-log":
+						out(r.Line)
+					case "board-done":
+						if !r.OK {
+							boardErr = fmt.Errorf("%s", r.Error)
+						}
+					}
+				})
+				if berr != nil {
+					return berr
+				}
+				return boardErr
+			}),
+		)
 	}
 	webSrv := web.Start(cfg.WebAddr, cfg.Root, d.Status, webCmd, stdoutLog, webOpts...)
 	defer webSrv.Close()

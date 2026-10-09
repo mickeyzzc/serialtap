@@ -7,9 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mickeyzzc/serialtap/internal/board"
 	"github.com/mickeyzzc/serialtap/internal/collector"
 	"github.com/mickeyzzc/serialtap/internal/config"
 	"github.com/mickeyzzc/serialtap/internal/device"
+	"github.com/mickeyzzc/serialtap/internal/facts"
 	"github.com/mickeyzzc/serialtap/internal/flash"
 	"github.com/mickeyzzc/serialtap/internal/pause"
 	"github.com/mickeyzzc/serialtap/internal/testutil"
@@ -547,5 +549,98 @@ func TestBoardSwapEvent(t *testing.T) {
 	}
 	if !strings.Contains(string(b), "[board-swap] 物理板已更换：COM10 → COM11") {
 		t.Fatalf("换板事件缺失，events 内容:\n%s", b)
+	}
+}
+
+// facts 全量查询：日志行 → 被动事实 → d.Facts 返回（含证据行）。
+func TestFactsFromLogLines(t *testing.T) {
+	root := t.TempDir()
+	old := collector.OpenPort
+	collector.OpenPort = func(tty string, baud int) (collector.Port, error) {
+		return &testutil.FakePort{Chunks: [][]byte{[]byte("ESP-ROM:esp32s3-api1-20210207\nI (99) wifi:got ip:192.168.63.9\n")}}, nil
+	}
+	t.Cleanup(func() { collector.OpenPort = old })
+
+	cfg := config.DefaultConfig()
+	cfg.Root = root
+	cfg.PollMs = 10
+	devs := []device.DeviceInfo{{Tty: "COM1", Key: "k1", Name: "board", ByID: "id1"}}
+	d, err := New(cfg, nil, func() ([]device.DeviceInfo, error) { return devs, nil }, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(d.Shutdown)
+	d.Tick()
+	deadline := time.Now().Add(3 * time.Second)
+	var fs map[string]facts.Fact
+	for time.Now().Before(deadline) {
+		fs, err = d.Facts("^board$")
+		if err == nil && len(fs) >= 2 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if fs["chip"].Value != "ESP32-S3" || fs["ip"].Value != "192.168.63.9" {
+		t.Fatalf("facts 提取错误: %+v", fs)
+	}
+	if !strings.Contains(fs["chip"].Source, "ESP-ROM") {
+		t.Fatalf("证据行缺失: %+v", fs["chip"])
+	}
+}
+
+// facts 无匹配设备时报错（不返回空表误导前端）。
+func TestFactsNoMatch(t *testing.T) {
+	d, err := New(config.DefaultConfig(), nil, func() ([]device.DeviceInfo, error) { return nil, nil }, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(d.Shutdown)
+	if _, err := d.Facts("^nothing$"); err == nil {
+		t.Fatal("无匹配应报错")
+	}
+}
+
+// board info 编排：让口 → 假 esptool 探测输出 → 回采，探测行回填 facts
+// （origin=probe，覆盖深度识别全链路）。
+func TestBoardInfoOrchestration(t *testing.T) {
+	root := t.TempDir()
+	tool := testutil.FakeTool(t)
+	t.Setenv("FAKE_EXIT", "0")
+	t.Setenv("FAKE_OUT",
+		"Chip type:          ESP32-S3 (QFN56) (revision v0.2)\n"+
+			"MAC:                80:b5:4e:c2:be:5c\n"+
+			"Computed flash size: 16MB\n")
+
+	old := collector.OpenPort
+	collector.OpenPort = func(tty string, baud int) (collector.Port, error) {
+		return &testutil.FakePort{}, nil
+	}
+	t.Cleanup(func() { collector.OpenPort = old })
+
+	d, err := newTestDaemon(t, root, device.DeviceInfo{Tty: "/dev/ttyFAKE", Key: "kA", Name: "fakeA"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(d.Shutdown)
+	d.Tick()
+
+	var lines []string
+	if err := d.Board("fakeA", false, board.Spec{Action: board.ActionInfo, Esptool: tool},
+		func(l string) { lines = append(lines, l) }); err != nil {
+		t.Fatalf("board info 失败: %v", err)
+	}
+	if len(lines) == 0 || !strings.Contains(strings.Join(lines, "\n"), "80:b5:4e") {
+		t.Fatalf("esptool 输出未流式回传: %v", lines)
+	}
+	// 探测结果回填身份事实（origin=probe）
+	fs, err := d.Facts("^fakeA$")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fs["mac"].Value != "80:b5:4e:c2:be:5c" || fs["mac"].Origin != facts.OriginProbe {
+		t.Fatalf("MAC 未回填: %+v", fs["mac"])
+	}
+	if fs["flash"].Value != "16MB" {
+		t.Fatalf("flash 未回填: %+v", fs["flash"])
 	}
 }
