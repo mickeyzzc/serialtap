@@ -183,7 +183,7 @@ func tokenizeJS(src string) []jsTok {
 			i++
 			continue
 		}
-		buf += string(c)
+		buf += src[i : i+1] // 按 UTF-8 字节累加——string(byte) 会把多字节字符拆成 mojibake，Han 检测全部失灵
 		i++
 	}
 	if buf != "" || len(stack) != 1 {

@@ -6,220 +6,319 @@
 <title>serialtap · 观测面板</title>
 <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect x="2" y="2" width="96" height="96" rx="22" fill="%230F172A"/><path d="M14 32 H28 V52 H42 V32 H56 V52 H70 V32 H86" fill="none" stroke="%23E2E8F0" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><path d="M49 52 V76" fill="none" stroke="%232DD4BF" stroke-width="8" stroke-linecap="round"/><circle cx="49" cy="82" r="6.5" fill="%232DD4BF"/></svg>'>
 <style>
-:root{--bg:#0d1117;--card:#161b22;--border:#30363d;--fg:#e6edf3;--dim:#8b949e;
---green:#3fb950;--amber:#d29922;--blue:#58a6ff;--red:#f85149;--teal:#39d2c0}
+/* ══════════ 设计系统：色板 · 字体 · 基础 ══════════ */
+:root{--bg:#0b0f14;--sunken:#070b10;--card:#12171f;--card2:#1a2029;--border:#28303a;--border2:#38414d;
+--fg:#e6edf3;--dim:#929aa5;--faint:#6e7681;
+--green:#3fb950;--amber:#d29922;--blue:#58a6ff;--red:#f85149;--teal:#39d2c0;--purple:#d2a8ff;
+--r:8px;--rs:6px;--font:"Segoe UI",system-ui,-apple-system,sans-serif;--mono:Consolas,"Cascadia Mono",monospace}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 "Segoe UI",system-ui,sans-serif}
-header{display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid var(--border);flex-wrap:wrap}
-header .logo{flex:none;display:block}
-header h1{font-size:17px;margin:0}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:#2b333d;border-radius:5px;border:2px solid var(--bg)}
+::-webkit-scrollbar-thumb:hover{background:#3a444f}
+::-webkit-scrollbar-track{background:transparent}
+:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
+html{color-scheme:dark}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 var(--font)}
+button{font-family:var(--font)}
+b{font-weight:600}
 .dim{color:var(--dim)}
-#conn.bad{color:var(--red)}
-header.warn{border-bottom:2px solid var(--red)}
-#toast{margin-left:auto;font-size:12px;color:var(--teal);opacity:0;transition:opacity .3s}
-#toast.show{opacity:1}
-header .dim{color:var(--dim);font-size:12px}
-main{padding:16px 20px;max-width:1700px;margin:0 auto}
+.num{font-variant-numeric:tabular-nums}
 mark{background:#6e4019;color:#ffdf9e;border-radius:2px;padding:0 1px}
+.hidden{display:none!important}
+#nodata{color:var(--dim);padding:28px;text-align:center}
 
-/* —— 顶部视图导航（仪表盘 / 日志 / 波形）—— */
-nav#views{display:flex;gap:2px;margin-left:10px;background:#0a0e14;border:1px solid var(--border);border-radius:8px;padding:2px}
-nav#views .nv{padding:3px 16px;border-radius:6px;cursor:pointer;color:var(--dim);font-size:13px;user-select:none}
-nav#views .nv:hover{color:var(--fg)}
-nav#views .nv.on{background:#21262d;color:var(--fg)}
+/* ══════════ 顶部：logo · 视图导航 · 全局状态 ══════════ */
+header{display:flex;align-items:center;gap:14px;padding:10px 20px;border-bottom:1px solid var(--border);
+flex-wrap:wrap;position:sticky;top:0;z-index:40;background:rgba(11,15,20,.92);backdrop-filter:blur(6px)}
+header.warn{border-bottom:2px solid var(--red)}
+header .logo{flex:none;display:block}
+header h1{font-size:16px;margin:0;font-weight:600;letter-spacing:.2px;white-space:nowrap}
+nav.seg{display:flex;gap:2px;background:var(--sunken);border:1px solid var(--border);border-radius:var(--r);padding:2px}
+nav.seg .nv,.tabs .tab{padding:3px 14px;border-radius:5px;cursor:pointer;color:var(--dim);font-size:13px;user-select:none;white-space:nowrap}
+nav.seg .nv:hover,.tabs .tab:hover{color:var(--fg)}
+nav.seg .nv.on,.tabs .tab.on{background:#283140;color:var(--fg)}
+#hdRight{margin-left:auto;display:flex;align-items:center;gap:8px;min-width:0}
+#root{font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl}
+#conn{font-size:12px;white-space:nowrap}
+#conn.bad{color:var(--red)}
+#toast{font-size:12px;color:var(--teal);opacity:0;transition:opacity .3s;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#toast.show{opacity:1}
 
-/* —— 仪表盘 KPI —— */
-.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px}
-.kpi{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:8px 14px;cursor:default}
-.kpi .n{font-size:22px;font-weight:600;line-height:1.25}
-.kpi .l{color:var(--dim);font-size:11px;margin-top:2px}
-.kpi.good .n{color:var(--green)}
-.kpi.bad .n{color:var(--red)}
-.kpi.click{cursor:pointer}
-.kpi.click:hover{border-color:var(--blue)}
+/* ══════════ 按钮 ══════════ */
+button{background:#222936;color:var(--fg);border:1px solid var(--border2);border-radius:var(--rs);
+padding:4px 12px;font-size:12px;cursor:pointer;white-space:nowrap;line-height:1.4;font-family:var(--font)}
+button:hover{border-color:var(--blue)}
+.btn{background:#222936;color:var(--fg);border:1px solid var(--border2);border-radius:var(--rs);
+padding:4px 12px;font-size:12px;cursor:pointer;white-space:nowrap;line-height:1.4}
+.btn:hover{border-color:var(--blue)}
+.btn:disabled{opacity:.45;cursor:default}
+.btn.sm{padding:2px 9px;font-size:11px}
+.btn.ghost{background:transparent;border-color:transparent;color:var(--dim)}
+.btn.ghost:hover{background:#222936;color:var(--fg);border-color:var(--border2)}
+.btn.primary{background:var(--teal);border-color:var(--teal);color:#071018;font-weight:600}
+.btn.primary:hover{background:#4fdcc9;border-color:#4fdcc9}
+.btn.danger:hover{border-color:var(--red);color:#ffb3ad}
+.iconbtn{background:#222936;color:var(--fg);border:1px solid var(--border2);border-radius:var(--rs);
+width:24px;height:22px;padding:0;font-size:12px;line-height:1;cursor:pointer;flex:none}
+.iconbtn:hover{border-color:var(--blue)}
+.iconbtn.lx{color:var(--faint);border-color:transparent;background:transparent}
+.iconbtn.lx:hover{color:var(--red);border-color:var(--red)}
+.sbtn{background:#222936;color:var(--fg);border:1px solid var(--border2);border-radius:var(--rs);
+padding:2px 8px;font-size:11px;cursor:pointer;white-space:nowrap;flex:none;line-height:1.5}
+.sbtn:hover{border-color:var(--blue)}
+select,input{font-family:var(--font)}
+select{background:#222936;color:var(--fg);border:1px solid var(--border2);border-radius:var(--rs);font-size:12px;padding:3px 8px}
+input[type=text],input:not([type]){background:var(--sunken);color:var(--fg);border:1px solid var(--border2);border-radius:var(--rs);padding:4px 9px;font-size:12px}
+input:focus,select:focus{outline:none;border-color:var(--blue)}
+label.ck{font-size:12px;color:var(--dim);display:flex;gap:4px;align-items:center;cursor:pointer;white-space:nowrap}
 
-#cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px;margin-bottom:4px}
-.card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px 14px;cursor:pointer}
-.card:hover{border-color:var(--blue)}
-.card .top{display:flex;align-items:center;gap:8px}
-.card .name{font-weight:600;font-size:15px;cursor:pointer}
-.card .tty{color:var(--dim);font-size:12px}
-.card .ident{color:var(--teal);font-size:11px;margin-top:2px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ident-chip{font-size:11px;color:var(--teal);border:1px solid var(--teal);border-radius:8px;padding:0 6px;cursor:pointer;margin-left:6px}
-#factTable{width:100%;border-collapse:collapse;font-size:12px}
-#factTable td,#factTable th{border:1px solid var(--border);padding:3px 8px;text-align:left;vertical-align:top}
-#factTable .fk{color:var(--teal);white-space:nowrap}
-#factTable .fv{font-family:Consolas,monospace}
-#factTable .fv.masked{cursor:pointer;color:var(--amber)}
-#factTable .fsrc{color:var(--dim);font-size:11px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#factTable .forg{font-size:10px;border:1px solid var(--border);border-radius:8px;padding:0 5px;color:var(--dim)}
-.chip{font-size:11px;padding:1px 8px;border-radius:10px;border:1px solid var(--border);color:var(--dim)}
+/* ══════════ 弹出菜单（卡片「更多」）══════════ */
+.wraprel{position:relative}
+.menu{position:absolute;right:0;top:calc(100% + 4px);z-index:60;background:var(--card2);border:1px solid var(--border2);
+border-radius:var(--r);box-shadow:0 8px 24px rgba(0,0,0,.5);min-width:170px;padding:4px;display:flex;flex-direction:column}
+.menu .mi{background:transparent;border:none;color:var(--fg);font-size:12px;text-align:left;padding:6px 10px;
+border-radius:5px;cursor:pointer;white-space:nowrap}
+.menu .mi:hover{background:#283140}
+.menu .mi.danger{color:#ff7b72}
+.menu .mi.danger:hover{background:#3d1e1e}
+.menu .msep{height:1px;background:var(--border);margin:3px 6px}
+
+/* ══════════ 面板容器与工具条 ══════════ */
+main{padding:14px 20px;max-width:1700px;margin:0 auto}
+.panel{background:var(--card);border:1px solid var(--border);border-radius:var(--r);overflow:hidden}
+.panel .hd{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.panel .hd .t{font-weight:600;font-size:13px}
+.panel .hd .sub{font-size:11px}
+.ptoolbar{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--border);flex-wrap:wrap;min-height:38px}
+.tgap{flex:1}
+.hint{font-size:11px}
+.tabs{display:flex;gap:2px;background:var(--sunken);border:1px solid var(--border);border-radius:var(--r);padding:2px}
+
+/* ══════════ 状态 chip · 设备多选 chips ══════════ */
+.chip{font-size:11px;padding:1px 8px;border-radius:10px;border:1px solid var(--border2);color:var(--dim);white-space:nowrap}
 .chip.collecting{color:var(--green);border-color:var(--green)}
 .chip.paused{color:var(--amber);border-color:var(--amber)}
 .chip.suspended{color:var(--blue);border-color:var(--blue)}
 .chip.flashing{color:var(--red);border-color:var(--red)}
-.badge{font-size:11px;color:var(--teal)}
-.meta{color:var(--dim);font-size:12px;margin-top:6px;display:flex;gap:14px;flex-wrap:wrap}
-.meta b{color:var(--fg);font-weight:500}
-.health{display:flex;gap:12px;align-items:center;margin-top:6px;font-size:12px;color:var(--dim);flex-wrap:wrap}
-.health b{font-weight:600}
-.health .ok b{color:var(--green)}
-.health .warn b{color:var(--amber)}
-.health .bad b{color:var(--red)}
-.spark{background:#0a0e14;border-radius:6px;flex:1;min-width:90px;height:26px}
-.acts{margin-top:8px;display:flex;gap:6px;flex-wrap:wrap}
-button{background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:6px;
-padding:3px 10px;font-size:12px;cursor:pointer}
-button:hover{border-color:var(--blue)}
-button.danger:hover{border-color:var(--red)}
-.grid2{display:grid;grid-template-columns:1.7fr 1fr;gap:12px}
-@media(max-width:1000px){.grid2{grid-template-columns:1fr}}
-.dashgrid{display:grid;grid-template-columns:1.6fr 1fr;gap:12px;margin-top:12px}
-@media(max-width:1000px){.dashgrid{grid-template-columns:1fr}}
-.panel{background:var(--card);border:1px solid var(--border);border-radius:8px;overflow:hidden}
-.panel .hd{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);flex-wrap:wrap}
-.panel .hd .t{font-weight:600}
-.tabs{display:flex;gap:4px}
-.tab{padding:2px 10px;border-radius:6px;cursor:pointer;color:var(--dim);font-size:12px;user-select:none}
-.tab.on{background:#21262d;color:var(--fg)}
-
-/* —— 设备多选 chips（日志/波形页共用）—— */
-.chips{display:flex;gap:6px;flex-wrap:wrap;flex:1}
-.dchip{font-size:12px;padding:2px 10px;border:1px solid var(--border);border-radius:12px;
-cursor:pointer;color:var(--dim);user-select:none;background:#0a0e14}
+.badge{font-size:11px;color:var(--teal);white-space:nowrap}
+.chips{display:flex;gap:6px;flex-wrap:wrap;flex:1;min-width:0}
+.dchip{font-size:12px;padding:2px 10px;border:1px solid var(--border2);border-radius:12px;
+cursor:pointer;color:var(--dim);user-select:none;background:var(--sunken);white-space:nowrap}
 .dchip:hover{border-color:var(--blue)}
 .dchip.on{color:var(--fg);border-color:var(--teal);background:rgba(57,210,192,.1)}
 .dchip.st-flashing{border-color:var(--red)}
-.stdot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:5px;vertical-align:1px}
+.stdot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:5px;vertical-align:1px;flex:none}
 
-/* —— 日志页：并排窗格 + 合并流 —— */
-#logGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:10px;padding:10px}
-.lpane{background:#0a0e14;border:1px solid var(--border);border-radius:8px;display:flex;flex-direction:column;min-width:0}
-.lpane .lhd{display:flex;gap:8px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--border);font-size:12px;flex-wrap:wrap}
-.lpane .lhd b{font-weight:600}
-.lacts2{margin-left:auto;display:flex;gap:4px}
-.lacts2 button{padding:1px 7px;font-size:11px}
-.lpane pre{margin:0;padding:8px 10px;height:44vh;overflow-y:auto;font:12px/1.45 Consolas,monospace;
-white-space:pre-wrap;word-break:break-all}
-#logGrid.solo .lpane pre{height:62vh}
-#logMerge{margin:0;padding:10px 12px;height:62vh;overflow-y:auto;font:12px/1.5 Consolas,monospace;background:#0a0e14}
-.mline{white-space:pre-wrap;word-break:break-all}
-.mline .devtag{font-weight:600}
-#logSearch{background:#0a0e14;color:var(--fg);border:1px solid var(--border);border-radius:6px;
-padding:2px 8px;font:12px Consolas,monospace;width:150px}
-#logSearch{transition:width .15s}
-#logSearch:focus{outline:none;border-color:var(--blue);width:260px}
-.lacts2 .lx{color:var(--dim)}
-.lacts2 .lx:hover{color:var(--red);border-color:var(--red)}
-#waveFreeze.on{color:var(--amber);border-color:var(--amber)}
-#logCount{font-size:11px;color:var(--dim)}
-.devtag{color:var(--blue);font-size:12px}
-.hit{color:var(--amber)}
-label.ck{font-size:12px;color:var(--dim);display:flex;gap:4px;align-items:center;cursor:pointer}
-select{background:#21262d;color:var(--fg);border:1px solid var(--border);border-radius:6px;font-size:12px;padding:2px 6px}
-#nodata{color:var(--dim);padding:20px;text-align:center}
-.hidden{display:none!important}
+/* ══════════ 仪表盘：KPI · 设备卡 ══════════ */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:12px}
+.kpi{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:8px 14px;cursor:default}
+.kpi .n{font-size:22px;font-weight:600;line-height:1.25;font-variant-numeric:tabular-nums}
+.kpi .l{color:var(--dim);font-size:11px;margin-top:2px;white-space:nowrap}
+.kpi.good .n{color:var(--green)}
+.kpi.bad .n{color:var(--red)}
+.kpi.click{cursor:pointer}
+.kpi.click:hover{border-color:var(--blue)}
+#cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:12px;margin-bottom:4px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px;cursor:pointer;position:relative}
+.card:hover{border-color:var(--blue)}
+.card .top{display:flex;align-items:center;gap:8px;min-width:0}
+.card .name{font-weight:600;font-size:15px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card .top .tgap{flex:1}
+.card .v-rate{color:var(--dim);font-size:12px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.card .tty{color:var(--dim);font-size:12px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card .ident{color:var(--teal);font-size:11px;margin-top:3px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ident-chip{font-size:11px;color:var(--teal);border:1px solid var(--teal);border-radius:8px;padding:0 6px;cursor:pointer;margin-left:6px}
+.card .meta{color:var(--dim);font-size:12px;margin-top:7px;display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.card .meta b{color:var(--fg);font-weight:500;font-variant-numeric:tabular-nums}
+.health .ok b,.h-silent.ok b,.h-reopen.ok b{color:var(--green)}
+.health .warn b,.h-silent.warn b,.h-reopen.warn b{color:var(--amber)}
+.health .bad b,.h-silent.bad b,.h-reopen.bad b{color:var(--red)}
+.card .spark{background:var(--sunken);border-radius:6px;width:100%;height:30px;display:block;margin-top:8px}
+.acts{margin-top:9px;display:flex;gap:6px;flex-wrap:wrap;position:relative}
+#factTable{width:100%;border-collapse:collapse;font-size:12px}
+#factTable td,#factTable th{border:1px solid var(--border2);padding:3px 8px;text-align:left;vertical-align:top}
+#factTable .fk{color:var(--teal);white-space:nowrap}
+#factTable .fv{font-family:var(--mono)}
+#factTable .fv.masked{cursor:pointer;color:var(--amber)}
+#factTable .fsrc{color:var(--dim);font-size:11px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#factTable .forg{font-size:10px;border:1px solid var(--border2);border-radius:8px;padding:0 5px;color:var(--dim)}
 
-/* —— 事件时间线（仪表盘）—— */
+/* ══════════ 仪表盘下部：事件 | mesh + 配置 ══════════ */
+.dashgrid{display:grid;grid-template-columns:1.6fr 1fr;gap:12px;margin-top:12px;align-items:start}
+@media(max-width:1000px){.dashgrid{grid-template-columns:1fr}}
+.dashside{display:flex;flex-direction:column;gap:12px}
 #tl{padding:8px 12px 4px;font-size:11px}
 .tl-row{display:flex;align-items:center;gap:8px;margin-bottom:3px}
 .tl-dev{color:var(--teal);width:76px;flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.tl-track{flex:1;position:relative;height:12px;background:#0a0e14;border-radius:6px}
+.tl-track{flex:1;position:relative;height:12px;background:var(--sunken);border-radius:6px}
 .tl-tick{position:absolute;top:1px;width:3px;height:10px;border-radius:1px}
 .tl-tick.err{background:var(--red)}
 .tl-tick.warn{background:var(--amber)}
 .tl-tick.life{background:var(--blue);opacity:.75}
-.tl-tick.swap{background:#d2a8ff}
-.tl-legend{color:var(--dim);margin:2px 0 4px;display:flex;gap:12px}
+.tl-tick.swap{background:var(--purple)}
+.tl-legend{color:var(--dim);margin:2px 0 4px;display:flex;gap:12px;flex-wrap:wrap}
 .tl-legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:-1px}
-#events{height:340px;overflow-y:auto;padding:8px 12px;font:12px/1.5 Consolas,monospace}
+#events{max-height:300px;overflow-y:auto;padding:8px 12px;font:12px/1.5 var(--mono)}
 .ev-dev{color:var(--teal);margin-top:6px}
 .ev-line{white-space:pre-wrap;word-break:break-all}
-.ev-line:has(.hit){color:var(--amber)}
+.ev-line:has(.hit){color:#ffd782}
+.hit{color:var(--amber)}
 
-/* —— 波形页：多机网格 + 单机大图 —— */
+/* ══════════ mesh 多机互联 ══════════ */
+.mbox2{max-height:420px;overflow-y:auto}
+.msec{padding:0 12px 12px}
+.peer{padding:4px 0}
+.peer .hd2,.cmp-dev .hd2{display:flex;align-items:center;gap:8px;padding:7px 12px;font-size:12px;flex-wrap:wrap}
+.peer .hd2 b,.cmp-dev .hd2 b{font-size:13px}
+.cmp-dev{border-top:1px solid var(--border)}
+.cmp-dev:first-child{border-top:none}
+.mdev{display:flex;gap:8px;align-items:center;padding:7px 12px;border-top:1px solid rgba(48,54,61,.4);font-size:12px;min-width:0}
+.mdev .mname{cursor:pointer;color:var(--teal);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:none;max-width:40%}
+.mdev .mtty,.mdev .mident{color:var(--faint);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.mdev .macts{margin-left:auto;display:flex;gap:5px;flex:none;align-items:center}
+
+/* ══════════ 配置速览 ══════════ */
+.cfgquick{padding:4px 0 8px}
+.cfgrow{display:flex;gap:10px;padding:3px 12px;font-size:12px}
+.cfgrow .ck1{color:var(--faint);flex:none;width:92px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cfgrow .ck2{color:var(--fg);font-family:var(--mono);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
+#cfgBody .cgroup{margin-bottom:14px}
+#cfgBody .cgt{font-size:12px;font-weight:600;color:var(--teal);margin:10px 0 4px}
+#cfgBody .cfgrow{padding:3px 0}
+#cfgBody .cfgrow .ck1{width:150px}
+#cfgBody .cfgval{font-family:var(--mono);font-size:11px;color:var(--fg);word-break:break-all;white-space:normal}
+#cfgBody .cfgval .muted{color:var(--faint)}
+#cfgFoot{font-size:11px;color:var(--faint);border-top:1px solid var(--border);padding-top:8px;margin-top:4px}
+
+/* ══════════ 日志工作台 ══════════ */
+#logGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(400px,1fr));gap:10px;padding:10px}
+.lpane{background:var(--sunken);border:1px solid var(--border);border-radius:var(--r);display:flex;flex-direction:column;min-width:0}
+.lpane .lhd{display:flex;gap:7px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--border);font-size:12px;flex-wrap:nowrap;overflow:hidden}
+.lpane .lhd b{font-weight:600;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:0 1 auto}
+.lpane .lhd .ltty{color:var(--faint);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lacts2{margin-left:auto;display:flex;gap:4px;align-items:center;flex:none}
+.lpane pre{margin:0;padding:8px 10px;height:44vh;overflow-y:auto;font:12px/1.45 var(--mono);
+white-space:pre-wrap;word-break:break-all}
+#logGrid.solo .lpane{grid-column:1/-1}
+#logGrid.solo .lpane pre{height:62vh}
+#logMerge{margin:0;padding:10px 12px;height:62vh;overflow-y:auto;font:12px/1.5 var(--mono);background:var(--sunken)}
+.mline{white-space:pre-wrap;word-break:break-all}
+.mline .devtag{font-weight:600}
+#logSearch{width:180px;font-family:var(--mono);transition:width .15s}
+#logSearch:focus{width:300px}
+#logCount{font-size:11px;color:var(--dim);white-space:nowrap}
+.devtag{color:var(--blue);font-size:12px}
+#waveFreeze.on{color:var(--amber);border-color:var(--amber)}
+
+/* ══════════ 波形 ══════════ */
 #waveGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:10px;padding:10px}
-.wmini{background:#0a0e14;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.wmini{background:var(--sunken);border:1px solid var(--border);border-radius:var(--r);overflow:hidden}
 .wmini .whd{display:flex;gap:8px;align-items:center;padding:5px 10px;font-size:12px;color:var(--teal)}
 .wmini .whd b{font-weight:600}
 .wmini canvas{width:100%;height:160px;display:block;cursor:crosshair}
-#waveBox{display:flex;flex-direction:column;background:#0a0e14}
+#waveBox{display:flex;flex-direction:column;background:var(--sunken)}
 .wavebar{display:flex;align-items:center;gap:8px;padding:8px 12px;flex-wrap:wrap}
 .wavebar select{flex:none}
 #waveCv{width:100%;height:380px;display:block;cursor:crosshair}
 #waveMode{cursor:pointer}
 .tpls{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
-.tpl{font:12px Consolas,monospace;color:var(--teal)}
-#xtrPreview{height:200px;overflow-y:auto;margin:6px 0 0;padding:8px 10px;font:12px/1.5 Consolas,monospace;
-white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
+.tpl{font:12px var(--mono);color:var(--teal)}
+#xtrPreview{height:200px;overflow-y:auto;margin:6px 0 0;padding:8px 10px;font:12px/1.5 var(--mono);
+white-space:pre-wrap;word-break:break-all;background:var(--sunken);border-radius:var(--rs)}
+
+/* ══════════ 帮助 ══════════ */
 .hbody h3{font-size:14px;margin:18px 0 6px;color:var(--teal)}
 .hbody h3:first-child{margin-top:0}
 .hbody p{font-size:13px;margin:6px 0}
-.hbody code,.hbody pre{font:12px Consolas,monospace;background:#0a0e14;border-radius:6px;padding:1px 5px}
+.hbody code,.hbody pre{font:12px var(--mono);background:var(--sunken);border-radius:var(--rs);padding:1px 5px}
 .hbody pre{padding:8px 10px;overflow-x:auto;margin:6px 0}
 .hbody table{border-collapse:collapse;font-size:12px;margin:6px 0}
-.hbody td,.hbody th{border:1px solid var(--border);padding:3px 8px;text-align:left}
+.hbody td,.hbody th{border:1px solid var(--border2);padding:3px 8px;text-align:left}
 .hbody .dim{font-size:12px}
 .hbody a{color:var(--blue)}
 
-/* —— mesh 多机互联（仪表盘右栏）—— */
-.mdev{display:flex;gap:8px;align-items:center;padding:6px 10px;border-bottom:1px solid rgba(48,54,61,.4);font:12px/1.4 sans-serif}
-.mdev .mname{cursor:pointer;color:var(--teal)}
-.mdev .macts{margin-left:auto;display:flex;gap:6px}
-.mdev .macts button{padding:1px 8px;font-size:11px}
-.mbox2{max-height:420px;overflow-y:auto}
-.msec{padding:0 12px 12px}
-
+/* ══════════ 弹窗 ══════════ */
 .modal{position:fixed;inset:0;background:rgba(3,6,12,.72);display:flex;align-items:center;justify-content:center;z-index:50}
-.mbox{background:var(--card);border:1px solid var(--border);border-radius:10px;width:min(680px,92vw);max-height:88vh;display:flex;flex-direction:column}
+.mbox{background:var(--card);border:1px solid var(--border2);border-radius:10px;width:min(680px,92vw);max-height:88vh;display:flex;flex-direction:column}
 .mhd{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border)}
 .mhd b{font-size:14px}
 .mbody{padding:12px 14px;overflow:auto}
-.mbody label{display:block;font-size:12px;color:var(--dim);margin:8px 0 2px}
-.mbody input{background:#0a0e14;color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-size:12px;max-width:100%}
+.mbody label{display:block;font-size:12px;color:var(--dim);margin:10px 0 4px}
+.mbody input{background:var(--sunken);color:var(--fg);border:1px solid var(--border2);border-radius:var(--rs);padding:4px 9px;font-size:12px;max-width:100%}
 .mrow{display:flex;align-items:center;gap:10px;margin-top:12px}
-#fmLog{height:220px;overflow-y:auto;margin:10px 0 0;padding:8px 10px;font:12px/1.45 Consolas,monospace;
-white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
+.frow2{display:grid;grid-template-columns:1fr 1.4fr;gap:10px}
+.frow2 select,.frow2 input{width:100%}
+.fnote{font-size:11px;margin-top:8px}
+.segf{display:inline-flex;gap:2px;background:var(--sunken);border:1px solid var(--border);border-radius:var(--r);padding:2px;margin-top:10px}
+.segf .nv{padding:3px 14px;border-radius:5px;cursor:pointer;color:var(--dim);font-size:12px;user-select:none;white-space:nowrap}
+.segf .nv:hover{color:var(--fg)}
+.segf .nv.on{background:#283140;color:var(--fg)}
+.dropzone{border:1px dashed var(--border2);border-radius:var(--r);padding:18px 14px;text-align:center;color:var(--dim);
+font-size:12px;cursor:pointer;margin-top:6px;transition:border-color .15s,background .15s}
+.dropzone:hover,.dropzone.over{border-color:var(--teal);background:rgba(57,210,192,.05)}
+.flist{margin-top:6px;display:flex;flex-direction:column;gap:3px}
+.flist .fitem{display:flex;gap:8px;align-items:center;font:12px var(--mono);background:var(--sunken);
+border:1px solid var(--border);border-radius:var(--rs);padding:4px 9px}
+.flist .fitem .fsz{color:var(--faint);margin-left:auto;flex:none}
+.flist .fitem .fx{color:var(--faint);cursor:pointer;flex:none}
+.flist .fitem .fx:hover{color:var(--red)}
+#fmLog{height:200px;overflow-y:auto;margin:10px 0 0;padding:8px 10px;font:12px/1.45 var(--mono);
+white-space:pre-wrap;word-break:break-all;background:var(--sunken);border-radius:var(--rs)}
+
+/* 窄屏兜底：头部收敛 */
+@media(max-width:760px){
+  #root{display:none}
+  header{gap:8px;padding:8px 12px}
+  main{padding:10px 12px}
+}
 </style>
 </head>
 <body>
 <header>
   <svg class="logo" width="26" height="26" viewBox="0 0 100 100" aria-hidden="true"><rect x="2" y="2" width="96" height="96" rx="22" fill="#0F172A"/><path d="M14 32 H28 V52 H42 V32 H56 V52 H70 V32 H86" fill="none" stroke="#E2E8F0" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><path d="M49 52 V76" fill="none" stroke="#2DD4BF" stroke-width="8" stroke-linecap="round"/><circle cx="49" cy="82" r="6.5" fill="#2DD4BF"/></svg>
   <h1>serialtap · 观测面板</h1>
-  <nav id="views">
+  <nav id="views" class="seg">
     <span class="nv on" data-v="logs">日志</span>
     <span class="nv" data-v="wave">波形</span>
     <span class="nv" data-v="dash">仪表盘</span>
   </nav>
-  <span class="dim" id="root">—</span>
-  <span class="dim" id="conn"></span>
-  <button id="btnLang" title="切换语言 · Switch language">EN</button>
-  <button id="btnHelp" title="帮助 · 教程（仪表盘/多机日志/波形/提取）">?</button>
-  <span id="toast"></span>
+  <span id="hdRight">
+    <span class="dim" id="root">—</span>
+    <span class="dim" id="conn"></span>
+    <span id="toast"></span>
+    <button class="btn" id="btnConfig" title="查看运行配置（只读速览：日志/刷机/mesh/签名）">⚙ <span class="cfglbl">配置</span></button>
+    <button class="btn" id="btnLang" title="切换语言 · Switch language">EN</button>
+    <button class="btn" id="btnHelp" title="帮助 · 教程（仪表盘/多机日志/波形/提取）">?</button>
+  </span>
 </header>
 <main>
 
-<!-- ═══ 视图三：仪表盘 —— 全网健康总览（参考页，按需查看）═══ -->
+<!-- ═══ 视图三：仪表盘 —— 全网健康总览 + 运行配置速览（按需查看）═══ -->
 <section id="view-dash" class="hidden">
     <div class="kpis">
       <div class="kpi click" id="kDevK"><div class="n" id="kDev">0</div><div class="l">接入设备 · 全网</div></div>
       <div class="kpi click" id="kColK"><div class="n" id="kCol">0</div><div class="l">采集中 · 全网</div></div>
-      <div class="kpi" id="kRateK" title="只统计本机接入的设备；远程节点速率可在其面板查看"><div class="n" id="kRate">0</div><div class="l">本机吞吐 B/s</div></div>
+      <div class="kpi" id="kRateK" title="只统计本机接入的设备；远程节点速率可在其面板查看"><div class="n num" id="kRate">0</div><div class="l">本机吞吐 B/s</div></div>
       <div class="kpi" id="kBadK" title=""><div class="n" id="kBad">0</div><div class="l">异常设备 · 全网</div></div>
-      <div class="kpi" id="kEvK" title=""><div class="n" id="kEv">0</div><div class="l">事件 · 近30min · 本机</div></div>
-      <div class="kpi hidden click" id="kMeshK"><div class="n" id="kMesh">0/0</div><div class="l">mesh 节点在线</div></div>
+      <div class="kpi click" id="kEvK" title=""><div class="n num" id="kEv">0</div><div class="l">事件 · 近30min · 本机</div></div>
+      <div class="kpi hidden click" id="kMeshK"><div class="n num" id="kMesh">0/0</div><div class="l">mesh 节点在线</div></div>
     </div>
     <div id="cards"><div id="nodata">暂无设备接入</div></div>
     <div class="dashgrid">
       <div class="panel">
-        <div class="hd"><span class="t">事件时间线 · 最近事件</span><span class="dim" style="font-size:11px">本机设备 · 签名命中 · 生命周期 · 刷机</span></div>
+        <div class="hd"><span class="t">事件</span><span class="dim sub">本机设备 · 签名命中 · 生命周期 · 刷机</span></div>
         <div id="tl"><div class="dim" style="padding:4px 0">暂无事件</div></div>
         <div id="events"></div>
       </div>
-      <div>
+      <div class="dashside">
         <div class="panel" id="meshPanel" style="display:none">
-          <div class="hd"><span class="t">mesh 多机互联</span><span class="dim" id="meshSum" style="font-size:11px">同密钥 LAN 节点 · 点设备即远程日志/操作/刷机</span></div>
+          <div class="hd"><span class="t">mesh 多机互联</span><span class="dim sub" id="meshSum">同密钥 LAN 节点 · 点设备即远程日志/操作/刷机</span></div>
           <div class="mbox2" id="meshRow"></div>
+        </div>
+        <div class="panel" id="cfgPanel" style="display:none">
+          <div class="hd"><span class="t">运行配置</span><span class="dim sub" id="cfgSum"></span>
+            <button class="btn sm ghost" id="cfgMore" style="margin-left:auto">详情…</button></div>
+          <div class="cfgquick" id="cfgQuick"></div>
         </div>
       </div>
     </div>
@@ -228,17 +327,16 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
 <!-- ═══ 视图一：多机日志工作台（首页——实干工具打开就能干活）═══ -->
 <section id="view-logs">
     <div class="panel">
-      <div class="hd">
-        <span class="t">多机日志</span>
+      <div class="ptoolbar">
         <span class="chips" id="logChips"></span>
-        <button id="logAll" title="勾选全部设备">全选</button>
-        <button id="logNone" title="清空选择（看单台：点设备卡 / 窗格标题）">清空</button>
+        <button class="btn ghost sm" id="logAll" title="勾选全部设备">全选</button>
+        <button class="btn ghost sm" id="logNone" title="清空选择（看单台：点设备卡 / 窗格标题）">清空</button>
       </div>
-      <div class="hd">
-        <select id="logLayout" title="布局：并排 = 每台一个窗格；合并 = 按时间交织（每台保底配额，防刷屏）">
-          <option value="grid" selected>并排</option>
-          <option value="merge">合并</option>
-        </select>
+      <div class="ptoolbar">
+        <nav class="seg" id="logLayoutSeg" title="布局：并排 = 每台一个窗格；合并 = 按时间交织（每台保底配额，防刷屏）">
+          <span class="nv on" data-l="grid">并排</span>
+          <span class="nv" data-l="merge">合并</span>
+        </nav>
         <select id="logLines" title="并排 = 每窗格行数；合并 = 每台配额行数">
           <option value="100">100 行</option>
           <option value="200" selected>200 行</option>
@@ -246,11 +344,12 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
           <option value="800">800 行</option>
         </select>
         <input id="logSearch" placeholder="搜索/正则过滤…">
-        <span id="logCount"></span>
+        <span id="logCount" class="num"></span>
         <label class="ck"><input type="checkbox" id="autoscroll" checked>自动滚动</label>
-        <button id="btnClear">清屏</button>
-        <button id="btnExportLog" title="导出当前选择的日志缓冲为 .log 文件">导出</button>
-        <span class="dim" id="logInfo" style="font-size:12px"></span>
+        <span class="tgap"></span>
+        <span class="dim hint" id="logInfo"></span>
+        <button class="btn sm" id="btnClear">清屏</button>
+        <button class="btn sm" id="btnExportLog" title="导出当前选择的日志缓冲为 .log 文件">导出</button>
       </div>
       <div id="logGrid"></div>
       <pre id="logMerge" class="hidden"></pre>
@@ -260,13 +359,12 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
 <!-- ═══ 视图二：多机波形 —— 网格 / 单机大图 ═══ -->
 <section id="view-wave" class="hidden">
     <div class="panel">
-      <div class="hd">
-        <span class="t">多机波形</span>
+      <div class="ptoolbar">
         <span class="chips" id="waveChips"></span>
-        <button id="waveAll" title="勾选全部设备">全选</button>
-        <button id="waveNone" title="清空选择">清空</button>
+        <button class="btn ghost sm" id="waveAll" title="勾选全部设备">全选</button>
+        <button class="btn ghost sm" id="waveNone" title="清空选择">清空</button>
       </div>
-      <div class="hd">
+      <div class="ptoolbar">
         <span class="tabs" id="waveViewTabs">
           <span class="tab on" data-m="grid">多机网格</span>
           <span class="tab" data-m="big">单机大图</span>
@@ -278,7 +376,8 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
           <option value="1800">30min</option>
           <option value="-1">全部</option>
         </select>
-        <span class="dim" style="font-size:11px">每台设备都在后台持续采样，切换/勾选随时可看，历史不丢</span>
+        <span class="tgap"></span>
+        <span class="dim hint">每台设备都在后台持续采样，切换/勾选随时可看，历史不丢</span>
       </div>
       <div id="waveGrid"></div>
       <div id="waveBox" class="hidden">
@@ -286,11 +385,12 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
           <b id="waveDev" class="devtag"></b>
           <select id="waveDevSel" title="切换大图设备"></select>
           <span class="chip" id="waveMode" title="点击配置提取策略">自动</span>
-          <button id="waveFreeze">冻结</button>
-          <button id="waveClear">清除</button>
+          <button class="btn sm" id="waveFreeze">冻结</button>
+          <button class="btn sm" id="waveClear">清除</button>
           <span class="dim" id="waveInfo" style="font-size:11px"></span>
-          <button id="btnXtr" title="自动识别不合意时，用正则定义通道：模板 + 实时试跑">高级提取…</button>
-          <button id="btnExportWave" title="导出波形样本为 CSV">导出 CSV</button>
+          <span class="tgap"></span>
+          <button class="btn sm" id="btnXtr" title="自动识别不合意时，用正则定义通道：模板 + 实时试跑">高级提取…</button>
+          <button class="btn sm" id="btnExportWave" title="导出波形样本为 CSV">导出 CSV</button>
         </div>
         <canvas id="waveCv"></canvas>
       </div>
@@ -301,21 +401,45 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
 <div id="flashModal" class="modal hidden">
   <div class="mbox">
     <div class="mhd"><b>代理刷机</b> <span class="dim" id="fmDev" style="font-size:12px"></span>
-      <button id="fmClose" style="margin-left:auto">关闭</button></div>
+      <button class="btn sm" id="fmClose" style="margin-left:auto">关闭</button></div>
     <div class="mbody">
-      <label>目标节点（mesh 远端 = 镜像从本机加密上传到对端再刷）</label>
-      <select id="fmPeer"><option value="">本机</option></select>
-      <label>设备正则（多板同名时请锚定，如 ^board$）</label>
-      <input id="fmPattern" size="18" placeholder="^board$">
-      <label>镜像文件（可多选；顺序 = 刷写顺序）</label>
-      <input id="fmBins" type="file" multiple>
-      <label>偏移 offsets（JSON 数组，与镜像顺序对齐；缺省全 0x0）</label>
-      <input id="fmOffsets" size="38" placeholder='["0x0","0x8000","0x10000"]'>
-      <label style="margin-top:12px">或直接给 ESP-IDF 构建产物（与镜像二选一）</label>
-      <input id="fmArgs" type="file" accept=".json">
-      <div class="mrow"><button id="fmGo">开始刷写</button><span class="dim" id="fmState" style="font-size:12px"></span></div>
-      <pre id="fmLog">（刷写进度将实时显示在这里）</pre>
+      <div class="frow2">
+        <div><label>目标节点（mesh 远端 = 加密上传后在那台刷）</label>
+          <select id="fmPeer"><option value="">本机</option></select></div>
+        <div><label>设备正则（已按设备锚定，多板同名时可再改）</label>
+          <input id="fmPattern" size="18" placeholder="^board$"></div>
+      </div>
+      <div class="segf" id="fmMode">
+        <span class="nv on" data-m="bins">镜像文件</span>
+        <span class="nv" data-m="args">ESP-IDF 构建产物</span>
+      </div>
+      <div id="fmBinsWrap">
+        <div id="fmDrop" class="dropzone">点击选择或将 .bin 拖到这里 —— 可多选，顺序 = 刷写顺序</div>
+        <input id="fmBins" type="file" multiple class="hidden">
+        <div class="flist" id="fmList"></div>
+        <label>偏移 offsets（JSON 数组，与镜像顺序对齐；缺省全 0x0）</label>
+        <input id="fmOffsets" size="38" placeholder='["0x0","0x8000","0x10000"]' style="width:100%">
+      </div>
+      <div id="fmArgsWrap" class="hidden">
+        <div id="fmArgsDrop" class="dropzone">点击选择 flasher_args.json（idf.py 构建目录产物，与镜像二选一）</div>
+        <input id="fmArgs" type="file" accept=".json" class="hidden">
+        <div class="flist" id="fmArgsList"></div>
+      </div>
+      <div class="mrow">
+        <button class="btn primary" id="fmGo">开始刷写</button>
+        <span class="dim" id="fmState" style="font-size:12px"></span>
+      </div>
+      <div class="dim fnote">⚠ 刷写会让目标板复位并让出串口（进度下方实时回显；失败自动重试由守护编排）</div>
+      <pre id="fmLog"></pre>
     </div>
+  </div>
+</div>
+
+<div id="cfgModal" class="modal hidden">
+  <div class="mbox" style="width:min(760px,94vw)">
+    <div class="mhd"><b>配置速览</b> <span class="dim" style="font-size:12px">只读 —— 修改需编辑配置文件后重启守护</span>
+      <button class="btn sm" id="cfgClose" style="margin-left:auto">关闭</button></div>
+    <div class="mbody" id="cfgBody"></div>
   </div>
 </div>
 <div id="xtrModal" class="modal hidden">
@@ -361,13 +485,14 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
     <div class="mhd"><b>帮助 · 教程</b> <span class="dim" style="font-size:12px">仪表盘 · 多机日志 · 波形观测 · 提取策略</span>
       <button id="helpClose" style="margin-left:auto">关闭</button></div>
     <div class="mbody hbody">
-      <h3>三个页面</h3>
+      <h3>三个页面 + 配置</h3>
       <p>打开即落在<b>多机日志工作台</b>（首页用来干活）；顶部导航切换，<code>#logs / #wave / #dash</code> 可直达：</p>
       <table>
         <tr><th>页面</th><th>干什么</th></tr>
-        <tr><td><b>日志</b>（首页）</td><td>多机同时看日志 + 全局操作台：勾选多台设备，<b>并排</b>（每台一个窗格）或<b>合并</b>（按时间交织、每台保底配额防刷屏，每行带彩色设备标签）；窗格头部直接<b>暂停/恢复、软重连、刷机</b>（本地与 mesh 远端同权）；「全选/清空」一键改选，点设备卡或窗格标题 = 只看这台；搜索/正则过滤与高亮跨设备生效</td></tr>
+        <tr><td><b>日志</b>（首页）</td><td>多机同时看日志 + 全局操作台：勾选多台设备，<b>并排</b>（每台一个窗格）或<b>合并</b>（按时间交织、每台保底配额防刷屏，每行带彩色设备标签）；窗格头部直接<b>暂停/恢复、软重连、刷机、波形</b>（本地与 mesh 远端同权）；「全选/清空」一键改选，点设备卡或窗格标题 = 只看这台；搜索/正则过滤与高亮跨设备生效</td></tr>
         <tr><td><b>波形</b></td><td>多机同时看波形：<b>多机网格</b>每台一块实时示波器；「大图」进单机分析（冻结/悬停读值/高级提取/导出 CSV），大图里用设备下拉随时换台</td></tr>
-        <tr><td><b>仪表盘</b></td><td>全网健康总览（参考页）：KPI 指标条（设备数/采集中/吞吐/异常/事件/mesh 节点）、设备卡（操作按钮全量）、30 分钟事件时间线、mesh 节点管理</td></tr>
+        <tr><td><b>仪表盘</b></td><td>全网健康总览（参考页）：KPI 指标条（设备数/采集中/吞吐/异常/事件/mesh 节点）、设备卡（常用操作一键直达，诊断类收进「更多」菜单）、30 分钟事件时间线、mesh 节点管理、运行配置速览</td></tr>
+        <tr><td><b>⚙ 配置</b></td><td>头部按钮打开<b>只读配置速览</b>：日志目录/波特率/轮询/轮转与保留期、刷机编排（esptool/超时）、事件签名、命名与排除规则、mesh（密钥只显示指纹）——改配置需编辑配置文件并重启守护</td></tr>
       </table>
       <p>所有设备（含 mesh 远端）都在后台持续采样与缓冲——勾选、切换、换页都不会丢数据。</p>
 
@@ -377,8 +502,9 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
         <tr><th>键</th><th>作用</th></tr>
         <tr><td><code>1</code> / <code>2</code> / <code>3</code></td><td>切换 日志 / 波形 / 仪表盘</td></tr>
         <tr><td><code>/</code></td><td>聚焦日志搜索（正则或子串，自动切到日志页）</td></tr>
+        <tr><td><code>c</code></td><td>打开 / 关闭配置速览</td></tr>
         <tr><td><code>F</code></td><td>大图冻结 / 恢复（后台照常采样）</td></tr>
-        <tr><td><code>Esc</code></td><td>关闭弹窗；退出搜索框焦点</td></tr>
+        <tr><td><code>Esc</code></td><td>关闭弹窗/菜单；退出搜索框焦点</td></tr>
       </table>
 
       <h3>波形自动识别是怎么工作的</h3>
@@ -639,7 +765,7 @@ let meshPending = [];   // 待授权配对请求（mesh-pair 查询）
 function pollMesh(){
   fetch("/api/mesh/status").then(r=>r.json()).then(m=>{
     mesh = m && m.enabled ? m : {enabled:false, peers:[]};
-    ensureLivePipe();   // 本地+远程设备同一管道，peer 增减触发重连
+    ensureLivePipe();   // 本机+远程设备同一管道，peer 增减触发重连
     renderMesh();
     autoAdopt();
     renderChips("logChips", logSel, "st_logsel");
@@ -647,6 +773,8 @@ function pollMesh(){
     syncWaveDevSel();
     updateKpis();
     syncFmPeers();  // 刷机弹窗目标节点下拉
+    if (view === "logs"){ syncLogGrid(); renderLogs(); }  // 远程设备上线立刻进工作台，不等下轮 status 轮询
+    if (view === "wave") syncWaveGrid();
   }).catch(()=>{});
   fetch("/api/cmd", {method:"POST", headers:{"Content-Type":"application/json"},
     body: JSON.stringify({cmd:"mesh-pair", pattern:"", action:""})}
@@ -693,37 +821,39 @@ function renderMesh(){
   for (const p of mesh.peers){
     const el = document.createElement("div");
     el.className = "cmp-dev";
+    // 设备行与日志窗格头部同一套按钮语言：日志（文字）+ 暂停/重连（图标）+ 刷机
     const devRows = (p.devices || []).map(d => `
       <div class="mdev" data-key="${esc(p.name)}/${esc(d.name)}" data-state="${esc(d.state)}">
-        <b class="mname">${esc(d.name)}</b>
+        <b class="mname" title="${t("日志页只看这台")}">${esc(d.name)}</b>
         <span class="chip ${esc(d.state)}">${esc(d.state)}</span>
-        <span class="dim">${esc(d.tty)}</span>
-        <span class="dim" style="font-size:11px">${esc(identLine(d.info))}</span>
+        <span class="mtty">${esc(d.tty)}</span>
+        <span class="mident">${esc(identLine(d.info))}</span>
         <span class="macts">
-          <button data-a="log">${t("日志")}</button>
-          <button data-a="toggle">${d.state === "collecting" ? "⏸" : "▶"}</button>
-          <button data-a="reo" title="${t("串口层软重连")}">⟳</button>
-          <button data-a="flash">${t("刷机…")}</button>
+          <button class="sbtn m-log">${t("日志")}</button>
+          <button class="iconbtn m-toggle" title="${t("暂停/恢复采集")}"></button>
+          <button class="iconbtn m-reo" title="${t("串口层软重连：立即关口→重开")}">⟳</button>
+          <button class="sbtn m-flash" title="${t("上传镜像刷机（镜像经加密信道推送到该节点）")}">${t("刷机")}</button>
         </span>
       </div>`).join("");
     const roBadge = p.access === "ro"
       ? `<span class="chip" style="color:var(--amber);border-color:var(--amber)" title="${t("该节点以只读模式接入：状态/日志/身份可读，暂停/刷机/重置/隧道等写操作会被拒绝")}">🔒 ${t("只读")}</span>` : "";
     el.innerHTML = `<div class="hd2"><b>${esc(p.name)}</b><span class="dim">${esc(p.id)} · ${esc(p.addr)}</span>` +
       roBadge +
-      `<span class="chip ${p.state === "online" ? "collecting" : "paused"}" style="margin-left:8px">${esc(p.state)}</span>` +
-      `<span class="dim" style="margin-left:auto">${p.state === "online" ? p.latency_ms + "ms" : ""}</span></div>` +
+      `<span class="chip ${p.state === "online" ? "collecting" : "paused"}">${esc(p.state)}</span>` +
+      `<span class="dim num" style="margin-left:auto">${p.state === "online" ? p.latency_ms + "ms" : ""}</span></div>` +
       (devRows || '<div class="dim" style="padding:8px 10px">' + t("（无设备接入）") + '</div>') +
       (p.err ? `<div class="dim" style="padding:2px 10px 8px">⚠ ${esc(p.err)}</div>` : "");
     el.querySelectorAll(".mdev").forEach(dv => {
       const key = dv.dataset.key, pn = key.slice(0, key.indexOf("/")), dn = key.slice(key.indexOf("/")+1);
       const anchor = "^" + dn.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$";
-      dv.querySelector('.mname').onclick = () => gotoLogs(key);
-      dv.querySelector('[data-a="log"]').onclick = () => gotoLogs(key);
+      dv.querySelector(".mname").onclick = () => gotoLogs(key);
+      dv.querySelector(".m-log").onclick = () => gotoLogs(key);
       const collecting = dv.dataset.state === "collecting";
-      dv.querySelector('[data-a="toggle"]').onclick = () =>
-        cmd(collecting ? "pause" : "resume", anchor, "", {peer: pn});
-      dv.querySelector('[data-a="reo"]').onclick = () => cmd("reopen", anchor, "", {peer: pn});
-      dv.querySelector('[data-a="flash"]').onclick = () => openFlash(dn, pn);
+      const tog = dv.querySelector(".m-toggle");
+      tog.textContent = collecting ? "⏸" : "▶";
+      tog.onclick = () => cmd(collecting ? "pause" : "resume", anchor, "", {peer: pn});
+      dv.querySelector(".m-reo").onclick = () => cmd("reopen", anchor, "", {peer: pn});
+      dv.querySelector(".m-flash").onclick = () => openFlash(dn, pn);
     });
     row.appendChild(el);
   }
@@ -751,55 +881,82 @@ function renderCards(){
     el.className = "card";
     el.dataset.dev = d.name;
     el.title = t("点击卡片") + " = " + t("日志页只看这台");
+    // 常用操作直接外显（暂停/日志/刷机），诊断与危险操作收进「更多」菜单，
+    // 卡片信息密度不因子弹堆叠失控
     el.innerHTML = `
       <div class="top">
         <span class="name">${esc(d.name)}</span>
         <span class="chip ${d.state}">${esc(d.state)}</span>
         ${d.proxy ? `<span class="badge">proxy ${esc(d.proxy)}</span>` : ""}
+        <span class="tgap"></span>
+        <span class="v-rate num"></span>
       </div>
       <div class="tty">${esc(d.tty)} · key=${esc(d.key)}</div>
       <div class="ident" title="${t("点击查看设备身份详情")}">${identLine(d.info)}</div>
       <div class="meta">
-        <span>${t("写入")} <b class="v-rate"></b></span>
         <span>${t("全量")} <b class="v-ssz"></b></span>
         <span>${t("事件")} <b class="v-esz"></b></span>
-        ${d.proxy_endpoint ? `<span>${t("端点")} <b>${esc(d.proxy_endpoint)}</b></span>` : ""}
-      </div>
-      <div class="health">
+        <span title="${t("设备目录全部日志（含轮转历史，受保留期约束）")}">${t("留存")} <b class="v-total"></b></span>
         <span class="h-silent"><span class="dim">${t("静默")}</span> <b>—</b></span>
         <span class="h-reopen"><span class="dim">${t("重开")}</span> <b>0</b></span>
-        <canvas class="spark" width="240" height="52"></canvas>
       </div>
+      <canvas class="spark" width="240" height="52"></canvas>
       <div class="acts">
-        <button data-a="toggle">${d.state === "collecting" ? t("⏸ 暂停") : t("▶ 恢复")}</button>
-        <button data-a="proxy">${d.proxy ? t("停代理") : t("开代理")}</button>
-        <button data-a="rel" title="${t("临时让出串口 5 分钟（外部工具可用）")}">${t("让口 5")}m</button>
-        <button data-a="reo" title="${t("串口层软重连：立即关口→重开（透传会话会断开重连）")}">${t("软重连")}</button>
-        <button data-a="rst" class="danger" title="USB ${t("层重枚举设备节点（需管理员，非提权守护会弹")} UAC）">USB ${t("重置")}</button>
-        <button data-a="flash">${t("刷机…")}</button>
+        <button class="btn sm a-toggle">${d.state === "collecting" ? t("⏸ 暂停") : t("▶ 恢复")}</button>
+        <button class="btn sm a-logs">${t("日志")}</button>
+        <button class="btn sm a-flash">${t("刷机…")}</button>
+        <button class="btn sm ghost a-more">${t("更多")} ▾</button>
+        <span class="menu hidden">
+          <button class="mi a-proxy">${d.proxy ? t("停代理") : t("开代理")}</button>
+          <button class="mi a-rel" title="${t("临时让出串口 5 分钟（外部工具可用）")}">${t("让口 5 分钟")}</button>
+          <button class="mi a-reo" title="${t("串口层软重连：立即关口→重开（透传会话会断开重连）")}">${t("软重连")}</button>
+          <button class="mi a-wave">${t("看波形")}</button>
+          <button class="mi a-ident">${t("设备身份…")}</button>
+          <div class="msep"></div>
+          <button class="mi danger a-rst" title="USB ${t("层重枚举设备节点（需管理员，非提权守护会弹")} UAC）">USB ${t("重置…")}</button>
+        </span>
       </div>`;
+    const anchor = "^" + d.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$";
     // 整卡可点跳日志页（操作按钮阻止冒泡，避免按"暂停"顺带换页）
     el.onclick = () => gotoLogs(d.name);
-    el.querySelector(".name").onclick = e => { e.stopPropagation(); gotoLogs(d.name); };
     el.querySelector(".ident").onclick = e => { e.stopPropagation(); openDevModal(d.name); };
-    el.querySelector('[data-a="toggle"]').onclick = e => { e.stopPropagation(); cmd(
-      d.state === "collecting" ? "pause" : "resume", "^" + d.name.replace(/[.*+?^${}()|[\]\\]/g,"\\$&") + "$"); };
-    el.querySelector('[data-a="proxy"]').onclick = e => { e.stopPropagation();
-      d.proxy ? cmd("proxy", "^"+d.name.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"$", "stop")
-              : cmd("proxy", d.key); };
-    const anchor = "^" + d.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$";
-    el.querySelector('[data-a="rel"]').onclick = e => { e.stopPropagation();
-      cmd("release", anchor, "", {for_ms: 300000}); };
-    el.querySelector('[data-a="reo"]').onclick = e => { e.stopPropagation(); cmd("reopen", anchor); };
-    el.querySelector('[data-a="rst"]').onclick = e => { e.stopPropagation();
+    el.querySelector(".a-toggle").onclick = e => { e.stopPropagation(); cmd(
+      d.state === "collecting" ? "pause" : "resume", anchor); };
+    el.querySelector(".a-logs").onclick = e => { e.stopPropagation(); gotoLogs(d.name); };
+    el.querySelector(".a-flash").onclick = e => { e.stopPropagation(); openFlash(d.name); };
+    el.querySelector(".a-more").onclick = e => { e.stopPropagation(); toggleMenu(el.querySelector(".menu")); };
+    const menu = el.querySelector(".menu");
+    menu.onclick = e => e.stopPropagation();
+    menu.querySelector(".a-proxy").onclick = () => { closeAllMenus();
+      d.proxy ? cmd("proxy", anchor, "stop") : cmd("proxy", d.key); };
+    menu.querySelector(".a-rel").onclick = () => { closeAllMenus(); cmd("release", anchor, "", {for_ms: 300000}); };
+    menu.querySelector(".a-reo").onclick = () => { closeAllMenus(); cmd("reopen", anchor); };
+    menu.querySelector(".a-wave").onclick = () => { closeAllMenus();
+      waveSel.add(d.name); localStorage.setItem("st_wavesel", JSON.stringify([...waveSel]));
+      renderChips("waveChips", waveSel, "st_wavesel");
+      waveBigDev = d.name; setWaveMode("big"); setView("wave"); };
+    menu.querySelector(".a-ident").onclick = () => { closeAllMenus(); openDevModal(d.name); };
+    menu.querySelector(".a-rst").onclick = () => { closeAllMenus();
       if (confirm("USB " + t("重置") + " " + d.name + "？\n" + t("重枚举设备节点（守护进程未提权时会弹") + " UAC" + t("），采集会短暂中断。")))
         cmd("reset", anchor); };
-    el.querySelector('[data-a="flash"]').onclick = e => { e.stopPropagation(); openFlash(d.name); };
     c.appendChild(el);
   }
   updateVolatile();
 }
 let cardSig = "";
+
+// —— 卡片「更多」弹出菜单：整页只开一个，点外部/Esc 关闭 ——
+function toggleMenu(m){
+  const wasOpen = !m.classList.contains("hidden");
+  closeAllMenus();
+  if (!wasOpen) m.classList.remove("hidden");
+}
+function closeAllMenus(){
+  document.querySelectorAll(".card .menu").forEach(m => m.classList.add("hidden"));
+}
+document.addEventListener("click", e => {
+  if (!e.target.closest(".menu") && !e.target.closest(".a-more")) closeAllMenus();
+});
 
 // updateVolatile: 每秒仅刷新数字（速率/体积/健康/迷你图），DOM 节点不动。
 function updateVolatile(){
@@ -810,6 +967,7 @@ function updateVolatile(){
     card.querySelector(".v-rate").textContent = (rate[d.name]||0) + " B/s";
     card.querySelector(".v-ssz").textContent = fmtKB(d.serial_size);
     card.querySelector(".v-esz").textContent = fmtKB(d.events_size);
+    card.querySelector(".v-total").textContent = fmtKB(d.serial_bytes || d.serial_size);
     // 健康指标：静默时长（最近读到字节距今）与断线重开次数（opens-1）
     const silent = d.last_data ? now - d.last_data : null;
     const hs = card.querySelector(".h-silent"), hr = card.querySelector(".h-reopen");
@@ -886,6 +1044,8 @@ function updateKpis(){
 }
 $("kBadK").onclick = () => { const bad = unhealthyKeys(Date.now()); if (bad.length) gotoLogsKeys(bad); };
 $("kDevK").onclick = $("kColK").onclick = () => gotoLogsKeys(allDevKeys());
+$("kEvK").onclick = () => { const p = document.querySelector("#view-dash .dashgrid .panel");
+  if (p && view === "dash") p.scrollIntoView({behavior: "smooth", block: "nearest"}); else setView("dash"); };
 $("kMeshK").onclick = () => { const el = $("meshPanel");
   if (el && el.style.display !== "none") el.scrollIntoView({behavior: "smooth", block: "nearest"}); };
 
@@ -916,7 +1076,9 @@ function cmd(c, pattern, action, extra){
 }
 
 // —— 刷机模态：上传镜像/args → POST /api/flash → SSE 进度流 ——
-let fmES = null;
+// 双模式（镜像文件 / ESP-IDF flasher_args.json）+ 拖放 + 已选文件列表；
+// 镜像清单由 fmBinFiles 持有（列表 ✕ 可移除），提交时打包进表单。
+let fmES = null, fmBinFiles = [];
 function anchorRe(name){ return "^" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$"; }
 function syncFmPeers(){
   const sel = $("fmPeer"), cur = sel.value;
@@ -926,11 +1088,61 @@ function syncFmPeers(){
   sel.innerHTML = html;
   if ([...sel.options].some(o=>o.value === cur)) sel.value = cur;
 }
+function setFmMode(m){
+  for (const b of document.querySelectorAll("#fmMode .nv")) b.classList.toggle("on", b.dataset.m === m);
+  $("fmBinsWrap").classList.toggle("hidden", m !== "bins");
+  $("fmArgsWrap").classList.toggle("hidden", m !== "args");
+}
+for (const b of document.querySelectorAll("#fmMode .nv"))
+  b.onclick = () => setFmMode(b.dataset.m);
+function renderFmList(){
+  const el = $("fmList");
+  el.innerHTML = fmBinFiles.map((f, i) =>
+    `<div class="fitem"><span>${esc(f.name)}</span><span class="fsz num">${fmtKB(f.size)}</span>` +
+    `<span class="fx" data-i="${i}" title="${t("移除")}">✕</span></div>`).join("");
+  el.querySelectorAll(".fx").forEach(x => x.onclick = () => {
+    fmBinFiles.splice(+x.dataset.i, 1); renderFmList();
+  });
+  $("fmOffsets").placeholder = JSON.stringify(fmBinFiles.map(() => "0x0")) || '["0x0"]';
+}
+function wireDrop(zone, input, onFiles){
+  zone.onclick = () => input.click();
+  zone.ondragover = e => { e.preventDefault(); zone.classList.add("over"); };
+  zone.ondragleave = () => zone.classList.remove("over");
+  zone.ondrop = e => {
+    e.preventDefault(); zone.classList.remove("over");
+    if (e.dataTransfer && e.dataTransfer.files.length) onFiles(e.dataTransfer.files);
+  };
+}
+wireDrop($("fmDrop"), $("fmBins"), files => {
+  fmBinFiles = fmBinFiles.concat(Array.from(files));
+  renderFmList();
+});
+$("fmBins").onchange = () => {
+  fmBinFiles = fmBinFiles.concat(Array.from($("fmBins").files || []));
+  $("fmBins").value = ""; renderFmList();
+};
+wireDrop($("fmArgsDrop"), $("fmArgs"), files => {
+  if (files.length) { $("fmArgs").files = files; renderFmArgs(); }
+});
+$("fmArgs").onchange = renderFmArgs;
+function renderFmArgs(){
+  const f = ($("fmArgs").files || [])[0];
+  $("fmArgsList").innerHTML = f
+    ? `<div class="fitem"><span>${esc(f.name)}</span><span class="fsz num">${fmtKB(f.size)}</span>` +
+      `<span class="fx" title="${t("移除")}">✕</span></div>`
+    : "";
+  const fx = $("fmArgsList").querySelector(".fx");
+  if (fx) fx.onclick = () => { $("fmArgs").value = ""; renderFmArgs(); };
+}
 function openFlash(name, peer){
   $("fmDev").textContent = name ? "· " + name : "";
   $("fmPattern").value = name ? anchorRe(name) : "";
   $("fmPeer").value = peer || "";
   $("fmLog").textContent = ""; $("fmState").textContent = ""; $("fmGo").disabled = false;
+  fmBinFiles = []; renderFmList();
+  $("fmArgs").value = ""; renderFmArgs();
+  setFmMode("bins");
   $("flashModal").classList.remove("hidden");
 }
 function fmState(t, bad){ $("fmState").textContent = t; $("fmState").style.color = bad ? "var(--red)" : "var(--dim)"; }
@@ -947,16 +1159,16 @@ $("fmGo").onclick = () => {
   fd.append("pattern", pattern);
   const peer = $("fmPeer").value;
   if (peer) fd.append("peer", peer);
-  const args = $("fmArgs").files[0];
-  if (args) fd.append("args_file", args, args.name || "flasher_args.json");
-  else {
-    const bins = Array.from($("fmBins").files || []);
-    if (!bins.length) { fmState(t("先选镜像文件或") + " flasher_args.json", true); return; }
-    for (const f of bins) fd.append("bins", f, f.name);
+  const args = ($("fmArgs").files || [])[0];
+  if (args && !$("fmArgsWrap").classList.contains("hidden")) {
+    fd.append("args_file", args, args.name || "flasher_args.json");
+  } else {
+    if (!fmBinFiles.length) { fmState(t("先选镜像文件或") + " flasher_args.json", true); return; }
+    for (const f of fmBinFiles) fd.append("bins", f, f.name);
     const off = $("fmOffsets").value.trim();
     if (off) fd.append("offsets", off);
   }
-  const fnames = args ? [args.name || "flasher_args.json"] : Array.from($("fmBins").files || []).map(f => f.name);
+  const fnames = (args && !$("fmArgsWrap").classList.contains("hidden")) ? [args.name || "flasher_args.json"] : fmBinFiles.map(f => f.name);
   if (!confirm(t("确认刷写：") + (peer ? peer + " · " : "") + pattern + "\n" + fnames.join(", "))) return;
   $("fmGo").disabled = true; fmState(peer ? t("上传中（随后经加密信道推送到") + " " + peer + "）…" : t("上传中…"));
   fetch("/api/flash", {method:"POST", body:fd}).then(r=>{
@@ -977,13 +1189,100 @@ $("fmGo").onclick = () => {
   }).catch(e=>{ fmState("✗ " + e, true); $("fmGo").disabled = false; });
 };
 
+// —— 运行配置速览（只读）：/api/config（cli 层组装脱敏；端点缺失 = 入口隐藏）——
+// 面板不提供写配置：改配置 = 编辑 config.json + 重启守护，这里只做"看得见"。
+let cfgInfo = null;
+function cfgEsc(v){
+  if (v === undefined || v === null || v === "") return '<span class="muted">—</span>';
+  return esc(String(v));
+}
+function cfgRow(label, val){
+  return `<div class="cfgrow"><span class="ck1">${label}</span><span class="cfgval">${val}</span></div>`;
+}
+function cfgGroups(){
+  const c = cfgInfo || {}, m = c.mesh || {};
+  const off = '<span class="muted">' + t("关") + '</span>';
+  const extraN = (c.signatures_extra || []).length;
+  return `
+    <div class="cgroup"><div class="cgt">${t("日志与留存")}</div>
+      ${cfgRow(t("日志根目录 root"), cfgEsc(c.root))}
+      ${cfgRow(t("轮转 rotate_max_mb"), c.rotate_mb ? c.rotate_mb + " MB" : cfgEsc(c.rotate_mb))}
+      ${cfgRow(t("保留 retention_days"), c.retention_days > 0 ? c.retention_days + " " + t("天") : t("永久"))}
+      ${cfgRow(t("波特率 baud"), cfgEsc(c.baud))}
+      ${cfgRow(t("轮询 poll_interval_ms"), cfgEsc(c.poll_ms))}
+      ${cfgRow(t("静默看门狗"), c.silent_reopen_s > 0 ? c.silent_reopen_s + " s" : off + t("（默认关——误开会让安静板复位循环）"))}
+      ${cfgRow(t("断线重连退避"), (c.reopen_min_s||0) + "s ~ " + (c.reopen_max_s||0) + "s")}
+    </div>
+    <div class="cgroup"><div class="cgt">${t("刷机编排")}</div>
+      ${cfgRow("esptool", c.esptool ? cfgEsc(c.esptool) : '<span class="muted">' + t("自动发现 PATH/Espressif 环境") + '</span>')}
+      ${cfgRow(t("刷机波特率 flash_baud"), c.flash_baud > 0 ? cfgEsc(c.flash_baud) : '<span class="muted">' + t("esptool 默认") + '</span>')}
+      ${cfgRow(t("单台超时 flash_timeout_s"), c.flash_timeout_s > 0 ? c.flash_timeout_s + " s" : t("不限时"))}
+      ${cfgRow(t("透传过滤 proxy_tap_exclude"), cfgEsc(c.proxy_tap_exclude))}
+      ${cfgRow("DTR " + t("保持规则"), (c.dtr_hold || []).length ? cfgEsc((c.dtr_hold || []).join("  ")) : '<span class="muted">' + t("默认全释放") + '</span>')}
+    </div>
+    <div class="cgroup"><div class="cgt">${t("事件与命名")}</div>
+      ${cfgRow(t("内建签名"), (c.builtin_signatures || 0) + " " + t("条") + (extraN ? " + " + extraN + " " + t("条自定义") : ""))}
+      ${extraN ? cfgRow(t("自定义签名"), cfgEsc((c.signatures_extra || []).join("  "))) : ""}
+      ${(c.names || []).length ? cfgRow(t("命名规则 names"), cfgEsc((c.names || []).join("  "))) : ""}
+      ${(c.exclude || []).length ? cfgRow(t("排除规则 exclude"), cfgEsc((c.exclude || []).join("  "))) : ""}
+      ${Object.keys(c.elf_map || {}).length ? cfgRow("elf_map", cfgEsc(Object.entries(c.elf_map).map(([k2, v2]) => k2 + " → " + v2).join("  "))) : ""}
+    </div>
+    <div class="cgroup"><div class="cgt">mesh ${t("多机互联")}</div>
+      ${cfgRow(t("状态"), m.enabled ? t("已启用") : off)}
+      ${m.enabled ? cfgRow(t("节点名"), m.name ? cfgEsc(m.name) : '<span class="muted">' + t("主机名") + '</span>') : ""}
+      ${m.enabled ? cfgRow(t("端口 mesh_port"), cfgEsc(m.port)) : ""}
+      ${m.enabled ? cfgRow(t("本节点接入权限"), m.access === "ro" ? t("只读 ro") : t("读写 rw")) : ""}
+      ${m.enabled ? cfgRow(t("配对"), m.auto_approve ? t("同密钥自动批准") : t("需手动批准（mesh pair/approve）")) : ""}
+      ${m.enabled ? cfgRow(t("静态种子"), (m.peers || []).length ? cfgEsc((m.peers || []).join("  ")) : '<span class="muted">—</span>') : ""}
+      ${m.enabled ? cfgRow("key " + t("指纹"), cfgEsc(m.key_fp)) : ""}
+    </div>
+    <div id="cfgFoot">serialtap v${cfgEsc(c.version)} · ${t("Web 面板")} ${cfgEsc(c.web_addr)} · ${t("控制 socket")} ${cfgEsc(c.control_socket)}${c.config_file ? "<br>" + t("配置文件") + " " + cfgEsc(c.config_file) + " · " + t("修改后需重启守护生效") : ""}</div>`;
+}
+function renderCfgQuick(){
+  const panel = $("cfgPanel");
+  if (!cfgInfo){ panel.style.display = "none"; return; }
+  panel.style.display = "";
+  const c = cfgInfo, m = c.mesh || {};
+  const rows = [
+    [t("日志目录"), String(c.root || "—")],
+    [t("波特率 / 轮询"), (c.baud||0) + " / " + (c.poll_ms||0) + "ms"],
+    [t("轮转 / 保留"), (c.rotate_mb||0) + "MB / " + (c.retention_days > 0 ? c.retention_days + " " + t("天") : t("永久"))],
+    ["mesh", m.enabled ? (m.name || "?") + " · " + (m.port||"") : t("关闭")],
+    ["esptool", c.esptool || t("自动发现")],
+    ["serialtap", "v" + (c.version || "—")],
+  ];
+  $("cfgQuick").innerHTML = rows.map(([k2, v2]) =>
+    `<div class="cfgrow"><span class="ck1">${k2}</span><span class="ck2" title="${esc(v2)}">${esc(v2)}</span></div>`).join("");
+}
+function loadCfg(){
+  fetch("/api/config").then(r=>r.json()).then(j=>{
+    if (j && j.ok && j.config){
+      cfgInfo = j.config;
+      renderCfgQuick();
+    } else {
+      cfgInfo = null;
+      $("btnConfig").classList.add("hidden");
+    }
+  }).catch(() => { $("btnConfig").classList.add("hidden"); });
+}
+function openCfg(){
+  const m = $("cfgModal");
+  if (!m.classList.contains("hidden")){ m.classList.add("hidden"); return; }
+  if (cfgInfo) $("cfgBody").innerHTML = cfgGroups();
+  m.classList.remove("hidden");
+}
+$("btnConfig").onclick = openCfg;
+$("cfgMore").onclick = openCfg;
+$("cfgClose").onclick = () => $("cfgModal").classList.add("hidden");
+loadCfg();
+
 // ═══════════ 日志视图：多机并排 / 合并 ═══════════
 let logGridSig = "", logRenderTimer = null;
 function selLogKeys(){ return allDevKeys().filter(k => logSel.has(k)); }
 function syncLogGrid(){
   if (view !== "logs") return;
   const row = $("logGrid"), keys = selLogKeys();
-  const merge = $("logLayout").value === "merge";
+  const merge = logLayoutMode === "merge";
   row.classList.toggle("hidden", merge);
   $("logMerge").classList.toggle("hidden", !merge);
   row.classList.toggle("solo", !merge && keys.length === 1);
@@ -1000,16 +1299,20 @@ function syncLogGrid(){
     const m = devMeta(k);
     const el = document.createElement("div");
     el.className = "lpane";
-    el.innerHTML = `<div class="lhd"><b style="color:${devColor(k)};cursor:pointer" title="${t("只看这台（其余取消勾选）")}">${esc(m.name)}</b>` +
-      (m.remote ? `<span class="dim">⌗ ${esc(m.peer)}</span>` : `<span class="dim">${esc(m.tty)}</span>`) +
+    // 头部单行：色点 + 名（点击=只看这台）+ tty/peer + 状态 + 速率 + 常用动作；
+    // 刷机/波形用文字按钮（比单字清楚），暂停/重连/关闭用紧凑图标
+    el.innerHTML = `<div class="lhd">` +
+      `<i class="stdot" style="background:${devColor(k)}"></i>` +
+      `<b style="color:${devColor(k)}" title="${t("只看这台（其余取消勾选）")} · ${esc(m.remote ? m.peer : m.tty)}">${esc(m.name)}</b>` +
+      (m.remote ? `<span class="ltty">⌗ ${esc(m.peer)}</span>` : `<span class="ltty">${esc(m.tty)}</span>`) +
       `<span class="chip lstate"></span>` +
-      `<span class="dim lrate" style="font-size:11px"></span>` +
+      `<span class="dim lrate num" style="font-size:11px"></span>` +
       `<span class="lacts2">` +
-      `<button class="la-toggle" title="${t("暂停/恢复采集")}"></button>` +
-      `<button class="la-reo" title="${t("串口层软重连：立即关口→重开")}">⟳</button>` +
-      `<button class="la-flash" title="${t("上传镜像刷机")}">${t("刷")}</button>` +
-      `<button class="lwave" title="${t("切到波形页单看这台")}">${t("波")}</button>` +
-      `<button class="lx" title="${t("取消勾选，关掉这个窗格")}">✕</button></span></div><pre></pre>`;
+      `<button class="iconbtn la-toggle" title="${t("暂停/恢复采集")}"></button>` +
+      `<button class="iconbtn la-reo" title="${t("串口层软重连：立即关口→重开")}">⟳</button>` +
+      `<button class="sbtn la-flash" title="${t("上传镜像刷机")}">${t("刷机")}</button>` +
+      `<button class="sbtn lwave" title="${t("切到波形页单看这台")}">${t("波形")}</button>` +
+      `<button class="iconbtn lx" title="${t("取消勾选，关掉这个窗格")}">✕</button></span></div><pre></pre>`;
     const anchor = "^" + m.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$";
     const peerArg = m.remote ? {peer: m.peer} : undefined;
     el.querySelector(".lhd b").onclick = () => gotoLogs(k);
@@ -1041,7 +1344,7 @@ function scheduleLogRender(){
 }
 function renderLogs(){
   if (view !== "logs") return;
-  if ($("logLayout").value === "merge") renderMerge(); else renderGrid();
+  if (logLayoutMode === "merge") renderMerge(); else renderGrid();
 }
 function logMatcher(){
   const q = $("logSearch").value.trim();
@@ -1128,14 +1431,22 @@ function renderMerge(){
   if (stick) el.scrollTop = el.scrollHeight;
 }
 $("logSearch").oninput = () => renderLogs();
-// 布局/行数/时间窗持久化（重启浏览器后保持上次习惯）
-$("logLayout").value = localStorage.getItem("st_loglayout") || "grid";
+// 布局/行数/时间窗持久化（重启浏览器后保持上次习惯）；布局用分段控件
+let logLayoutMode = localStorage.getItem("st_loglayout") === "merge" ? "merge" : "grid";
+function syncLogLayoutSeg(){
+  for (const b of document.querySelectorAll("#logLayoutSeg .nv"))
+    b.classList.toggle("on", b.dataset.l === logLayoutMode);
+}
+for (const b of document.querySelectorAll("#logLayoutSeg .nv"))
+  b.onclick = () => {
+    logLayoutMode = b.dataset.l;
+    localStorage.setItem("st_loglayout", logLayoutMode);
+    syncLogLayoutSeg();
+    logGridSig = ""; syncLogGrid(); renderLogs();
+  };
+syncLogLayoutSeg();
 $("logLines").value = localStorage.getItem("st_loglines") || "200";
 $("waveWin").value = localStorage.getItem("st_wavewin") || "60";
-$("logLayout").onchange = () => {
-  localStorage.setItem("st_loglayout", $("logLayout").value);
-  logGridSig = ""; syncLogGrid();
-};
 $("logLines").onchange = () => { localStorage.setItem("st_loglines", $("logLines").value); renderLogs(); };
 $("waveWin").onchange = () => localStorage.setItem("st_wavewin", $("waveWin").value);
 // 全选/清空：多选的最短路径
@@ -1170,7 +1481,7 @@ $("btnExportLog").onclick = () => {
   if (!keys.length){ toast(t("✗ 未选择设备"), false); return; }
   const matcher = logMatcher();
   let out = "";
-  if ($("logLayout").value === "merge"){
+  if (logLayoutMode === "merge"){
     for (const e of mergeQ)
       if (logSel.has(e.d) && (!matcher || !e.l || matcher.test(e.l))) out += `[${e.d}] ${e.l}\n`;
   } else {
@@ -1824,14 +2135,15 @@ function pollEvents(){
 }
 setInterval(pollEvents, 5000); pollEvents();
 
-// —— 键盘直达：1/2/3 切视图、/ 聚焦日志搜索、F 大图冻结、Esc 关弹窗/退出输入 ——
+// —— 键盘直达：1/2/3 切视图、/ 聚焦日志搜索、c 配置速览、F 大图冻结、Esc 关弹窗/菜单 ——
 // 实干工具的手不离键盘路径；输入态（input/select/textarea）与弹窗打开时不抢键。
-const MODAL_CLOSE = [["flashModal", "fmClose"], ["xtrModal", "xtrClose"], ["devModal", "dmClose"], ["helpModal", "helpClose"]];
+const MODAL_CLOSE = [["flashModal", "fmClose"], ["xtrModal", "xtrClose"], ["devModal", "dmClose"], ["helpModal", "helpClose"], ["cfgModal", "cfgClose"]];
 document.addEventListener("keydown", e => {
   const tag = (e.target.tagName || "").toLowerCase();
   const typing = tag === "input" || tag === "select" || tag === "textarea" || e.target.isContentEditable;
   if (e.key === "Escape"){
     if (typing){ e.target.blur(); return; }
+    closeAllMenus();
     for (const [mid, bid] of MODAL_CLOSE)
       if (!$(mid).classList.contains("hidden")){ $(bid).onclick(); return; }
     return;
@@ -1842,6 +2154,7 @@ document.addEventListener("keydown", e => {
   else if (e.key === "2") setView("wave");
   else if (e.key === "3") setView("dash");
   else if (e.key === "/"){ e.preventDefault(); setView("logs"); $("logSearch").focus(); $("logSearch").select(); }
+  else if (e.key === "c" || e.key === "C") openCfg();
   else if (e.key === "f" || e.key === "F"){ if (view === "wave" && waveMode === "big") $("waveFreeze").onclick(); }
 });
 

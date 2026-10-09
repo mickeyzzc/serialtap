@@ -4,6 +4,7 @@ package cli
 import (
 	"bufio"
 	crand "crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -486,6 +487,7 @@ func cmdRun(args []string) error {
 			}),
 		)
 	}
+	webOpts = append(webOpts, web.WithInfo(panelInfo(cfg, *cfgPath, sockPath)))
 	webSrv := web.Start(cfg.WebAddr, cfg.Root, d.Status, webCmd, stdoutLog, webOpts...)
 	defer webSrv.Close()
 
@@ -537,6 +539,55 @@ func cmdRun(args []string) error {
 	}
 	d.Shutdown()
 	return nil
+}
+
+// panelInfo: 面板 /api/config 的只读配置速览（web 包不理解 config 结构，
+// 在这层组装；密钥永不明文——只给 SHA-256 指纹前 8 位）。
+func panelInfo(cfg config.Config, cfgPath, sockPath string) map[string]any {
+	keyFP := ""
+	if cfg.MeshKey != "" {
+		fp := sha256.Sum256([]byte(cfg.MeshKey))
+		keyFP = fmt.Sprintf("%x", fp[:])[:8]
+	}
+	names := make([]string, 0, len(cfg.Names))
+	for _, n := range cfg.Names {
+		names = append(names, n.Match+" → "+n.Name)
+	}
+	info := map[string]any{
+		"version":            Version,
+		"config_file":        cfgPath,
+		"root":               cfg.Root,
+		"baud":               cfg.Baud,
+		"poll_ms":            cfg.PollMs,
+		"rotate_mb":          cfg.RotateMB,
+		"retention_days":     cfg.RetentionDays,
+		"silent_reopen_s":    cfg.SilentReopenS,
+		"reopen_min_s":       cfg.ReopenMinS,
+		"reopen_max_s":       cfg.ReopenMaxS,
+		"web_addr":           cfg.WebAddr,
+		"control_socket":     sockPath,
+		"esptool":            cfg.Esptool,
+		"flash_baud":         cfg.FlashBaud,
+		"flash_timeout_s":    cfg.FlashTimeoutS,
+		"exclude":            cfg.Exclude,
+		"names":              names,
+		"signatures_extra":   cfg.ExtraSigs,
+		"builtin_signatures": len(signature.New(nil).Names()),
+		"elf_map":            cfg.ElfMap,
+		"dtr_hold":           cfg.DTRHold,
+		"proxy_tap_exclude":  cfg.ProxyTapExclude,
+		"mesh": map[string]any{
+			"enabled":      cfg.MeshEnabled,
+			"name":         cfg.MeshName,
+			"port":         cfg.MeshPort,
+			"access":       cfg.MeshAccess,
+			"announce_s":   cfg.MeshAnnounceS,
+			"peers":        cfg.MeshPeers,
+			"auto_approve": cfg.MeshAutoApprove,
+			"key_fp":       keyFP,
+		},
+	}
+	return info
 }
 
 // stateZH: ctl 状态 → 托盘展示文案。

@@ -56,6 +56,8 @@ func newTestServer(t *testing.T) (*Server, *httptest.Server, *[]ctl.Request) {
 			s.handleIndex(w, r)
 		case r.URL.Path == "/api/status":
 			s.handleStatus(w, r)
+		case r.URL.Path == "/api/config":
+			s.handleConfig(w, r)
 		case r.URL.Path == "/api/events":
 			s.handleEvents(w, r)
 		case r.URL.Path == "/api/cmd":
@@ -441,5 +443,41 @@ func TestHandleCmdErrors(t *testing.T) {
 		} else if ok, _ := out["ok"].(bool); !ok {
 			t.Fatal("正常命令应回 ok:true")
 		}
+	}
+}
+
+// TestConfigEndpoint: /api/config 只读配置速览。未注入 = ok:false（前端隐藏
+// 配置入口）；注入 = 原样透出（脱敏在 cli 层组装时完成，web 不理解 config）。
+func TestConfigEndpoint(t *testing.T) {
+	s, ts, _ := newTestServer(t)
+	resp, err := ts.Client().Get(ts.URL + "/api/config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if ok, _ := out["ok"].(bool); ok {
+		t.Fatal("未注入 info 应 ok:false")
+	}
+
+	s.info = map[string]any{"version": "9.9.9", "mesh": map[string]any{"key_fp": "abcd1234"}}
+	resp, err = ts.Client().Get(ts.URL + "/api/config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out = nil
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if ok, _ := out["ok"].(bool); !ok {
+		t.Fatal("注入 info 后应 ok:true")
+	}
+	cfg, _ := out["config"].(map[string]any)
+	if cfg == nil || cfg["version"] != "9.9.9" {
+		t.Fatalf("config 载荷: %+v", out)
 	}
 }

@@ -77,6 +77,11 @@ type MeshBoarder func(peer, pattern string, all bool, spec board.Spec, out func(
 // Option: Start 的可选项（保持既有调用点签名不变）。
 type Option func(*Server)
 
+// WithInfo: 注入只读运行信息/配置速览（cli 层从 config 组装并做脱敏——
+// 密钥只给指纹）。面板 /api/config 原样透出；nil = 端点返回 ok:false，
+// 前端隐藏配置入口。
+func WithInfo(m map[string]any) Option { return func(s *Server) { s.info = m } }
+
 // WithFlasher: 启用面板刷机（上传镜像 → 代理刷写 → SSE 进度流）。
 func WithFlasher(f Flasher) Option { return func(s *Server) { s.flasher = f } }
 
@@ -92,11 +97,12 @@ type Server struct {
 	status      StatusProvider
 	commander   Commander
 	flasher     Flasher
-	mesh        MeshService // nil = mesh 未启用（聚合/远程尾随隐藏）
-	meshFlasher MeshFlasher // nil = 面板远程刷机不可用
-	boarder     Boarder     // nil = 面板深度识别不可用
-	meshBoarder MeshBoarder // nil = 面板远程深度识别不可用
-	job         flashJob    // 当前/最近一次刷机任务（单任务槽，opMu 天然串行）
+	mesh        MeshService    // nil = mesh 未启用（聚合/远程尾随隐藏）
+	meshFlasher MeshFlasher    // nil = 面板远程刷机不可用
+	boarder     Boarder        // nil = 面板深度识别不可用
+	meshBoarder MeshBoarder    // nil = 面板远程深度识别不可用
+	info        map[string]any // 只读配置速览（WithInfo；nil = /api/config 报 ok:false）
+	job         flashJob       // 当前/最近一次刷机任务（单任务槽，opMu 天然串行）
 	srv         *http.Server
 }
 
@@ -129,6 +135,7 @@ func Start(addr, root string, status StatusProvider, commander Commander,
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/api/status", s.handleStatus)
+	mux.HandleFunc("/api/config", s.handleConfig)
 	mux.HandleFunc("/api/events", s.handleEvents)
 	mux.HandleFunc("/api/cmd", s.handleCmd)
 	mux.HandleFunc("/api/flash", s.handleFlash)              // POST 上传镜像并启动刷写
@@ -181,6 +188,16 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store") // 面板升级后浏览器绝不端出旧页面
 	_, _ = w.Write(indexServed)
+}
+
+// handleConfig: 只读运行配置速览（内容由 cli 层组装脱敏，web 不理解 config
+// 结构——依赖单向）。未注入 = ok:false，前端隐藏配置入口。
+func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	if s.info == nil {
+		writeJSON(w, map[string]any{"ok": false})
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "config": s.info})
 }
 
 // —— 设备名安全：面板 URL 里的 name 必须是目录安全名（SanitizeName 产物）——
