@@ -30,19 +30,31 @@ import (
 //go:embed index.html
 var indexHTML []byte
 
+//go:embed i18n-en.json
+var i18nEN []byte
+
 // panelRev/indexServed: 面板自愈。服务端把嵌入 HTML 的指纹注入 <meta>，页面
 // 每次轮询 /api/status 比对自己的 meta 与服务端指纹——守护换装了新面板而浏
 // 览器还开着旧页（旧 JS 带着旧 bug 跑）时 1s 内自动刷新，不再依赖用户记得
 // 强刷。指纹只对含 meta 的页面生效（本版起的页面），无 meta 的旧页不动作，
-// 因此不可能刷新循环。
+// 因此不可能刷新循环。指纹覆盖 HTML 与 i18n 字典两份字节——补翻译同样触发
+// 旧页自愈。字典经 <head> 内联注入（window.I18N_EN），不另发请求。
 var (
-	panelRev    = fmt.Sprintf("%x", sha256.Sum256(indexHTML))[:8]
-	indexServed = injectPanelRev(indexHTML, panelRev)
+	panelRev    = panelRevOf(indexHTML, i18nEN)
+	indexServed = injectPanel(indexHTML, i18nEN, panelRev)
 )
 
-func injectPanelRev(b []byte, rev string) []byte {
-	return []byte(strings.Replace(string(b), "</head>",
-		`<meta name="panel-rev" content="`+rev+`"></head>`, 1))
+func panelRevOf(html, dict []byte) string {
+	h := sha256.New()
+	_, _ = h.Write(html)
+	_, _ = h.Write(dict)
+	return fmt.Sprintf("%x", h.Sum(nil))[:8]
+}
+
+func injectPanel(html, dict []byte, rev string) []byte {
+	return []byte(strings.Replace(string(html), "</head>",
+		`<meta name="panel-rev" content="`+rev+`">`+
+			`<script>window.I18N_EN=`+string(dict)+`</script></head>`, 1))
 }
 
 // Commander: 单响应命令通道（status/pause/resume/proxy），由 CLI 层桥接到

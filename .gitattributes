@@ -1,0 +1,5 @@
+# 面板资源按 LF 钉死：go:embed 原样入二进制，CRLF 会让 (a) 各平台构建的面板
+# 字节/panel-rev 不一致 (b) i18n 多行键与字典 
+ 不匹配
+internal/web/index.html text eol=lf
+internal/web/i18n-en.json text eol=lf
