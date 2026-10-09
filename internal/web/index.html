@@ -187,6 +187,7 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
   </nav>
   <span class="dim" id="root">—</span>
   <span class="dim" id="conn"></span>
+  <button id="btnLang" title="切换语言 · Switch language">EN</button>
   <button id="btnHelp" title="帮助 · 教程（仪表盘/多机日志/波形/提取）">?</button>
   <span id="toast"></span>
 </header>
@@ -423,6 +424,32 @@ const fmtAgo = ms => { if (!ms || ms < 0) return "—";
   const s = Math.floor(ms/1000);
   if (s < 90) return s+"s"; if (s < 5400) return Math.floor(s/60)+"m"; return Math.floor(s/3600)+"h"; };
 
+// —— i18n（中/英）：中文原文即键（gettext 风格），字典由服务端注入 ——
+// window.I18N_EN（见 web.go injectPanel）。首访按浏览器语言，手动切换持久化
+// st_lang；切换 = 改存储 + 整页 reload——面板本就靠 reload 自愈，静态壳只在
+// 启动时翻译一遍（此刻动态容器还空着，全是静态文案），无需回译状态机。
+// 动态模板一律 t("原文")；t 只做查表，找不到就回原文（zh 恒等）。
+let LANG = localStorage.getItem("st_lang") ||
+  ((navigator.language || "zh").toLowerCase().startsWith("zh") ? "zh" : "en");
+function t(s){ const d = LANG === "en" ? (window.I18N_EN || {}) : null; return (d && d[s]) || s; }
+function applyStaticI18n(){
+  document.documentElement.lang = LANG === "en" ? "en" : "zh-CN";
+  document.title = t("serialtap " + t("· 观测面板"));
+  if (LANG !== "en" || !window.I18N_EN) return;
+  const dic = window.I18N_EN, han = /[\u4e00-\u9fff]/;
+  const tr = s => { const k = (s || "").trim(); return k && han.test(k) && dic[k] ? dic[k] : null; };
+  for (const n of document.querySelectorAll("body *")){
+    if (/^(SCRIPT|STYLE|CANVAS)$/.test(n.tagName)) continue;
+    for (const c of n.childNodes)
+      if (c.nodeType === 3){ const v = tr(c.nodeValue); if (v) c.nodeValue = v; }
+    for (const a of ["title", "placeholder"])
+      if (n.hasAttribute(a)){ const v = tr(n.getAttribute(a)); if (v) n.setAttribute(a, v); }
+  }
+}
+applyStaticI18n();
+$("btnLang").textContent = LANG === "en" ? t("中文") : "EN";
+$("btnLang").onclick = () => { localStorage.setItem("st_lang", LANG === "en" ? "zh" : "en"); location.reload(); };
+
 let status = {devices:[]}, prevSize = {}, rate = {}, rateHist = {};
 const logs = {};             // "dev/serial" → 日志缓冲（常开复用 SSE 后台喂，换页不丢）
 let knownDevs = new Set();   // 见过的设备键：新设备自动进多选（默认勾上）
@@ -504,14 +531,14 @@ function renderChips(cid, sel, storeKey){
   if (sig === chipSig[cid]) return;
   chipSig[cid] = sig;
   el.innerHTML = "";
-  if (!keys.length){ el.innerHTML = '<span class="dim">暂无设备</span>'; return; }
+  if (!keys.length){ el.innerHTML = '<span class="dim">' + t("暂无设备") + '</span>'; return; }
   for (const k of keys){
     const m = devMeta(k);
     const b = document.createElement("span");
     b.className = "dchip" + (sel.has(k) ? " on" : "") + (m.state === "flashing" ? " st-flashing" : "");
     b.innerHTML = `<i class="stdot" style="background:${stDotColor(m.state)}"></i>` +
       esc((m.remote ? "⌗ " : "") + m.name + (m.remote ? " · " + m.peer : ""));
-    b.title = (m.tty ? m.tty + " · " : "") + (m.state || "状态未知");
+    b.title = (m.tty ? m.tty + " · " : "") + (m.state || t("状态未知"));
     b.onclick = () => {
       if (sel.has(k)) sel.delete(k); else sel.add(k);
       localStorage.setItem(storeKey, JSON.stringify([...sel]));
@@ -561,7 +588,7 @@ let mergeQ = [], mergeTail = {}, mergeSeq = 0;   // 合并流：到达序入队�
 
 function pollStatus(){
   fetch("/api/status").then(r=>r.json()).then(s=>{
-    $("conn").textContent = "● 已连接";
+    $("conn").textContent = t("● 已连接");
     // 面板自愈：守护已换装新面板而本页还是旧 JS 时自动刷新（只对带指纹的
     // 页面生效——本版起的页面都有 meta；无 meta 的更旧页面不动，不会循环）
     const meta = document.querySelector('meta[name="panel-rev"]');
@@ -584,7 +611,7 @@ function pollStatus(){
     updateKpis();
     if (view === "logs"){ syncLogGrid(); renderLogs(); }
     if (view === "wave") syncWaveGrid();
-  }).catch(()=>{ $("conn").textContent = "○ 守护进程不可达"; });
+  }).catch(()=>{ $("conn").textContent = t("○ 守护进程不可达"); });
 }
 setInterval(pollStatus, 1000); pollStatus();
 
@@ -618,24 +645,24 @@ function renderMesh(){
   if (sig === meshSig) return;
   meshSig = sig;
   if (!mesh.peers.length){
-    row.innerHTML = '<div class="dim" style="padding:6px 0">暂无 peer —— 其它 PC 配同一 mesh_key 并 mesh_enabled=true 后自动出现（UDP 广播被隔离时配 mesh_peers 静态种子）</div>';
-    $("meshSum").textContent = "同密钥 LAN 节点";
+    row.innerHTML = '<div class="dim" style="padding:6px 0">' + t("暂无") + ' peer ' + t("—— 其它") + ' PC ' + t("配同一") + ' mesh_key ' + t("并") + ' mesh_enabled=true ' + t("后自动出现（") + 'UDP ' + t("广播被隔离时配") + ' mesh_peers ' + t("静态种子）") + '</div>';
+    $("meshSum").textContent = t("同密钥") + " LAN " + t("节点");
     return;
   }
-  $("meshSum").textContent = `${mesh.peers.length} 节点 · ${mesh.peers.filter(p=>p.state==="online").length} 在线` +
-    (meshPending.length ? ` · ${meshPending.length} 待授权` : "");
+  $("meshSum").textContent = `${mesh.peers.length} ${t("节点 ·")} ${mesh.peers.filter(p=>p.state==="online").length} ${t("在线")}` +
+    (meshPending.length ? ` · ${meshPending.length} ${t("待授权")}` : "");
   row.innerHTML = "";
   if (meshPending.length){
     const banner = document.createElement("div");
     banner.className = "cmp-dev";
-    banner.innerHTML = `<div class="hd2"><b>待授权配对</b><span class="dim">同密钥节点请求链接（批准后放行全部操作）</span></div>` +
+    banner.innerHTML = `<div class="hd2"><b>${t("待授权配对")}</b><span class="dim">${t("同密钥节点请求链接（批准后放行全部操作）")}</span></div>` +
       meshPending.map(p=>`
       <div class="mdev" data-pid="${esc(p.id)}">
         <b class="mname">${esc(p.name)||"?"}</b>
         <span class="dim">${esc(p.id)} · @${esc(p.addr)}</span>
         <span class="macts">
-          <button data-a="ok">✓ 批准</button>
-          <button data-a="no" class="danger">✗ 拒绝</button>
+          <button data-a="ok">${t("✓ 批准")}</button>
+          <button data-a="no" class="danger">${t("✗ 拒绝")}</button>
         </span>
       </div>`).join("");
     banner.querySelectorAll(".mdev").forEach(dv=>{
@@ -655,19 +682,19 @@ function renderMesh(){
         <span class="dim">${esc(d.tty)}</span>
         <span class="dim" style="font-size:11px">${esc(identLine(d.info))}</span>
         <span class="macts">
-          <button data-a="log">日志</button>
+          <button data-a="log">${t("日志")}</button>
           <button data-a="toggle">${d.state === "collecting" ? "⏸" : "▶"}</button>
-          <button data-a="reo" title="串口层软重连">⟳</button>
-          <button data-a="flash">刷机…</button>
+          <button data-a="reo" title="${t("串口层软重连")}">⟳</button>
+          <button data-a="flash">${t("刷机…")}</button>
         </span>
       </div>`).join("");
     const roBadge = p.access === "ro"
-      ? `<span class="chip" style="color:var(--amber);border-color:var(--amber)" title="该节点以只读模式接入：状态/日志/身份可读，暂停/刷机/重置/隧道等写操作会被拒绝">🔒 只读</span>` : "";
+      ? `<span class="chip" style="color:var(--amber);border-color:var(--amber)" title="${t("该节点以只读模式接入：状态/日志/身份可读，暂停/刷机/重置/隧道等写操作会被拒绝")}">🔒 ${t("只读")}</span>` : "";
     el.innerHTML = `<div class="hd2"><b>${esc(p.name)}</b><span class="dim">${esc(p.id)} · ${esc(p.addr)}</span>` +
       roBadge +
       `<span class="chip ${p.state === "online" ? "collecting" : "paused"}" style="margin-left:8px">${esc(p.state)}</span>` +
       `<span class="dim" style="margin-left:auto">${p.state === "online" ? p.latency_ms + "ms" : ""}</span></div>` +
-      (devRows || '<div class="dim" style="padding:8px 10px">（无设备接入）</div>') +
+      (devRows || '<div class="dim" style="padding:8px 10px">' + t("（无设备接入）") + '</div>') +
       (p.err ? `<div class="dim" style="padding:2px 10px 8px">⚠ ${esc(p.err)}</div>` : "");
     el.querySelectorAll(".mdev").forEach(dv => {
       const key = dv.dataset.key, pn = key.slice(0, key.indexOf("/")), dn = key.slice(key.indexOf("/")+1);
@@ -694,7 +721,7 @@ function devSig(){
 function renderCards(){
   const c = $("cards");
   if (!status.devices.length){
-    if (c.innerHTML.indexOf("nodata") < 0) c.innerHTML = '<div id="nodata">暂无设备接入</div>';
+    if (c.innerHTML.indexOf("nodata") < 0) c.innerHTML = '<div id="nodata">' + t("暂无设备接入") + '</div>';
     return;
   }
   const sig = devSig();
@@ -705,7 +732,7 @@ function renderCards(){
     const el = document.createElement("div");
     el.className = "card";
     el.dataset.dev = d.name;
-    el.title = "点击卡片 = 日志页只看这台";
+    el.title = t("点击卡片") + " = " + t("日志页只看这台");
     el.innerHTML = `
       <div class="top">
         <span class="name">${esc(d.name)}</span>
@@ -713,25 +740,25 @@ function renderCards(){
         ${d.proxy ? `<span class="badge">proxy ${esc(d.proxy)}</span>` : ""}
       </div>
       <div class="tty">${esc(d.tty)} · key=${esc(d.key)}</div>
-      <div class="ident" title="点击查看设备身份详情">${identLine(d.info)}</div>
+      <div class="ident" title="${t("点击查看设备身份详情")}">${identLine(d.info)}</div>
       <div class="meta">
-        <span>写入 <b class="v-rate"></b></span>
-        <span>全量 <b class="v-ssz"></b></span>
-        <span>事件 <b class="v-esz"></b></span>
-        ${d.proxy_endpoint ? `<span>端点 <b>${esc(d.proxy_endpoint)}</b></span>` : ""}
+        <span>${t("写入")} <b class="v-rate"></b></span>
+        <span>${t("全量")} <b class="v-ssz"></b></span>
+        <span>${t("事件")} <b class="v-esz"></b></span>
+        ${d.proxy_endpoint ? `<span>${t("端点")} <b>${esc(d.proxy_endpoint)}</b></span>` : ""}
       </div>
       <div class="health">
-        <span class="h-silent"><span class="dim">静默</span> <b>—</b></span>
-        <span class="h-reopen"><span class="dim">重开</span> <b>0</b></span>
+        <span class="h-silent"><span class="dim">${t("静默")}</span> <b>—</b></span>
+        <span class="h-reopen"><span class="dim">${t("重开")}</span> <b>0</b></span>
         <canvas class="spark" width="240" height="52"></canvas>
       </div>
       <div class="acts">
-        <button data-a="toggle">${d.state === "collecting" ? "⏸ 暂停" : "▶ 恢复"}</button>
-        <button data-a="proxy">${d.proxy ? "停代理" : "开代理"}</button>
-        <button data-a="rel" title="临时让出串口 5 分钟（外部工具可用）">让口 5m</button>
-        <button data-a="reo" title="串口层软重连：立即关口→重开（透传会话会断开重连）">软重连</button>
-        <button data-a="rst" class="danger" title="USB 层重枚举设备节点（需管理员，非提权守护会弹 UAC）">USB 重置</button>
-        <button data-a="flash">刷机…</button>
+        <button data-a="toggle">${d.state === "collecting" ? t("⏸ 暂停") : t("▶ 恢复")}</button>
+        <button data-a="proxy">${d.proxy ? t("停代理") : t("开代理")}</button>
+        <button data-a="rel" title="${t("临时让出串口 5 分钟（外部工具可用）")}">${t("让口 5")}m</button>
+        <button data-a="reo" title="${t("串口层软重连：立即关口→重开（透传会话会断开重连）")}">${t("软重连")}</button>
+        <button data-a="rst" class="danger" title="USB ${t("层重枚举设备节点（需管理员，非提权守护会弹")} UAC）">USB ${t("重置")}</button>
+        <button data-a="flash">${t("刷机…")}</button>
       </div>`;
     // 整卡可点跳日志页（操作按钮阻止冒泡，避免按"暂停"顺带换页）
     el.onclick = () => gotoLogs(d.name);
@@ -747,7 +774,7 @@ function renderCards(){
       cmd("release", anchor, "", {for_ms: 300000}); };
     el.querySelector('[data-a="reo"]').onclick = e => { e.stopPropagation(); cmd("reopen", anchor); };
     el.querySelector('[data-a="rst"]').onclick = e => { e.stopPropagation();
-      if (confirm("USB 重置 " + d.name + "？\n重枚举设备节点（守护进程未提权时会弹 UAC），采集会短暂中断。"))
+      if (confirm("USB " + t("重置") + " " + d.name + "？\n" + t("重枚举设备节点（守护进程未提权时会弹") + " UAC" + t("），采集会短暂中断。")))
         cmd("reset", anchor); };
     el.querySelector('[data-a="flash"]').onclick = e => { e.stopPropagation(); openFlash(d.name); };
     c.appendChild(el);
@@ -817,22 +844,22 @@ function updateKpis(){
   const locals = status.devices, all = allDevicesForKpi();
   const now = Date.now();
   $("kDev").textContent = all.length;
-  $("kDevK").title = `本机 ${locals.length} · 远程 ${all.length - locals.length}`;
+  $("kDevK").title = `${t("本机")} ${locals.length} ${t("· 远程")} ${all.length - locals.length}`;
   const col = all.filter(d => d.state === "collecting").length;
   $("kCol").textContent = col;
   $("kColK").classList.toggle("good", all.length > 0 && col === all.length);
-  $("kColK").title = `本机 ${locals.filter(d=>d.state==="collecting").length} · 远程 ${col - locals.filter(d=>d.state==="collecting").length}`;
+  $("kColK").title = `${t("本机")} ${locals.filter(d=>d.state==="collecting").length} ${t("· 远程")} ${col - locals.filter(d=>d.state==="collecting").length}`;
   const tot = locals.reduce((a, d) => a + (rate[d.name] || 0), 0);
   $("kRate").textContent = tot >= 1024 ? (tot/1024).toFixed(1) + "K" : tot;
   const bad = unhealthyKeys(now);
   $("kBad").textContent = bad.length;
   $("kBadK").classList.toggle("bad", bad.length > 0);
   $("kBadK").classList.toggle("click", bad.length > 0);
-  $("kBadK").title = bad.length ? "异常（静默>5min 或重开≥3）： " + bad.join(", ") + " —— 点击查看日志" :
-    "静默 >5min 或重开 ≥3 记为异常";
+  $("kBadK").title = bad.length ? t("异常（静默") + ">5min " + t("或重开") + "≥3）： " + bad.join(", ") + " " + t("—— 点击查看日志") :
+    t("静默") + " >5min " + t("或重开") + " ≥" + t("3 记为异常");
   $("kEv").textContent = evStats.total;
   $("kEvK").classList.toggle("bad", evStats.err > 0 || evStats.crit > 0);
-  $("kEvK").title = `崩溃/复位 ${evStats.crit} · 错误 ${evStats.err} · 生命周期 ${evStats.life}（远程节点事件请开其面板）`;
+  $("kEvK").title = `${t("崩溃/复位")} ${evStats.crit} ${t("· 错误")} ${evStats.err} ${t("· 生命周期")} ${evStats.life}${t("（远程节点事件请开其面板）")}`;
   const mk = $("kMeshK");
   if (mesh.enabled){
     mk.classList.remove("hidden");
@@ -851,20 +878,20 @@ function toast(msg, ok){
   toastTimer = setTimeout(()=>el.classList.remove("show"), 4000);
 }
 
-const CMD_LABEL = {pause:"暂停", resume:"恢复", proxy:"代理", release:"让口", reopen:"软重连", reset:"USB 重置",
-  "mesh-approve":"配对批准", "mesh-revoke":"配对拒绝"};
+const CMD_LABEL = {pause:t("暂停"), resume:t("恢复"), proxy:t("代理"), release:t("让口"), reopen:t("软重连"), reset:"USB " + t("重置"),
+  "mesh-approve":t("配对批准"), "mesh-revoke":t("配对拒绝")};
 function cmd(c, pattern, action, extra){
   fetch("/api/cmd", {method:"POST", headers:{"Content-Type":"application/json"},
     body: JSON.stringify(Object.assign({cmd:c, pattern:pattern||"", action:action||""}, extra||{}))}
   ).then(r=>r.json()).then(j=>{
-    if (!j.ok) { toast("✗ " + (CMD_LABEL[c]||c) + "失败: " + (j.error||"未知"), false); return; }
+    if (!j.ok) { toast("✗ " + (CMD_LABEL[c]||c) + t("失败:") + " " + (j.error||t("未知")), false); return; }
     let label = CMD_LABEL[c] || c;
-    if (c==="proxy") label = action==="stop" ? "代理已停止" : "代理已启动" + (j.endpoint?" "+j.endpoint:"");
-    if (c==="reset") label = "USB 重置完成，采集已恢复";
-    if (c==="release") label = "已让口 5 分钟（到期自动回采）";
+    if (c==="proxy") label = action==="stop" ? t("代理已停止") : t("代理已启动") + (j.endpoint?" "+j.endpoint:"");
+    if (c==="reset") label = "USB " + t("重置完成，采集已恢复");
+    if (c==="release") label = t("已让口 5 分钟（到期自动回采）");
     toast("✓ " + label, true);
     setTimeout(pollStatus, 300);
-  }).catch(e=>toast("✗ 请求失败: "+e, false));
+  }).catch(e=>toast(t("✗ 请求失败:") + " "+e, false));
 }
 
 // —— 刷机模态：上传镜像/args → POST /api/flash → SSE 进度流 ——
@@ -872,9 +899,9 @@ let fmES = null;
 function anchorRe(name){ return "^" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$"; }
 function syncFmPeers(){
   const sel = $("fmPeer"), cur = sel.value;
-  let html = '<option value="">本机</option>';
+  let html = '<option value="">' + t("本机") + '</option>';
   for (const p of (mesh.enabled ? mesh.peers : []))
-    html += `<option value="${esc(p.name)}">${esc(p.name)}${p.state === "online" ? "" : "（离线）"}</option>`;
+    html += `<option value="${esc(p.name)}">${esc(p.name)}${p.state === "online" ? "" : t("（离线）")}</option>`;
   sel.innerHTML = html;
   if ([...sel.options].some(o=>o.value === cur)) sel.value = cur;
 }
@@ -895,7 +922,7 @@ $("fmClose").onclick = () => { $("flashModal").classList.add("hidden"); if (fmES
 $("fmGo").onclick = () => {
   const fd = new FormData();
   const pattern = $("fmPattern").value.trim();
-  if (!pattern) { fmState("设备正则必填", true); return; }
+  if (!pattern) { fmState(t("设备正则必填"), true); return; }
   fd.append("pattern", pattern);
   const peer = $("fmPeer").value;
   if (peer) fd.append("peer", peer);
@@ -903,16 +930,16 @@ $("fmGo").onclick = () => {
   if (args) fd.append("args_file", args, args.name || "flasher_args.json");
   else {
     const bins = Array.from($("fmBins").files || []);
-    if (!bins.length) { fmState("先选镜像文件或 flasher_args.json", true); return; }
+    if (!bins.length) { fmState(t("先选镜像文件或") + " flasher_args.json", true); return; }
     for (const f of bins) fd.append("bins", f, f.name);
     const off = $("fmOffsets").value.trim();
     if (off) fd.append("offsets", off);
   }
-  $("fmGo").disabled = true; fmState(peer ? "上传中（随后经加密信道推送到 " + peer + "）…" : "上传中…");
+  $("fmGo").disabled = true; fmState(peer ? t("上传中（随后经加密信道推送到") + " " + peer + "）…" : t("上传中…"));
   fetch("/api/flash", {method:"POST", body:fd}).then(r=>{
     if (!r.ok) return r.text().then(t=>Promise.reject(t));
   }).then(()=>{
-    fmState((peer ? "远端 " + peer + " 刷写中（让口 → esptool → 回采）…" : "刷写中（让口 → esptool → 回采）…"));
+    fmState((peer ? t("远端") + " " + peer + " " + t("刷写中（让口 →") + " esptool " + t("→ 回采）…") : t("刷写中（让口 →") + " esptool " + t("→ 回采）…")));
     if (fmES) fmES.close();
     fmES = new EventSource("/api/flash/stream");
     fmES.onmessage = ev => {
@@ -920,7 +947,7 @@ $("fmGo").onclick = () => {
       if (m.line) fmAppend(m.line);
       if (m.done){
         fmES.close(); fmES = null; $("fmGo").disabled = false;
-        fmState(m.err ? "✗ " + m.err : "✓ 刷写完成，已恢复采集", !!m.err);
+        fmState(m.err ? "✗ " + m.err : t("✓ 刷写完成，已恢复采集"), !!m.err);
         setTimeout(pollStatus, 500);
       }
     };
@@ -942,7 +969,7 @@ function syncLogGrid(){
   if (sig === logGridSig) return;
   logGridSig = sig;
   if (merge || !keys.length){
-    row.innerHTML = !keys.length ? '<div class="dim" style="padding:10px">勾选上方设备开始同时查看日志（点设备卡可直达单台）</div>' : "";
+    row.innerHTML = !keys.length ? '<div class="dim" style="padding:10px">' + t("勾选上方设备开始同时查看日志（点设备卡可直达单台）") + '</div>' : "";
     return;
   }
   row.innerHTML = "";
@@ -950,15 +977,15 @@ function syncLogGrid(){
     const m = devMeta(k);
     const el = document.createElement("div");
     el.className = "lpane";
-    el.innerHTML = `<div class="lhd"><b style="color:${devColor(k)};cursor:pointer" title="只看这台（其余取消勾选）">${esc(m.name)}</b>` +
+    el.innerHTML = `<div class="lhd"><b style="color:${devColor(k)};cursor:pointer" title="${t("只看这台（其余取消勾选）")}">${esc(m.name)}</b>` +
       (m.remote ? `<span class="dim">⌗ ${esc(m.peer)}</span>` : `<span class="dim">${esc(m.tty)}</span>`) +
       `<span class="chip lstate"></span>` +
       `<span class="dim lrate" style="font-size:11px"></span>` +
       `<span class="lacts2">` +
-      `<button class="la-toggle" title="暂停/恢复采集"></button>` +
-      `<button class="la-reo" title="串口层软重连：立即关口→重开">⟳</button>` +
-      `<button class="la-flash" title="上传镜像刷机">刷</button>` +
-      `<button class="lwave" title="切到波形页单看这台">波</button></span></div><pre></pre>`;
+      `<button class="la-toggle" title="${t("暂停/恢复采集")}"></button>` +
+      `<button class="la-reo" title="${t("串口层软重连：立即关口→重开")}">⟳</button>` +
+      `<button class="la-flash" title="${t("上传镜像刷机")}">${t("刷")}</button>` +
+      `<button class="lwave" title="${t("切到波形页单看这台")}">${t("波")}</button></span></div><pre></pre>`;
     const anchor = "^" + m.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$";
     const peerArg = m.remote ? {peer: m.peer} : undefined;
     el.querySelector(".lhd b").onclick = () => gotoLogs(k);
@@ -976,7 +1003,7 @@ function syncLogGrid(){
 }
 function updateLogInfo(keys, merge){
   $("logInfo").textContent = keys.length ?
-    `${keys.length} 台 · ${merge ? "合并" : "并排"}${keys.some(isRemoteDev) ? " · 含远程" : ""}` : "";
+    `${keys.length} ${t("台 ·")} ${merge ? t("合并") : t("并排")}${keys.some(isRemoteDev) ? " " + t("· 含远程") : ""}` : "";
 }
 function scheduleLogRender(){
   if (logRenderTimer) return;
@@ -1032,7 +1059,7 @@ function renderGrid(){
     pane.querySelector(".lrate").textContent = m.remote ? "" : (rate[k] || 0) + " B/s";
     const tog = pane.querySelector(".la-toggle");
     tog.textContent = m.state === "collecting" ? "⏸" : "▶";
-    tog.title = m.state === "collecting" ? "暂停采集" : "恢复采集";
+    tog.title = m.state === "collecting" ? t("暂停采集") : t("恢复采集");
     let lines = (logs[k + "/serial"] || "").split("\n");
     if (lines.length && lines[lines.length-1] === "") lines.pop();
     total += lines.length;
@@ -1045,7 +1072,7 @@ function renderGrid(){
     pre.innerHTML = tail.map(l => hitLine(l, hlLine(l, matcher))).join("\n");
     if (stick || auto) pre.scrollTop = pre.scrollHeight;
   });
-  $("logCount").textContent = matcher ? `${shown}/${total} 行` : "";
+  $("logCount").textContent = matcher ? `${shown}/${total} ${t("行")}` : "";
 }
 function renderMerge(){
   const el = $("logMerge"), keys = selLogKeys();
@@ -1067,7 +1094,7 @@ function renderMerge(){
     const tag = `<span class="devtag" style="color:${devColor(e.d)}">${esc(isRemoteDev(e.d) ? "⌗" + e.d : e.d)}</span>`;
     return `<div class="mline">${tag} ${hitLine(e.l, hlLine(e.l, matcher))}</div>`;
   }).join("");
-  $("logCount").textContent = matcher ? `${quota.length} 行（每台 ≤${per}）` : "";
+  $("logCount").textContent = matcher ? `${quota.length} ${t("行（每台")} ≤${per}）` : "";
   if (stick) el.scrollTop = el.scrollHeight;
 }
 $("logSearch").oninput = () => renderLogs();
@@ -1110,7 +1137,7 @@ $("btnClear").onclick = () => {
 };
 $("btnExportLog").onclick = () => {
   const keys = selLogKeys();
-  if (!keys.length){ toast("✗ 未选择设备", false); return; }
+  if (!keys.length){ toast(t("✗ 未选择设备"), false); return; }
   const matcher = logMatcher();
   let out = "";
   if ($("logLayout").value === "merge"){
@@ -1123,7 +1150,7 @@ $("btnExportLog").onclick = () => {
       out += `===== ${k} =====\n` + lines.join("\n") + "\n";
     }
   }
-  if (!out.trim()){ toast("✗ 缓冲为空", false); return; }
+  if (!out.trim()){ toast(t("✗ 缓冲为空"), false); return; }
   download(`serialtap-logs-${stamp()}.log`, out);
 };
 
@@ -1175,7 +1202,7 @@ function syncWaveGrid(){
     return;
   }
   if (!keys.length){
-    row.innerHTML = '<div class="dim" style="padding:10px">勾选上方设备开始观察波形</div>';
+    row.innerHTML = '<div class="dim" style="padding:10px">' + t("勾选上方设备开始观察波形") + '</div>';
     return;
   }
   row.innerHTML = "";
@@ -1185,7 +1212,7 @@ function syncWaveGrid(){
     el.className = "wmini";
     el.innerHTML = `<div class="whd"><b>${esc(m.name)}</b>` +
       (m.remote ? `<span class="dim">⌗ ${esc(m.peer)}</span>` : "") +
-      `<button class="wbig" style="margin-left:auto" title="切到单机大图（冻结/悬停/提取/CSV）">大图</button></div>` +
+      `<button class="wbig" style="margin-left:auto" title="${t("切到单机大图（冻结/悬停/提取/")}CSV）">${t("大图")}</button></div>` +
       `<canvas data-dev="${esc(k)}"></canvas>`;
     el.querySelector(".wbig").onclick = () => { waveBigDev = k; setWaveMode("big"); };
     row.appendChild(el);
@@ -1209,10 +1236,10 @@ function xtrTest(){
   const src = $("xtrRe").value.trim();
   $("xtrErr").textContent = "";
   const pv = $("xtrPreview");
-  if (!src){ pv.textContent = "（输入正则后这里显示每行提取出的通道值）"; return; }
+  if (!src){ pv.textContent = t("（输入正则后这里显示每行提取出的通道值）"); return; }
   let re, reG;
   try { re = new RegExp(src); reG = new RegExp(src, "g"); }
-  catch(e){ $("xtrErr").textContent = "✗ 正则无效: " + e.message; pv.textContent = ""; return; }
+  catch(e){ $("xtrErr").textContent = t("✗ 正则无效:") + " " + e.message; pv.textContent = ""; return; }
   const hasGroups = re.source.indexOf("(") >= 0;
   const lines = (logs[(waveBigDev || "") + "/serial"] || "").split("\n").filter(l => l.trim()).slice(-20);
   const rows = [];
@@ -1232,14 +1259,14 @@ function xtrTest(){
       }
     }
     if (vals.length) hit++;
-    const left = vals.length ? vals.map(v => v.toFixed(2)).join("  ") : "(不匹配)";
+    const left = vals.length ? vals.map(v => v.toFixed(2)).join("  ") : t("(不匹配)");
     const right = body.length > 58 ? body.slice(0, 58) + "…" : body;
     rows.push(left + "  ← " + right);
   }
   const chInfo = hasGroups
-    ? "捕获组 " + (re.source.match(/\(/g) || []).length + " 个 → 同数通道"
-    : "无捕获组 → 行内命中各为一通道";
-  pv.textContent = chInfo + "，命中 " + hit + "/" + lines.length + " 行\n\n" + rows.join("\n");
+    ? t("捕获组") + " " + (re.source.match(/\(/g) || []).length + " " + t("个 → 同数通道")
+    : t("无捕获组 → 行内命中各为一通道");
+  pv.textContent = chInfo + t("，命中") + " " + hit + "/" + lines.length + " " + t("行") + "\n\n" + rows.join("\n");
 }
 // stripAnsi: 板子日志常带终端颜色转义（ESC[0;32m…），波形提取/帧型识别和
 // 自定义正则都对干净文本写
@@ -1507,7 +1534,7 @@ function drawScope(dev, cv, o){
     ctx.fillStyle = "#8b949e";
     ctx.font = o.mini ? "11px 'Segoe UI',sans-serif" : "13px 'Segoe UI',sans-serif";
     ctx.textBaseline = "middle";
-    ctx.fillText(wv.re ? "等待匹配的行…" : "等待可识别的遥测行（数字或 key=数值 记号）…", 16, (h-AX)/2);
+    ctx.fillText(wv.re ? t("等待匹配的行…") : t("等待可识别的遥测行（数字或") + " key=" + t("数值 记号）…"), 16, (h-AX)/2);
   }
   // 十字线（大图最上层）+ 状态条
   if (!o.mini){
@@ -1521,14 +1548,14 @@ function drawScope(dev, cv, o){
     const dm = waveBigDev ? devMeta(waveBigDev) : null;
     const absent = dm && !dm.remote && status.devices.length > 0 &&
       !status.devices.some(d => d.name === waveBigDev);
-    $("waveDev").textContent = waveBigDev ? waveBigDev + (absent ? " · ⏳ 等待接入" : "") : "";
+    $("waveDev").textContent = waveBigDev ? waveBigDev + (absent ? " · ⏳ " + t("等待接入") : "") : "";
     const hzWin = vis.filter(s=>s.t >= end-5000).length;
-    $("waveMode").textContent = wv.re ? "自定义" : "自动";
-    $("waveInfo").innerHTML = (wv.re ? "自定义 · " : "自动(" + esc(wv.frameStats.__cur || "…") + ") · ") +
-      `${(hzWin/5).toFixed(1)} Hz · ${vis.length} 样本` +
+    $("waveMode").textContent = wv.re ? t("自定义") : t("自动");
+    $("waveInfo").innerHTML = (wv.re ? t("自定义 ·") + " " : t("自动(") + esc(wv.frameStats.__cur || "…") + ") · ") +
+      `${(hzWin/5).toFixed(1)} Hz · ${vis.length} ${t("样本")}` +
       (!wv.re ? (() => { const n = Object.keys(wv.kv).filter(k => wv.kv[k].at >= start).length;
-        return n ? " · 命名通道 " + n : ""; })() : "") +
-      (waveFrozen ? " · 已冻结" : "");
+        return n ? " " + t("· 命名通道") + " " + n : ""; })() : "") +
+      (waveFrozen ? " " + t("· 已冻结") : "");
   }
 }
 function drawAll(){
@@ -1548,7 +1575,7 @@ $("waveCv").addEventListener("mouseleave", () => { waveHover = null; });
 
 // —— 高级提取弹窗（作用于一机大图设备）与帮助页接线 ——
 $("btnXtr").onclick = $("waveMode").onclick = () => {
-  if (!waveBigDev){ toast("✗ 先勾选一台设备", false); return; }
+  if (!waveBigDev){ toast(t("✗ 先勾选一台设备"), false); return; }
   const wv = wstate(waveBigDev);
   $("xtrRe").value = wv.re ? wv.re.source : "";
   $("xtrModal").classList.remove("hidden");
@@ -1568,7 +1595,7 @@ $("helpClose").onclick = () => $("helpModal").classList.add("hidden");
 $("waveFreeze").onclick = () => {
   waveFrozen = !waveFrozen;
   if (waveFrozen) waveFrozenAt = Date.now();
-  $("waveFreeze").textContent = waveFrozen ? "恢复" : "冻结";
+  $("waveFreeze").textContent = waveFrozen ? t("恢复") : t("冻结");
 };
 $("waveClear").onclick = () => {
   if (!waveBigDev) return;
@@ -1576,9 +1603,9 @@ $("waveClear").onclick = () => {
   wv.samples = []; wv.tail = ""; wv.frameStats = {}; wv.chNames = []; wv.kv = {};
 };
 $("btnExportWave").onclick = () => {
-  if (!waveBigDev){ toast("✗ 先勾选一台设备", false); return; }
+  if (!waveBigDev){ toast(t("✗ 先勾选一台设备"), false); return; }
   const wv = wstate(waveBigDev);
-  if (!wv.samples.length && !Object.keys(wv.kv).length){ toast("✗ 无样本可导出", false); return; }
+  if (!wv.samples.length && !Object.keys(wv.kv).length){ toast(t("✗ 无样本可导出"), false); return; }
   const curFrame = wv.frameStats.__cur || null;
   const rows = wv.samples.filter(s => wv.re ? true : s.f === curFrame);
   let csv = "";
@@ -1589,7 +1616,7 @@ $("btnExportWave").onclick = () => {
     const head = "t_ms," + (wv.chNames.length ? wv.chNames.join(",") : rows[0].v.map((_,i)=>"ch"+(i+1)).join(","));
     csv += `# ${wv.re ? "custom" : curFrame}\n` + [head, ...rows.map(s => s.t + "," + s.v.join(","))].join("\n");
   }
-  if (!csv.trim()){ toast("✗ 无样本可导出", false); return; }
+  if (!csv.trim()){ toast(t("✗ 无样本可导出"), false); return; }
   download(`${waveBigDev}-wave-${stamp()}.csv`, csv, "text/csv");
 };
 
@@ -1612,9 +1639,9 @@ function maskVal(k, v){
   return v;
 }
 const SENS_KEYS = new Set(["ssid", "ip"]);
-const FACT_ZH = {model:"型号", fw:"固件版本", chip:"芯片", chip_rev:"芯片修订", rom:"ROM 版本",
-  mac:"MAC", flash:"Flash 容量", flash_id:"Flash 器件", psram:"PSRAM", ip:"IP 地址",
-  ssid:"WiFi SSID", wifi_ch:"WiFi 信道", reset:"最近复位原因"};
+const FACT_ZH = {model:t("型号"), fw:t("固件版本"), chip:t("芯片"), chip_rev:t("芯片修订"), rom:"ROM " + t("版本"),
+  mac:"MAC", flash:"Flash " + t("容量"), flash_id:"Flash " + t("器件"), psram:"PSRAM", ip:"IP " + t("地址"),
+  ssid:"WiFi SSID", wifi_ch:"WiFi " + t("信道"), reset:t("最近复位原因")};
 function identLine(info){
   if (!info || !Object.keys(info).length) return "";
   const parts = [];
@@ -1633,9 +1660,9 @@ function openDevModal(devKey){
   const remote = isRemoteDev(devKey);
   const name = remote ? devKey.slice(devKey.indexOf("/")+1) : devKey;
   const peer = remote ? devKey.slice(0, devKey.indexOf("/")) : undefined;
-  $("dmDev").textContent = devKey + (remote ? "（远程，经 mesh 查询）" : "");
+  $("dmDev").textContent = devKey + (remote ? t("（远程，经") + " mesh " + t("查询）") : "");
   $("dmProbe").style.display = "";
-  $("factTable").innerHTML = '<tr><td class="dim">查询中…</td></tr>';
+  $("factTable").innerHTML = '<tr><td class="dim">' + t("查询中…") + '</td></tr>';
   $("devModal").classList.remove("hidden");
   loadFacts(devKey, peer);
 }
@@ -1655,16 +1682,16 @@ async function loadFacts(devKey, peer){
 function renderFacts(facts){
   currentFacts = facts;
   const keys = Object.keys(facts).sort((a,b)=>(facts[b].at||0)-(facts[a].at||0));
-  if (!keys.length){ $("factTable").innerHTML = '<tr><td class="dim">暂无事实——设备输出日志后自动积累；或点「深度识别」主动探测。</td></tr>'; return; }
-  $("factTable").innerHTML = "<tr><th>项</th><th>值</th><th>来源</th><th>证据行</th><th>时间</th></tr>" +
+  if (!keys.length){ $("factTable").innerHTML = '<tr><td class="dim">' + t("暂无事实——设备输出日志后自动积累；或点「深度识别」主动探测。") + '</td></tr>'; return; }
+  $("factTable").innerHTML = "<tr><th>" + t("项") + "</th><th>" + t("值") + "</th><th>" + t("来源") + "</th><th>" + t("证据行") + "</th><th>" + t("时间") + "</th></tr>" +
     keys.map(k => {
       const f = facts[k];
       const sensitive = SENS_KEYS.has(k);
       const shown = sensitive && !dmRevealed.has(k) ? maskVal(k, f.value) : f.value;
       const vHtml = sensitive
-        ? '<td class="fv masked" data-fk="'+esc(k)+'" title="点击展开/掩码">'+esc(shown)+'</td>'
+        ? '<td class="fv masked" data-fk="'+esc(k)+'" title="' + t("点击展开/掩码") + '">'+esc(shown)+'</td>'
         : '<td class="fv">'+esc(f.value)+'</td>';
-      const org = f.origin === "dev" ? "固件自述" : f.origin === "probe" ? "探测" : "日志";
+      const org = f.origin === "dev" ? t("固件自述") : f.origin === "probe" ? t("探测") : t("日志");
       return "<tr><td class='fk'>"+esc(FACT_ZH[k]||k)+"</td>"+vHtml+
         "<td><span class='forg'>"+org+"</span></td>"+
         "<td class='fsrc' title='"+esc(f.source||"")+"'>"+esc(f.source||"")+"</td>"+
@@ -1685,12 +1712,12 @@ $("dmProbe").onclick = () => {
   const remote = isRemoteDev(dmKey);
   const name = dmKey.slice(dmKey.indexOf("/")+1);
   const peer = remote ? dmKey.slice(0, dmKey.indexOf("/")) : "";
-  if (!confirm("深度识别 " + name + "?\nesptool flash_id 探测芯片/MAC/flash 容量——目标板会复位、串口让出约 10 秒。")) return;
+  if (!confirm(t("深度识别") + " " + name + "?\nesptool flash_id " + t("探测芯片/") + "MAC/flash " + t("容量——目标板会复位、串口让出约 10 秒。"))) return;
   $("devModal").classList.add("hidden");
   openFlash(name, peer);
-  $("fmDev").textContent = "深度识别 · " + name;
+  $("fmDev").textContent = t("深度识别 ·") + " " + name;
   $("fmGo").disabled = true;
-  $("fmLog").textContent = ""; $("fmState").textContent = "探测中（让口 → esptool flash_id → 回采）…";
+  $("fmLog").textContent = ""; $("fmState").textContent = t("探测中（让口 →") + " esptool flash_id " + t("→ 回采）…");
   fetch("/api/board", {method:"POST", headers:{"Content-Type":"application/json"},
     body: JSON.stringify({pattern: anchorRe(name), peer})})
   .then(r => { if (!r.ok) throw r; return r.json(); })
@@ -1702,7 +1729,7 @@ $("dmProbe").onclick = () => {
       if (m.line) fmAppend(m.line);
       if (m.done){
         fmES.close(); fmES = null; $("fmGo").disabled = false;
-        fmState(m.err ? "✗ " + m.err : "✓ 识别完成，身份事实已更新", !!m.err);
+        fmState(m.err ? "✗ " + m.err : t("✓ 识别完成，身份事实已更新"), !!m.err);
         setTimeout(() => { openDevModal(dmKey); }, 600); // 回弹详情看新事实
       }
     };
@@ -1725,13 +1752,13 @@ function pollEvents(){
     const now = Date.now(), tl = $("tl");
     const st = {total: 0, err: 0, crit: 0, life: 0};
     if (!list || !list.length || list.every(g => !g.lines || !g.lines.length)){
-      tl.innerHTML = '<div class="dim" style="padding:4px 0">暂无事件</div>';
+      tl.innerHTML = '<div class="dim" style="padding:4px 0">' + t("暂无事件") + '</div>';
     } else {
-      let html = '<div class="tl-legend"><span><i style="background:var(--red)"></i>崩溃/复位</span>' +
-        '<span><i style="background:var(--amber)"></i>错误</span>' +
-        '<span><i style="background:var(--blue)"></i>生命周期</span>' +
-        '<span><i style="background:#d2a8ff"></i>换板</span>' +
-        '<span class="dim" style="margin-left:auto">近 30 分钟</span></div>';
+      let html = '<div class="tl-legend"><span><i style="background:var(--red)"></i>' + t("崩溃/复位") + '</span>' +
+        '<span><i style="background:var(--amber)"></i>' + t("错误") + '</span>' +
+        '<span><i style="background:var(--blue)"></i>' + t("生命周期") + '</span>' +
+        '<span><i style="background:#d2a8ff"></i>' + t("换板") + '</span>' +
+        '<span class="dim" style="margin-left:auto">' + t("近 30 分钟") + '</span></div>';
       for (const g of list){
         const ticks = [];
         for (const l of (g.lines || [])){
@@ -1756,7 +1783,7 @@ function pollEvents(){
     evStats = st;
     updateKpis();
     const el = $("events");
-    if (!list || !list.length){ el.innerHTML = '<div class="dim" style="padding:12px">暂无事件</div>'; return; }
+    if (!list || !list.length){ el.innerHTML = '<div class="dim" style="padding:12px">' + t("暂无事件") + '</div>'; return; }
     el.innerHTML = list.map(g =>
       `<div class="ev-dev">▸ ${esc(g.device)}</div>` +
       (g.lines || []).slice(-30).map(l =>

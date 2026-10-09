@@ -55,7 +55,9 @@ uploading images and flashing — can be done from a browser.
   line at port close is flushed to disk marked `…partial`
 - **Web panel with full operations**: pause/resume, proxy start/stop, port
   yield, soft reconnect, USB reset, and **image-upload flashing with live SSE
-  progress** — remote/terminal-less scenarios never need the CLI
+  progress** — remote/terminal-less scenarios never need the CLI. The panel
+  UI is bilingual (中文/English): toggle in the header, auto-detected from
+  the browser on first visit
 - **Multi-PC mesh** (opt-in): serialtap instances on several PCs discover each
   other on the LAN (UDP beacons) and forward control requests over a
   pre-shared-key encrypted channel — any PC can manage, tail, and flash the
