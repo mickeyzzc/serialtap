@@ -275,13 +275,22 @@ func TestMeshEnabledDaemonE2E(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	// status --peer：远端设备透传回 CLI
-	out := captureStdout(t, func() {
-		if code := Run([]string{"status", "--peer", "bench-a", "--sock", sockB}); code != 0 {
-			t.Errorf("status --peer 退出码 %d", code)
+	// status --peer：远端设备透传回 CLI。批准状态随敲门周期（200ms）传播，
+	// CLI 单发可能撞上未授权窗口——按行为轮询直到成功（CI 慢机实测会抖）。
+	deadline2 := time.Now().Add(5 * time.Second)
+	var out string
+	for {
+		out = captureStdout(t, func() {
+			if code := Run([]string{"status", "--peer", "bench-a", "--sock", sockB}); code != 0 {
+				t.Errorf("status --peer 退出码 %d", code)
+			}
+		})
+		if strings.Contains(out, "remote-dev") {
+			break
 		}
-	})
-	if !strings.Contains(out, "remote-dev") {
-		t.Fatalf("远端设备未出现在输出:\n%s", out)
+		if time.Now().After(deadline2) {
+			t.Fatalf("远端设备未出现在输出:\n%s", out)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
