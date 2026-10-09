@@ -71,7 +71,7 @@ var logRules = []struct {
 	{"ssid", regexp.MustCompile(`connect to ssid \[([^\]]*)\]`),
 		func(m []string) string { return m[1] }},
 	{"ssid", regexp.MustCompile(`\bSSID:?\s*([^\s,\]]+)`),
-		func(m []string) string { return m[1] }},
+		func(m []string) string { return strings.Trim(m[1], "='\"") }}, // Arduino "SSID: 'x'" 的引号/等号剥掉
 }
 
 // esptool 探测输出规则（info = flash_id）。
