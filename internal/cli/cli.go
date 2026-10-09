@@ -418,6 +418,7 @@ func cmdRun(args []string) error {
 			AnnounceS:   cfg.MeshAnnounceS,
 			StaticPeers: cfg.MeshPeers,
 			AutoApprove: cfg.MeshAutoApprove,
+			AccessMode:  cfg.MeshAccess, // ro = 只读接入：远端仅能读，写命令/隧道全拒
 			Root:        cfg.Root,
 			Forward:     handler,
 			Proxy:       d, // daemon 的 ProxyStart/Stop（隧道桥）

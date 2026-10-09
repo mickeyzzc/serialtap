@@ -44,6 +44,10 @@ func (n *Node) handleDial(ch *Channel, payload []byte) {
 		_ = ch.Send(ftDialA, mustJSON(dialAckFrame{OK: false, Err: "mesh 隧道请求非法"}))
 		return
 	}
+	if n.readOnly() {
+		_ = ch.Send(ftDialA, mustJSON(dialAckFrame{OK: false, Err: "对端以只读模式接入（mesh_access=ro），数据隧道被拒"}))
+		return
+	}
 	if n.opt.Proxy == nil {
 		_ = ch.Send(ftDialA, mustJSON(dialAckFrame{OK: false, Err: "节点无代理能力"}))
 		return

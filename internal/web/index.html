@@ -661,7 +661,10 @@ function renderMesh(){
           <button data-a="flash">刷机…</button>
         </span>
       </div>`).join("");
+    const roBadge = p.access === "ro"
+      ? `<span class="chip" style="color:var(--amber);border-color:var(--amber)" title="该节点以只读模式接入：状态/日志/身份可读，暂停/刷机/重置/隧道等写操作会被拒绝">🔒 只读</span>` : "";
     el.innerHTML = `<div class="hd2"><b>${esc(p.name)}</b><span class="dim">${esc(p.id)} · ${esc(p.addr)}</span>` +
+      roBadge +
       `<span class="chip ${p.state === "online" ? "collecting" : "paused"}" style="margin-left:8px">${esc(p.state)}</span>` +
       `<span class="dim" style="margin-left:auto">${p.state === "online" ? p.latency_ms + "ms" : ""}</span></div>` +
       (devRows || '<div class="dim" style="padding:8px 10px">（无设备接入）</div>') +

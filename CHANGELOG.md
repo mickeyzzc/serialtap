@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- feat(mesh): **节点接入权限模式 `mesh_access`（TDD 开发）**——每个节点声明
+  自己对 mesh 的暴露方式：`"rw"`（默认，可写=现状全权）或 `"ro"`（只读接入）。
+  ro 节点上，远端 peer 仅能**读**（status / facts / 日志尾随 / 身份事实），
+  一切写命令（pause/resume/proxy/release/reopen/reset/flash/board）与数据
+  隧道（at --peer / mesh forward，直写串口）在 mesh 入站咽喉统一拒绝，业务
+  handler 根本不被触达；本机 ctl socket / 面板不受影响。接入模式随 status
+  响应传播（`Response.Access` → `PeerStatus.Access`），面板 mesh 区给 ro 节点
+  显示「🔒 只读」徽标，被拒命令的 toast 明确指向只读模式。测试先行
+  （access_test.go 4 例：ro 拒写放读 / rw 不变 / 模式传播 / 隧道拒绝 +
+  config 解析），红→绿全流程。
+
 - feat(facts/web): **设备身份自动采集（L0/L1/L2 三层）**——插上主板即识别、
   面板展示、mesh 全网统一：
   - **L0 被动事实引擎**（internal/facts）：从常开日志流零打扰提取身份事实
