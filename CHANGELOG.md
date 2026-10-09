@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- feat(facts/web): **设备身份自动采集（L0/L1/L2 三层）**——插上主板即识别、
+  面板展示、mesh 全网统一：
+  - **L0 被动事实引擎**（internal/facts）：从常开日志流零打扰提取身份事实
+    （芯片族/ROM 版本、复位原因、PSRAM、WiFi 信道、IP、SSID），每条带证据行
+    与来源（log/dev/probe 三级优先级：固件自述 > 探测 > 日志），按设备持久化
+    `<root>/<dev>/info.json`；collector 启动时从日志末尾回灌 256KB——守护重启
+    /换名继承秒级恢复身份。规则表全部用真机日志行校准（含 ANSI 剥离与
+    esptool v4/v5 两种输出格式）
+  - **L1 深度识别**：面板身份弹窗一键 esptool `flash_id` 探测（复用 board
+    编排与刷机 SSE 弹窗；确认提示会复位板子），芯片修订/MAC/flash 容量/器件
+    ID 自动回填 facts（origin=probe）；`/api/board` 本地 + mesh 远端同权
+    （daemon 层新增 esptool 配置回落——web 直调路径此前不经 config 合并，
+    PATH 上的坏 pip 残壳会静默 exit 1，真机踩坑）
+  - **L2 #DEV 固件自述契约**：固件输出 `#DEV model=.. fw=.. flash=.. psram=..
+    mac=.. ip=.. ssid=..`（开机+周期），facts 最高优先级解析——参考实现已进
+    esp32-s3-zero/env-station（相机仓待同步）
+  - **UI/协议**：DevState 新增 `info` 摘要（随 mesh 聚合自动全网广播）；设备
+    卡/mesh 行身份摘要行（SSID/IP 默认掩码，详情表点击展开）；新 `facts`
+    ctl 命令（本地+mesh 转发）返回全量事实含证据
+
 - feat(daemon/web): **换板感知——同名牌下物理板更换写入 `[board-swap]` 事件**。
   背景真机场景：拔掉 esp32s3-jtag 换插另一块同型号板（都是乐鑫原生 USB、
   共享内置名），串口/数据层无缝继承（COM10→COM11、复位 banner、数据流全部

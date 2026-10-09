@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/mickeyzzc/serialtap/internal/board"
 	"time"
 
 	"github.com/mickeyzzc/serialtap/internal/flash"
@@ -150,4 +152,75 @@ func TestFlashUploadValidation(t *testing.T) {
 		t.Fatalf("offsets 不匹配应 400: %d", resp3.StatusCode)
 	}
 	resp3.Body.Close()
+}
+
+// 深度识别：POST /api/board → boarder 执行 → 行进任务总线 → done 收尾。
+func TestHandleBoardRunsAndFinishes(t *testing.T) {
+	var gotPattern string
+	done := make(chan struct{})
+	s := &Server{root: t.TempDir(),
+		boarder: func(pattern string, all bool, spec board.Spec, out func(string)) error {
+			gotPattern = pattern
+			out("esptool v5.5.0 fake")
+			out("MAC: 80:b5:4e:c2:be:5c")
+			close(done)
+			return nil
+		}}
+	s.job.subs = map[chan flashEvent]bool{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/board", s.handleBoard)
+	mux.HandleFunc("/api/flash/stream", s.flashStream)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	resp, err := http.Post(ts.URL+"/api/board", "application/json",
+		strings.NewReader(`{"pattern":"^board$"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("board 应 200: %d", resp.StatusCode)
+	}
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("boarder 未被调用")
+	}
+	if gotPattern != "^board$" {
+		t.Fatalf("pattern 传递错误: %q", gotPattern)
+	}
+
+	// SSE：历史回放应含 esptool 输出行与 done
+	cl := &http.Client{Timeout: 3 * time.Second}
+	r2, err := cl.Get(ts.URL + "/api/flash/stream")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r2.Body.Close()
+	b, _ := io.ReadAll(r2.Body)
+	if !strings.Contains(string(b), "80:b5:4e:c2:be:5c") {
+		t.Fatalf("SSE 缺探测输出:\n%s", b)
+	}
+}
+
+// boarder 未注入时拒绝；pattern 缺失 400。
+func TestHandleBoardValidation(t *testing.T) {
+	s := &Server{root: t.TempDir()}
+	s.job.subs = map[chan flashEvent]bool{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/board", s.handleBoard)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	resp, _ := http.Post(ts.URL+"/api/board", "application/json", strings.NewReader(`{"pattern":"^x$"}`))
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("无 boarder 应 503: %d", resp.StatusCode)
+	}
+	resp2, _ := http.Post(ts.URL+"/api/board", "application/json", strings.NewReader(`{}`))
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusBadRequest {
+		t.Fatalf("缺 pattern 应 400: %d", resp2.StatusCode)
+	}
 }

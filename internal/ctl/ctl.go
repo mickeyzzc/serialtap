@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"github.com/mickeyzzc/serialtap/internal/facts"
 	"net"
 	"os"
 	"path/filepath"
@@ -40,14 +41,15 @@ type Request struct {
 
 // DevState: status 返回的设备状态。
 type DevState struct {
-	Name          string `json:"name"`
-	Tty           string `json:"tty"`
-	Key           string `json:"key"`
-	State         string `json:"state"`                    // collecting | paused | suspended | flashing
-	Proxy         string `json:"proxy,omitempty"`          // 透传会话客户端地址（空 = 无会话）
-	ProxyEndpoint string `json:"proxy_endpoint,omitempty"` // 透传监听端点（空 = 未开端点；注意与 Proxy 客户端地址区分）
-	Opens         int64  `json:"opens,omitempty"`          // 成功 open 次数（健康：1 = 从未断线重开）
-	LastData      int64  `json:"last_data,omitempty"`      // 最近读到字节的 UnixMilli（0 = 尚无数据）
+	Name          string            `json:"name"`
+	Tty           string            `json:"tty"`
+	Key           string            `json:"key"`
+	State         string            `json:"state"`                    // collecting | paused | suspended | flashing
+	Proxy         string            `json:"proxy,omitempty"`          // 透传会话客户端地址（空 = 无会话）
+	ProxyEndpoint string            `json:"proxy_endpoint,omitempty"` // 透传监听端点（空 = 未开端点；注意与 Proxy 客户端地址区分）
+	Opens         int64             `json:"opens,omitempty"`          // 成功 open 次数（健康：1 = 从未断线重开）
+	LastData      int64             `json:"last_data,omitempty"`      // 最近读到字节的 UnixMilli（0 = 尚无数据）
+	Info          map[string]string `json:"info,omitempty"`           // 身份摘要（facts：芯片/型号/IP…随 mesh 广播）
 }
 
 // PeerStatus: mesh 节点状态（cmd:"mesh" 聚合查询返回）。
@@ -67,16 +69,17 @@ type PeerStatus struct {
 
 // Response: 服务端响应（一行 JSON；flash 会流式多行）。
 type Response struct {
-	OK        bool         `json:"ok"`
-	Error     string       `json:"error,omitempty"`
-	Event     string       `json:"event,omitempty"` // flash-log | flash-done | board-log | board-done
-	Line      string       `json:"line,omitempty"`
-	Code      int          `json:"code,omitempty"`
-	Devices   []DevState   `json:"devices,omitempty"`
-	Peers     []PeerStatus `json:"peers,omitempty"` // mesh: 聚合的远端节点状态
-	Endpoint  string       `json:"endpoint,omitempty"`
-	Device    string       `json:"device,omitempty"`
-	DeviceKey string       `json:"device_key,omitempty"`
+	OK        bool                  `json:"ok"`
+	Error     string                `json:"error,omitempty"`
+	Event     string                `json:"event,omitempty"` // flash-log | flash-done | board-log | board-done
+	Line      string                `json:"line,omitempty"`
+	Code      int                   `json:"code,omitempty"`
+	Devices   []DevState            `json:"devices,omitempty"`
+	Peers     []PeerStatus          `json:"peers,omitempty"` // mesh: 聚合的远端节点状态
+	Endpoint  string                `json:"endpoint,omitempty"`
+	Device    string                `json:"device,omitempty"`
+	DeviceKey string                `json:"device_key,omitempty"`
+	Facts     map[string]facts.Fact `json:"facts,omitempty"` // facts: 全量身份事实（含证据行）
 }
 
 // Handler: 请求处理。respond 可多次调用（flash 流式输出），最后一次带总结性状态。

@@ -17,6 +17,7 @@ import (
 
 	"github.com/mickeyzzc/serialtap/internal/config"
 	"github.com/mickeyzzc/serialtap/internal/device"
+	"github.com/mickeyzzc/serialtap/internal/facts"
 	"github.com/mickeyzzc/serialtap/internal/logstore"
 	"github.com/mickeyzzc/serialtap/internal/pause"
 	"github.com/mickeyzzc/serialtap/internal/signature"
@@ -68,6 +69,7 @@ type Collector struct {
 	sigs       *signature.SignatureEngine
 	pause      *pause.PauseState
 	stdlog     func(format string, args ...any)
+	facts      *facts.Store // 设备身份事实（被动提取 + 探测回填），持久化于设备目录
 
 	stopOnce sync.Once
 	stop     chan struct{}
@@ -93,12 +95,15 @@ func NewCollector(dev device.DeviceInfo, cfg config.Config, w *logstore.DeviceWr
 	if stdlog == nil {
 		stdlog = func(string, ...any) {}
 	}
-	return &Collector{
+	c := &Collector{
 		dev: dev, cfg: cfg, w: w, sigs: sigs, pause: p,
 		stdlog: stdlog, stop: make(chan struct{}),
+		facts:   facts.Open(w.Dir()),
 		tapExcl: compileTapExclude(cfg.ProxyTapExclude, stdlog),
 		dtrHold: compileDTRHold(cfg.DTRHold, stdlog),
 	}
+	c.facts.SeedFromLog(256 << 10) // 从既有日志末尾回灌：重启即有身份摘要
+	return c
 }
 
 // Tty: 该采集器持有的串口路径。
@@ -299,6 +304,7 @@ func (c *Collector) collectOnce() (collectExit, error) {
 		c.lastData.Store(lastRX.UnixMilli())
 		c.proxyOut(buf[:n]) // 透传：原始字节镜像给代理客户端（无客户端时零开销）
 		for _, line := range asm.feed(buf[:n]) {
+			c.facts.Feed(line)
 			if c.proxyTapDrop(line) {
 				// 透传期间的指定行不落全量日志（如高频遥测），签名照常
 				if sig, ok := c.matchSig(line); ok {
@@ -390,3 +396,12 @@ func (c *Collector) ByID() string { return c.dev.ByID }
 func (c *Collector) LogEvent(format string, args ...any) { c.event(format, args...) }
 
 // Tty: 该采集器持有的串口路径。
+
+// FactsSummary: DevState 摘要（芯片/型号/IP 等，随 mesh 聚合广播）。
+func (c *Collector) FactsSummary() map[string]string { return c.facts.Summary() }
+
+// FactsFeedProbe: esptool 探测输出回填（board info 通道调用）。
+func (c *Collector) FactsFeedProbe(line string) { c.facts.FeedProbe(line) }
+
+// FactsSnapshot: 全量事实（面板详情表）。
+func (c *Collector) FactsSnapshot() map[string]facts.Fact { return c.facts.Snapshot() }

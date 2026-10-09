@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mickeyzzc/serialtap/internal/board"
 	"github.com/mickeyzzc/serialtap/internal/flash"
 )
 
@@ -266,4 +267,61 @@ func saveUpload(fh *multipart.FileHeader, dir, fallbackName string) (string, err
 		return "", err
 	}
 	return dst.Name(), nil
+}
+
+// handleBoard: POST /api/board {"pattern","peer?","all?","action"="info"} ——
+// 面板"深度识别"。esptool flash_id（芯片/MAC/flash 容量）→ daemon 侧回填
+// facts（origin=probe），进度行复用 flash 任务总线（同一 SSE/弹窗展示）。
+// 会复位目标板：前端有确认提示。action 固定 info（partitions/nvs 走 CLI）。
+func (s *Server) handleBoard(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Pattern string `json:"pattern"`
+		Peer    string `json:"peer"`
+		All     bool   `json:"all"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Pattern == "" {
+		http.Error(w, "pattern 必填", http.StatusBadRequest)
+		return
+	}
+	if req.Peer == "" && s.boarder == nil {
+		http.Error(w, "boarder unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if req.Peer != "" && s.meshBoarder == nil {
+		http.Error(w, "mesh 未启用，远程深度识别不可用", http.StatusServiceUnavailable)
+		return
+	}
+	s.job.mu.Lock()
+	if s.job.active {
+		s.job.mu.Unlock()
+		http.Error(w, "另一个刷机/识别任务进行中", http.StatusConflict)
+		return
+	}
+	s.job.events = nil
+	s.job.active = true
+	s.job.mu.Unlock()
+
+	go func() {
+		out := func(line string) { s.job.publish(flashEvent{Line: line}) }
+		var err error
+		if req.Peer != "" {
+			err = s.meshBoarder(req.Peer, req.Pattern, req.All, board.Spec{Action: board.ActionInfo}, out)
+		} else {
+			err = s.boarder(req.Pattern, req.All, board.Spec{Action: board.ActionInfo}, out)
+		}
+		if err != nil {
+			s.job.publish(flashEvent{Done: true, Err: err.Error()})
+			return
+		}
+		s.job.publish(flashEvent{Done: true})
+	}()
+	writeJSON(w, map[string]any{"ok": true})
 }

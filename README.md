@@ -124,7 +124,16 @@ sees, plus every operation:
   screen; boards silent >5 min or with ≥3 reopens count as unhealthy (red)
 - **Device cards**: state (collecting/paused/suspended/flashing), proxy-session
   badge, live write rate (log-size delta), full/event log sizes and total
-  retention usage
+  retention usage, plus an **identity line** (chip/model/fw, IP·SSID masked
+  by default)
+- **Automatic device identity**: boards identify themselves the moment they
+  are plugged in — passive facts extraction from the log stream (chip family,
+  reset reason, PSRAM, channel, IP, SSID; persisted per device), a full facts
+  table with evidence lines and origins behind the identity line, one-click
+  deep identify via esptool (chip revision/MAC/flash size; resets the board),
+  and a `#DEV model=.. fw=..` firmware self-descriptor line with top
+  precedence. Identity rides the mesh status aggregation — remote boards
+  show the same
 - **Multi-device logs (the landing workbench)**: tick any number of boards
   (mesh remotes included) and watch them together — **side-by-side** panes
   (each header carries quick actions: pause/resume, soft reconnect, flash —

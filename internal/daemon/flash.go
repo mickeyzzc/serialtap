@@ -192,6 +192,7 @@ func (d *daemon) Status() []ctl.DevState {
 			Name: c.DeviceName(), Tty: c.Tty(), Key: c.Key(), State: state,
 			Proxy: c.ProxyAddr(), ProxyEndpoint: d.proxyEndpointOf(k),
 			Opens: c.Opens(), LastData: c.LastDataMs(),
+			Info: c.FactsSummary(),
 		})
 	}
 	return out
@@ -260,6 +261,9 @@ func (d *daemon) Flash(pattern string, all bool, spec flash.Spec, out func(line 
 	}
 	if err := gateMulti(pattern, all, cs, "刷写"); err != nil {
 		return err
+	}
+	if spec.Esptool == "" {
+		spec.Esptool = d.cfg.Esptool // web 直调路径不经 cli 的 config 合并
 	}
 	if !d.opMu.TryLock() {
 		return fmt.Errorf("另一个 flash/release 操作进行中，请稍后再试")
