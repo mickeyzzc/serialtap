@@ -156,9 +156,16 @@ sees, plus every operation:
   highlighted
 - **Operations — full coverage**: per-device pause/resume, proxy start/stop,
   port yield (5 min), serial soft reconnect, USB reset (UAC confirm), and
-  **flashing from the browser** — upload images+offsets (or a
-  `flasher_args.json`) and watch esptool progress stream back over SSE. No CLI
-  needed for any of it.
+  **flashing from the browser** — drag & drop images+offsets (or a
+  `flasher_args.json`) and watch esptool progress stream back over SSE.
+  Frequent actions sit one click away on device cards; diagnostics live in a
+  per-card "more" menu. No CLI needed for any of it.
+- **Config at a glance**: the header ⚙ button (and a dashboard side panel)
+  shows the effective runtime config read-only — log root/baud/poll, rotation
+  & retention, flash orchestration (esptool/timeout), event signatures,
+  naming & exclude rules, mesh (the key only as a SHA-256 fingerprint).
+  Served by `GET /api/config`; changing values still means editing
+  `config.json` and restarting the daemon.
 
 The panel is read-only display + forwarding of the existing ctl operations
 through the **same handler path** as the control socket — it introduces no

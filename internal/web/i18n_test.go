@@ -162,29 +162,29 @@ func tokenizeJS(src string) []jsTok {
 			i++
 			continue
 		}
-		// 字符串态
-		if c == '\\' && i+1 < n {
-			buf += src[i : i+2]
-			i += 2
-			continue
-		}
-		if f.q == '`' && c == '$' && i+1 < n && src[i+1] == '{' {
-			toks = append(toks, jsTok{kind: 's', q: '`', text: buf})
-			buf = ""
-			code.WriteString("${")
-			stack = append(stack, frame{depth: 1})
-			i += 2
-			continue
-		}
-		if c == f.q {
-			toks = append(toks, jsTok{kind: 's', q: f.q, text: buf})
-			buf = ""
-			stack = stack[:len(stack)-1]
+			// 字符串态
+			if c == '\\' && i+1 < n {
+				buf += src[i : i+2]
+				i += 2
+				continue
+			}
+			if f.q == '`' && c == '$' && i+1 < n && src[i+1] == '{' {
+				toks = append(toks, jsTok{kind: 's', q: '`', text: buf})
+				buf = ""
+				code.WriteString("${")
+				stack = append(stack, frame{depth: 1})
+				i += 2
+				continue
+			}
+			if c == f.q {
+				toks = append(toks, jsTok{kind: 's', q: f.q, text: buf})
+				buf = ""
+				stack = stack[:len(stack)-1]
+				i++
+				continue
+			}
+			buf += src[i : i+1] // 按 UTF-8 字节累加——string(byte) 会把多字节字符拆成 mojibake，Han 检测全部失灵
 			i++
-			continue
-		}
-		buf += string(c)
-		i++
 	}
 	if buf != "" || len(stack) != 1 {
 		panic("tokenizeJS: 词法未闭合（脚本损坏）")
