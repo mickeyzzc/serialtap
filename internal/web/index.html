@@ -10,10 +10,12 @@
 --green:#3fb950;--amber:#d29922;--blue:#58a6ff;--red:#f85149;--teal:#39d2c0}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 "Segoe UI",system-ui,sans-serif}
-header{display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid var(--border)}
+header{display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid var(--border);flex-wrap:wrap}
 header .logo{flex:none;display:block}
 header h1{font-size:17px;margin:0}
 .dim{color:var(--dim)}
+#conn.bad{color:var(--red)}
+header.warn{border-bottom:2px solid var(--red)}
 #toast{margin-left:auto;font-size:12px;color:var(--teal);opacity:0;transition:opacity .3s}
 #toast.show{opacity:1}
 header .dim{color:var(--dim);font-size:12px}
@@ -105,7 +107,11 @@ white-space:pre-wrap;word-break:break-all}
 .mline .devtag{font-weight:600}
 #logSearch{background:#0a0e14;color:var(--fg);border:1px solid var(--border);border-radius:6px;
 padding:2px 8px;font:12px Consolas,monospace;width:150px}
-#logSearch:focus{outline:none;border-color:var(--blue)}
+#logSearch{transition:width .15s}
+#logSearch:focus{outline:none;border-color:var(--blue);width:260px}
+.lacts2 .lx{color:var(--dim)}
+.lacts2 .lx:hover{color:var(--red);border-color:var(--red)}
+#waveFreeze.on{color:var(--amber);border-color:var(--amber)}
 #logCount{font-size:11px;color:var(--dim)}
 .devtag{color:var(--blue);font-size:12px}
 .hit{color:var(--amber)}
@@ -196,12 +202,12 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
 <!-- ═══ 视图三：仪表盘 —— 全网健康总览（参考页，按需查看）═══ -->
 <section id="view-dash" class="hidden">
     <div class="kpis">
-      <div class="kpi" id="kDevK"><div class="n" id="kDev">0</div><div class="l">接入设备 · 全网</div></div>
-      <div class="kpi" id="kColK"><div class="n" id="kCol">0</div><div class="l">采集中 · 全网</div></div>
+      <div class="kpi click" id="kDevK"><div class="n" id="kDev">0</div><div class="l">接入设备 · 全网</div></div>
+      <div class="kpi click" id="kColK"><div class="n" id="kCol">0</div><div class="l">采集中 · 全网</div></div>
       <div class="kpi" id="kRateK" title="只统计本机接入的设备；远程节点速率可在其面板查看"><div class="n" id="kRate">0</div><div class="l">本机吞吐 B/s</div></div>
       <div class="kpi" id="kBadK" title=""><div class="n" id="kBad">0</div><div class="l">异常设备 · 全网</div></div>
       <div class="kpi" id="kEvK" title=""><div class="n" id="kEv">0</div><div class="l">事件 · 近30min · 本机</div></div>
-      <div class="kpi hidden" id="kMeshK"><div class="n" id="kMesh">0/0</div><div class="l">mesh 节点在线</div></div>
+      <div class="kpi hidden click" id="kMeshK"><div class="n" id="kMesh">0/0</div><div class="l">mesh 节点在线</div></div>
     </div>
     <div id="cards"><div id="nodata">暂无设备接入</div></div>
     <div class="dashgrid">
@@ -364,6 +370,16 @@ white-space:pre-wrap;word-break:break-all;background:#0a0e14;border-radius:6px}
         <tr><td><b>仪表盘</b></td><td>全网健康总览（参考页）：KPI 指标条（设备数/采集中/吞吐/异常/事件/mesh 节点）、设备卡（操作按钮全量）、30 分钟事件时间线、mesh 节点管理</td></tr>
       </table>
       <p>所有设备（含 mesh 远端）都在后台持续采样与缓冲——勾选、切换、换页都不会丢数据。</p>
+
+      <h3>键盘快捷键</h3>
+      <p>实干路径——手不离键盘（输入框聚焦或弹窗打开时不抢键）：</p>
+      <table>
+        <tr><th>键</th><th>作用</th></tr>
+        <tr><td><code>1</code> / <code>2</code> / <code>3</code></td><td>切换 日志 / 波形 / 仪表盘</td></tr>
+        <tr><td><code>/</code></td><td>聚焦日志搜索（正则或子串，自动切到日志页）</td></tr>
+        <tr><td><code>F</code></td><td>大图冻结 / 恢复（后台照常采样）</td></tr>
+        <tr><td><code>Esc</code></td><td>关闭弹窗；退出搜索框焦点</td></tr>
+      </table>
 
       <h3>波形自动识别是怎么工作的</h3>
       <p>板子通常按固定格式周期输出一行遥测（如 <code>#S1 1117 27762 -49 09fb0e…</code>）。
@@ -589,6 +605,7 @@ let mergeQ = [], mergeTail = {}, mergeSeq = 0;   // 合并流：到达序入队�
 function pollStatus(){
   fetch("/api/status").then(r=>r.json()).then(s=>{
     $("conn").textContent = t("● 已连接");
+    $("conn").classList.remove("bad"); document.querySelector("header").classList.remove("warn");
     // 面板自愈：守护已换装新面板而本页还是旧 JS 时自动刷新（只对带指纹的
     // 页面生效——本版起的页面都有 meta；无 meta 的更旧页面不动，不会循环）
     const meta = document.querySelector('meta[name="panel-rev"]');
@@ -611,7 +628,8 @@ function pollStatus(){
     updateKpis();
     if (view === "logs"){ syncLogGrid(); renderLogs(); }
     if (view === "wave") syncWaveGrid();
-  }).catch(()=>{ $("conn").textContent = t("○ 守护进程不可达"); });
+  }).catch(()=>{ $("conn").textContent = t("○ 守护进程不可达");
+    $("conn").classList.add("bad"); document.querySelector("header").classList.add("warn"); });
 }
 setInterval(pollStatus, 1000); pollStatus();
 
@@ -867,6 +885,9 @@ function updateKpis(){
   } else mk.classList.add("hidden");
 }
 $("kBadK").onclick = () => { const bad = unhealthyKeys(Date.now()); if (bad.length) gotoLogsKeys(bad); };
+$("kDevK").onclick = $("kColK").onclick = () => gotoLogsKeys(allDevKeys());
+$("kMeshK").onclick = () => { const el = $("meshPanel");
+  if (el && el.style.display !== "none") el.scrollIntoView({behavior: "smooth", block: "nearest"}); };
 
 let toastTimer = null;
 function toast(msg, ok){
@@ -935,6 +956,8 @@ $("fmGo").onclick = () => {
     const off = $("fmOffsets").value.trim();
     if (off) fd.append("offsets", off);
   }
+  const fnames = args ? [args.name || "flasher_args.json"] : Array.from($("fmBins").files || []).map(f => f.name);
+  if (!confirm(t("确认刷写：") + (peer ? peer + " · " : "") + pattern + "\n" + fnames.join(", "))) return;
   $("fmGo").disabled = true; fmState(peer ? t("上传中（随后经加密信道推送到") + " " + peer + "）…" : t("上传中…"));
   fetch("/api/flash", {method:"POST", body:fd}).then(r=>{
     if (!r.ok) return r.text().then(t=>Promise.reject(t));
@@ -985,7 +1008,8 @@ function syncLogGrid(){
       `<button class="la-toggle" title="${t("暂停/恢复采集")}"></button>` +
       `<button class="la-reo" title="${t("串口层软重连：立即关口→重开")}">⟳</button>` +
       `<button class="la-flash" title="${t("上传镜像刷机")}">${t("刷")}</button>` +
-      `<button class="lwave" title="${t("切到波形页单看这台")}">${t("波")}</button></span></div><pre></pre>`;
+      `<button class="lwave" title="${t("切到波形页单看这台")}">${t("波")}</button>` +
+      `<button class="lx" title="${t("取消勾选，关掉这个窗格")}">✕</button></span></div><pre></pre>`;
     const anchor = "^" + m.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$";
     const peerArg = m.remote ? {peer: m.peer} : undefined;
     el.querySelector(".lhd b").onclick = () => gotoLogs(k);
@@ -996,6 +1020,12 @@ function syncLogGrid(){
     el.querySelector(".lwave").onclick = () => {
       waveSel.add(k); localStorage.setItem("st_wavesel", JSON.stringify([...waveSel]));
       waveBigDev = k; setWaveMode("big"); setView("wave");
+    };
+    el.querySelector(".lx").onclick = () => {
+      logSel.delete(k);
+      localStorage.setItem("st_logsel", JSON.stringify([...logSel]));
+      renderChips("logChips", logSel, "st_logsel");
+      syncLogGrid(); renderLogs();
     };
     row.appendChild(el);
   }
@@ -1596,6 +1626,7 @@ $("waveFreeze").onclick = () => {
   waveFrozen = !waveFrozen;
   if (waveFrozen) waveFrozenAt = Date.now();
   $("waveFreeze").textContent = waveFrozen ? t("恢复") : t("冻结");
+  $("waveFreeze").classList.toggle("on", waveFrozen);
 };
 $("waveClear").onclick = () => {
   if (!waveBigDev) return;
@@ -1792,6 +1823,27 @@ function pollEvents(){
   }).catch(()=>{});
 }
 setInterval(pollEvents, 5000); pollEvents();
+
+// —— 键盘直达：1/2/3 切视图、/ 聚焦日志搜索、F 大图冻结、Esc 关弹窗/退出输入 ——
+// 实干工具的手不离键盘路径；输入态（input/select/textarea）与弹窗打开时不抢键。
+const MODAL_CLOSE = [["flashModal", "fmClose"], ["xtrModal", "xtrClose"], ["devModal", "dmClose"], ["helpModal", "helpClose"]];
+document.addEventListener("keydown", e => {
+  const tag = (e.target.tagName || "").toLowerCase();
+  const typing = tag === "input" || tag === "select" || tag === "textarea" || e.target.isContentEditable;
+  if (e.key === "Escape"){
+    if (typing){ e.target.blur(); return; }
+    for (const [mid, bid] of MODAL_CLOSE)
+      if (!$(mid).classList.contains("hidden")){ $(bid).onclick(); return; }
+    return;
+  }
+  if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (MODAL_CLOSE.some(([mid]) => !$(mid).classList.contains("hidden"))) return; // 弹窗内不切视图
+  if (e.key === "1") setView("logs");
+  else if (e.key === "2") setView("wave");
+  else if (e.key === "3") setView("dash");
+  else if (e.key === "/"){ e.preventDefault(); setView("logs"); $("logSearch").focus(); $("logSearch").select(); }
+  else if (e.key === "f" || e.key === "F"){ if (view === "wave" && waveMode === "big") $("waveFreeze").onclick(); }
+});
 
 // —— 启动：hash 直达 > 日志工作台（首页）——
 setView(VIEWS.includes(location.hash.slice(1)) ? location.hash.slice(1) : "logs", false);
