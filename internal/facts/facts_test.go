@@ -215,3 +215,18 @@ func TestChipFamiliesAndTailCut(t *testing.T) {
 		t.Fatalf("半行居然被当完整行提取: %+v", g["chip"])
 	}
 }
+
+// Arduino 风格 SSID: 'name' / SSID:'name' —— 引号与等号不进值。
+func TestSSIDFormats(t *testing.T) {
+	s := Open(t.TempDir())
+	for _, c := range [][2]string{
+		{"SSID: 'MickeyBeeGT3000'", "MickeyBeeGT3000"},
+		{"SSID:'home-net'", "home-net"},
+		{"connect to ssid [plain]", "plain"},
+	} {
+		s.Feed(c[0])
+		if got := s.Snapshot()["ssid"].Value; got != c[1] {
+			t.Fatalf("%q → %q，期望 %q", c[0], got, c[1])
+		}
+	}
+}
