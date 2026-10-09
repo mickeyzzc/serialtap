@@ -47,9 +47,11 @@ func TestI18nDictQuality(t *testing.T) {
 }
 
 // staticShell: index.html 去掉 <script>/<style>/HTML 注释后的静态部分。
+// CRLF→LF 归一化：.gitattributes 已把面板资源钉死为 LF，但 autocrlf 工作区
+// 可能引入 \r——浏览器解析时本就归一化，测试对齐运行时语义。
 func staticShell(t *testing.T) string {
 	t.Helper()
-	s := string(indexHTML)
+	s := strings.ReplaceAll(string(indexHTML), "\r\n", "\n")
 	if i := strings.Index(s, "<script>"); i >= 0 {
 		if j := strings.Index(s, "</script>"); j >= 0 {
 			s = s[:i] + s[j+len("</script>"):]
@@ -193,7 +195,7 @@ func tokenizeJS(src string) []jsTok {
 
 func scriptSource(t *testing.T) string {
 	t.Helper()
-	s := string(indexHTML)
+	s := strings.ReplaceAll(string(indexHTML), "\r\n", "\n")
 	i := strings.Index(s, "<script>")
 	j := strings.LastIndex(s, "</script>")
 	if i < 0 || j < 0 {
