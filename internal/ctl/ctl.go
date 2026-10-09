@@ -62,7 +62,8 @@ type PeerStatus struct {
 	LatencyMs  int64      `json:"latency_ms,omitempty"`
 	Devices    []DevState `json:"devices,omitempty"`
 	Err        string     `json:"err,omitempty"`
-	Auth       string     `json:"auth,omitempty"`        // 本机视角的入站授权: approved（其余见 mesh pair）
+	Auth       string     `json:"auth,omitempty"`        // 本机视角的入站授权
+	Access     string     `json:"access,omitempty"`      // 对端接入模式（ro=只读 / rw=可写）: approved（其余见 mesh pair）
 	PeerAuthed bool       `json:"peer_authed,omitempty"` // 对端是否已授权本节点（链接 ack 得知）
 	At         int64      `json:"at,omitempty"`          // mesh-pair: 敲门/批准时间（UnixMilli）
 }
@@ -79,7 +80,8 @@ type Response struct {
 	Endpoint  string                `json:"endpoint,omitempty"`
 	Device    string                `json:"device,omitempty"`
 	DeviceKey string                `json:"device_key,omitempty"`
-	Facts     map[string]facts.Fact `json:"facts,omitempty"` // facts: 全量身份事实（含证据行）
+	Facts     map[string]facts.Fact `json:"facts,omitempty"`  // facts: 全量身份事实（含证据行）
+	Access    string                `json:"access,omitempty"` // status 响应携带的本节点接入模式（ro/rw）——mesh 聚合透传
 }
 
 // Handler: 请求处理。respond 可多次调用（flash 流式输出），最后一次带总结性状态。

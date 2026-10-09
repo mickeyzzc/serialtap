@@ -34,7 +34,8 @@ type Options struct {
 	Forward     ctl.Handler // 本机业务分发（cli 的 handler 闭包）——mesh 是它的第三个前端
 	Proxy       ProxyAPI    // 隧道用（daemon 的 ProxyStart/Stop）
 	Logf        func(string, ...any)
-	AutoApprove bool // 配对自动批准（PSK-only 旧行为；默认 false=需显式 mesh approve）
+	AutoApprove bool   // 配对自动批准（PSK-only 旧行为；默认 false=需显式 mesh approve）
+	AccessMode  string // 本节点接入权限："ro" = 只读（远端仅读），其余 = 可写（默认）
 
 	// 测试缝
 	BeaconTargets   func(port int) []string // nil = 定向广播（生产）
@@ -431,11 +432,37 @@ func (n *Node) handleReq(ch *Channel, payload []byte) error {
 			file = &fileRef{Token: token, Name: filepath.Base(p), Size: fi.Size()}
 		}
 	}
+	if n.readOnly() && !accessReadable(req.Cmd) {
+		// 只读接入：远端写命令在此咽喉统一拒绝（业务 handler 根本不被触达）
+		resp := ctl.Response{OK: false, Error: "节点以只读模式接入（mesh_access=ro），写命令被拒: " + req.Cmd}
+		_ = ch.Send(ftResp, mustJSON(respFrame{ID: rf.ID, Resp: &resp}))
+		_ = ch.Send(ftResp, mustJSON(respFrame{ID: rf.ID, End: true}))
+		return nil
+	}
 	n.opt.Forward(req, func(r ctl.Response) {
+		if req.Cmd == "status" {
+			r.Access = n.accessLabel() // 接入模式随 status 传播（对端 PeerStatus/面板徽标）
+		}
 		_ = ch.Send(ftResp, mustJSON(respFrame{ID: rf.ID, Resp: &r}))
 	})
 	cleanup()
 	return ch.Send(ftResp, mustJSON(respFrame{ID: rf.ID, End: true, File: file}))
+}
+
+// readOnly: 本节点是否以只读模式接入。
+func (n *Node) readOnly() bool { return strings.EqualFold(n.opt.AccessMode, "ro") }
+
+// accessLabel: 对外可见的接入模式标签。
+func (n *Node) accessLabel() string {
+	if n.readOnly() {
+		return "ro"
+	}
+	return "rw"
+}
+
+// accessReadable: ro 模式下仍放行的读命令（日志尾随走独立帧不在此列）。
+func accessReadable(cmd string) bool {
+	return cmd == "status" || cmd == "facts"
 }
 
 // —— 客户端 ——
@@ -542,6 +569,7 @@ func (n *Node) AggregateStatus(timeout time.Duration) []ctl.PeerStatus {
 				_, cerr := n.Call(p.NameOrAddr(), ctl.Request{Cmd: "status"}, func(r ctl.Response) bool {
 					if r.OK {
 						devs = r.Devices
+						ps.Access = r.Access // 对端接入模式（ro/rw）随 status 响应传播
 					} else if r.Error != "" {
 						ps.Err = r.Error
 					}

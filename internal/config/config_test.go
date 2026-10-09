@@ -55,3 +55,21 @@ func TestDefaultConfigPath(t *testing.T) {
 		t.Fatalf("默认路径异常: %q", p)
 	}
 }
+
+// mesh_access：节点接入权限模式（"" / "rw" = 可写默认，"ro" = 只读）。
+func TestMeshAccessParse(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.MeshAccess != "" {
+		t.Fatalf("默认应为空（=rw）: %q", cfg.MeshAccess)
+	}
+	dir := t.TempDir()
+	f := filepath.Join(dir, "c.json")
+	os.WriteFile(f, []byte(`{"mesh_enabled":true,"mesh_access":"ro"}`), 0o644)
+	cfg, err := LoadConfig(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MeshAccess != "ro" {
+		t.Fatalf("ro 解析失败: %q", cfg.MeshAccess)
+	}
+}

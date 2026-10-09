@@ -169,7 +169,10 @@ Web 面板会多出一个 **mesh** 区：每个 peer 及其板子、远程日志
 **自动链接与配对。** 发现不是被动等待：每个节点对学到的 peer（beacon 或
 静态种子）自动拨链并保活。被链接的节点来话即"敲门"：同密钥能过加密门，
 但操作帧在**批准配对**前一概拒绝——`serialtap mesh pair` 看待授权名单，
-`serialtap mesh approve <id>` 放行（面板 mesh 区有 ✓/✗ 按钮）。授权表
+`serialtap mesh approve <id>` 放行（面板 mesh 区有 ✓/✗ 按钮）。节点可配
+`"mesh_access": "ro"` 声明**只读接入**：远端仅能读它的状态/日志/身份，
+暂停/刷机/重置/数据隧道等写操作一律被拒（面板显示 🔒 只读徽标）；默认
+`rw` 可写不变。授权表
 持久化在 `<root>/.mesh-peers.json`；`mesh revoke` 撤销已批 peer 并立即掐断
 其活动连接。`"mesh_auto_approve": true` 可回到"持钥即信任"（不再提示）。
 
