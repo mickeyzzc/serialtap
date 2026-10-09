@@ -10,6 +10,7 @@ import (
 	"github.com/mickeyzzc/serialtap/internal/collector"
 	"github.com/mickeyzzc/serialtap/internal/config"
 	"github.com/mickeyzzc/serialtap/internal/device"
+	"github.com/mickeyzzc/serialtap/internal/facts"
 	"github.com/mickeyzzc/serialtap/internal/flash"
 	"github.com/mickeyzzc/serialtap/internal/pause"
 	"github.com/mickeyzzc/serialtap/internal/testutil"
@@ -547,5 +548,53 @@ func TestBoardSwapEvent(t *testing.T) {
 	}
 	if !strings.Contains(string(b), "[board-swap] 物理板已更换：COM10 → COM11") {
 		t.Fatalf("换板事件缺失，events 内容:\n%s", b)
+	}
+}
+
+// facts 全量查询：日志行 → 被动事实 → d.Facts 返回（含证据行）。
+func TestFactsFromLogLines(t *testing.T) {
+	root := t.TempDir()
+	old := collector.OpenPort
+	collector.OpenPort = func(tty string, baud int) (collector.Port, error) {
+		return &testutil.FakePort{Chunks: [][]byte{[]byte("ESP-ROM:esp32s3-api1-20210207\nI (99) wifi:got ip:192.168.63.9\n")}}, nil
+	}
+	t.Cleanup(func() { collector.OpenPort = old })
+
+	cfg := config.DefaultConfig()
+	cfg.Root = root
+	cfg.PollMs = 10
+	devs := []device.DeviceInfo{{Tty: "COM1", Key: "k1", Name: "board", ByID: "id1"}}
+	d, err := New(cfg, nil, func() ([]device.DeviceInfo, error) { return devs, nil }, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(d.Shutdown)
+	d.Tick()
+	deadline := time.Now().Add(3 * time.Second)
+	var fs map[string]facts.Fact
+	for time.Now().Before(deadline) {
+		fs, err = d.Facts("^board$")
+		if err == nil && len(fs) >= 2 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if fs["chip"].Value != "ESP32-S3" || fs["ip"].Value != "192.168.63.9" {
+		t.Fatalf("facts 提取错误: %+v", fs)
+	}
+	if !strings.Contains(fs["chip"].Source, "ESP-ROM") {
+		t.Fatalf("证据行缺失: %+v", fs["chip"])
+	}
+}
+
+// facts 无匹配设备时报错（不返回空表误导前端）。
+func TestFactsNoMatch(t *testing.T) {
+	d, err := New(config.DefaultConfig(), nil, func() ([]device.DeviceInfo, error) { return nil, nil }, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(d.Shutdown)
+	if _, err := d.Facts("^nothing$"); err == nil {
+		t.Fatal("无匹配应报错")
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/mickeyzzc/serialtap/internal/collector"
 	"github.com/mickeyzzc/serialtap/internal/config"
 	"github.com/mickeyzzc/serialtap/internal/device"
+	"github.com/mickeyzzc/serialtap/internal/facts"
 	"github.com/mickeyzzc/serialtap/internal/logstore"
 	"github.com/mickeyzzc/serialtap/internal/pause"
 	"github.com/mickeyzzc/serialtap/internal/signature"
@@ -103,6 +104,21 @@ func New(cfg config.Config, excl []*regexp.Regexp,
 		enum:       enum,
 		logf:       logf,
 	}, nil
+}
+
+// Facts: 匹配设备的全量身份事实合并（ctl facts 命令 / 面板详情表）。
+func (d *daemon) Facts(pattern string) (map[string]facts.Fact, error) {
+	_, cs := d.matches(pattern)
+	if len(cs) == 0 {
+		return nil, fmt.Errorf("没有匹配 %q 的采集设备", pattern)
+	}
+	all := map[string]facts.Fact{}
+	for _, c := range cs {
+		for k, v := range c.FactsSnapshot() {
+			all[k] = v
+		}
+	}
+	return all, nil
 }
 
 // tick: 单轮巡检（枚举 diff、起停采集器、暂停清单热重载）。

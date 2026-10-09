@@ -32,6 +32,11 @@ func (d *daemon) Board(pattern string, all bool, spec board.Spec, out func(line 
 	d.mu.Unlock()
 
 	timeout := time.Duration(d.cfg.FlashTimeoutS) * time.Second
+	// web 直调路径不经 cli 的 config 合并：esptool 未指定时回落配置（PATH
+	// 里可能撞上坏掉的启动器 shim——真机：pip 残壳静默 exit 1）
+	if spec.Esptool == "" {
+		spec.Esptool = d.cfg.Esptool
+	}
 	for _, c := range cs {
 		c.LogEvent("board %s start (addr=%s size=%s show_secrets=%v)",
 			spec.Action, spec.Addr, spec.Size, spec.ShowSecrets)
@@ -43,8 +48,9 @@ func (d *daemon) Board(pattern string, all bool, spec board.Spec, out func(line 
 			return fmt.Errorf("%s: 端口让出超时", c.DeviceName())
 		}
 		c.SetFlashing(true)
-		err := board.Exec(c.Tty(), spec, timeout, out,
-			board.EsptoolReader(c.Tty(), spec, timeout, out))
+		outFacts := func(line string) { c.FactsFeedProbe(line); out(line) } // 探测输出回填身份事实
+		err := board.Exec(c.Tty(), spec, timeout, outFacts,
+			board.EsptoolReader(c.Tty(), spec, timeout, outFacts))
 		c.SetFlashing(false)
 		c.LogEvent("board %s finished (err=%v)", spec.Action, err)
 		c.Resume()

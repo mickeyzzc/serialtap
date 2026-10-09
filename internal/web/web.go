@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mickeyzzc/serialtap/internal/board"
 	"github.com/mickeyzzc/serialtap/internal/ctl"
 	"github.com/mickeyzzc/serialtap/internal/flash"
 )
@@ -54,11 +55,24 @@ type StatusProvider func() []ctl.DevState
 // Flasher: 代理刷固件执行体（即 daemon.Flash —— 面板经 Web 上传镜像后调用）。
 type Flasher func(pattern string, all bool, spec flash.Spec, out func(line string)) error
 
+// Boarder: 板卡读侧操作执行体（即 daemon.Board —— 面板"深度识别"调用；
+// 会复位目标板，与刷机同一编排纪律）。
+type Boarder func(pattern string, all bool, spec board.Spec, out func(line string)) error
+
+// MeshBoarder: mesh 远端 board 操作（经加密信道转发，事件流回传）。
+type MeshBoarder func(peer, pattern string, all bool, spec board.Spec, out func(line string)) error
+
 // Option: Start 的可选项（保持既有调用点签名不变）。
 type Option func(*Server)
 
 // WithFlasher: 启用面板刷机（上传镜像 → 代理刷写 → SSE 进度流）。
 func WithFlasher(f Flasher) Option { return func(s *Server) { s.flasher = f } }
+
+// WithBoarder: 启用面板深度识别（esptool info 探测 → SSE 进度 → 事实回填）。
+func WithBoarder(f Boarder) Option { return func(s *Server) { s.boarder = f } }
+
+// WithMeshBoarder: 启用面板远程深度识别。
+func WithMeshBoarder(f MeshBoarder) Option { return func(s *Server) { s.meshBoarder = f } }
 
 // Server: 面板 HTTP 服务（默认只听本机回环）。
 type Server struct {
@@ -68,6 +82,8 @@ type Server struct {
 	flasher     Flasher
 	mesh        MeshService // nil = mesh 未启用（聚合/远程尾随隐藏）
 	meshFlasher MeshFlasher // nil = 面板远程刷机不可用
+	boarder     Boarder     // nil = 面板深度识别不可用
+	meshBoarder MeshBoarder // nil = 面板远程深度识别不可用
 	job         flashJob    // 当前/最近一次刷机任务（单任务槽，opMu 天然串行）
 	srv         *http.Server
 }
@@ -104,7 +120,8 @@ func Start(addr, root string, status StatusProvider, commander Commander,
 	mux.HandleFunc("/api/events", s.handleEvents)
 	mux.HandleFunc("/api/cmd", s.handleCmd)
 	mux.HandleFunc("/api/flash", s.handleFlash)              // POST 上传镜像并启动刷写
-	mux.HandleFunc("/api/flash/stream", s.flashStream)       // SSE 进度（历史回放+实时）
+	mux.HandleFunc("/api/flash/stream", s.flashStream)       // SSE 进度（历史回放+实时；board 深度识别共用）
+	mux.HandleFunc("/api/board", s.handleBoard)              // 深度识别（esptool info → 事实回填）
 	mux.HandleFunc("/api/devices/", s.handleDevice)          // {name}/files|tail|live
 	mux.HandleFunc("/api/live", s.handleLiveMulti)           // 单条 SSE 多路设备尾随（浏览器连接池友好）
 	mux.HandleFunc("/api/mesh/status", s.handleMeshStatus)   // mesh 聚合（未启用时 enabled:false）
@@ -238,8 +255,9 @@ type deviceDTO struct {
 	EventsSize  int64  `json:"events_size"`
 	SerialBytes int64  `json:"serial_bytes"` // 设备目录全量日志总字节（估留存）
 
-	Opens    int64 `json:"opens,omitempty"`     // 成功 open 次数（健康：1 = 从未断线重开）
-	LastData int64 `json:"last_data,omitempty"` // 最近读到字节的 UnixMilli（0 = 尚无数据）
+	Opens    int64             `json:"opens,omitempty"`     // 成功 open 次数（健康：1 = 从未断线重开）
+	LastData int64             `json:"last_data,omitempty"` // 最近读到字节的 UnixMilli（0 = 尚无数据）
+	Info     map[string]string `json:"info,omitempty"`      // 身份摘要（facts 引擎）
 }
 
 type snapshotDTO struct {
@@ -257,7 +275,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, d := range devs {
 		e := deviceDTO{Name: d.Name, Tty: d.Tty, Key: d.Key, State: d.State,
-			Proxy: d.Proxy, ProxyEndpoint: d.ProxyEndpoint, Opens: d.Opens, LastData: d.LastData}
+			Proxy: d.Proxy, ProxyEndpoint: d.ProxyEndpoint, Opens: d.Opens, LastData: d.LastData,
+			Info: d.Info}
 		if dir, ok := s.deviceDir(d.Name); ok {
 			if f, sz, ok := latestFile(dir, "serial"); ok {
 				e.SerialFile, e.SerialSize = f, sz
@@ -701,7 +720,7 @@ func (s *Server) handleCmd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch req.Cmd {
-	case "status", "pause", "resume", "proxy", "release", "reopen", "reset",
+	case "status", "pause", "resume", "proxy", "release", "reopen", "reset", "facts",
 		"mesh-pair", "mesh-approve", "mesh-revoke":
 	default:
 		http.Error(w, "cmd not allowed from web (use CLI): "+req.Cmd, http.StatusBadRequest)
