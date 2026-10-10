@@ -252,6 +252,7 @@ Windows 上是 `serialtap.exe list`（设备形如 `COM3`）、单口采集 `ser
 | `dump RE <addr> <size> <file>` | **任意 flash 区域原始导出**（如 `dump cam 0x9000 0x6000 nvs.bin`）。产物权限 0600——可能含明文凭据，勿提交仓库 |
 | `at RE "AT+..." [--wait 3s]` | **控制台命令注入**：经 proxy 透传通道写入并回显响应（写入以 `>` 前缀落档审计，采集全程不打断）。`--wait` 窗口内回显完整串口流，响应行以 `+`/`OK`/`ERROR` 开头；可一次注入多条依序执行 |
 
+| `selftest [RE]` | **自检行聚合**：反向检索各设备归档日志里最近一次开机的 `SELFTEST:` 行（工作区固件自检行规范——板/flash/PSRAM/传感器/WiFi 扫描体检证据），附常识性异常提示（传感器未检出/PSRAM 未起来/空口全聋/配置网信号弱）。`RE` 匹配设备名（省略=全部）；`--files N` 限回溯文件数。只读日志不动串口 |
 | `status` | 守护进程与设备实时状态（collecting/paused/suspended/flashing） |
 | `tray`（Windows） | 托盘常驻：接入状态、按设备暂停/恢复、打开日志，见上节（macOS 无独立 `tray` 子命令，`run` 自带菜单栏） |
 | `analyze LOG...` | 离线签名扫描：计数 / 首末时间 / 样本行汇总表 |
