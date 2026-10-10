@@ -52,6 +52,8 @@ func usage() {
       [--config F] [--root DIR] [--baud N]
   serialtap list [--config F]            列出当前设备与身份
   serialtap analyze LOG... [--lines]     离线签名扫描汇总
+  serialtap selftest [RE]               聚合各设备最近开机的 SELFTEST 自检行
+                                         （板/传感器/WiFi 扫描体检证据，附异常提示；省略 RE=全部）
   serialtap decode-backtrace LOG         Backtrace addr2line 解码
       [--elf F] [--addr2line BIN] [--config F]
   serialtap pause [RE]...                暂停采集（省略=全部）
@@ -169,6 +171,8 @@ func Run(args []string) int {
 		err = cmdBoard(args[1:], "dump")
 	case "at":
 		err = cmdAt(args[1:])
+	case "selftest":
+		return runSelftest(args[1:])
 	case "pause":
 		err = cmdPauseSocket(args[1:], true)
 	case "resume":
