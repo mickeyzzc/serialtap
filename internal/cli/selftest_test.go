@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -81,5 +82,37 @@ func TestScanDeviceSelftestMissing(t *testing.T) {
 	entry := scanDeviceSelftest(dev, 14)
 	if !entry.Missing {
 		t.Fatalf("无自检行应 Missing=true, got %+v", entry)
+	}
+}
+
+func TestRunSelftestCLI(t *testing.T) {
+	root := t.TempDir()
+	dev := filepath.Join(root, "dev-cli")
+	writeSelftestLog(t, dev, "serial-20261010.log", strings.Join([]string{
+		"[10:00:00.000] noise",
+		"[10:00:02.000] I (100) main: SELFTEST: board=dev-cli fw=v0.1 chip=esp32s3 psram=none sensor=none heap=100KB",
+		"[10:00:03.000] noise",
+	}, "\n"))
+	os.MkdirAll(filepath.Join(root, "dev-empty"), 0o755)
+	writeSelftestLog(t, filepath.Join(root, "dev-empty"), "serial-20261010.log", "nothing\n")
+
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	code := runSelftest([]string{"--root", root})
+	w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+	s := string(out)
+	if code != 0 {
+		t.Fatalf("exit=%d out=%s", code, s)
+	}
+	for _, want := range []string{"dev-cli", "SELFTEST: board=dev-cli", "dev-empty", "未见自检行", "1 台有自检行, 1 台未见", "传感器未检出"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("输出应包含 %q\n%s", want, s)
+		}
 	}
 }
