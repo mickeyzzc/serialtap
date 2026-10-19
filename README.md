@@ -113,11 +113,17 @@ rp2040-cdc) work on all three platforms.
 - **Windows**: `serialtap tray` is a separate resident systray process talking
   to the daemon only over the control socket (killing the tray never touches
   capture):
+  - **starting the tray auto-starts the daemon** if it isn't running, and
+    double-clicking `serialtap.exe` (or the installer shortcut) does exactly
+    that — open the tray and bring the daemon up
+  - a single-instance guard keeps repeated launches from stacking tray icons;
+    the extra instance prints a notice and exits
   - one menu item per device — the checkbox *is* the on/off switch; click to
     pause/resume that device
   - per-device submenu: **view serial log** (latest full log in the system
     editor), **open log directory**
-  - pause all / resume all; one-click daemon start when it's not running
+  - pause all / resume all; the **start daemon** menu item remains as a manual
+    entry
   - **open web panel**; hover shows the live device count; grey icon =
     daemon not connected
 
