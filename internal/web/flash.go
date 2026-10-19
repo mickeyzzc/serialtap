@@ -71,6 +71,14 @@ func (s *Server) handleFlash(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return
 	}
+	// 自定义头防 CSRF：multipart 表单 POST 属"简单请求"，浏览器不经 CORS
+	// 预检直接发出——跨站页面可用隐藏表单打这个端点（改固件是最高危操作）。
+	// 要求非 CORS 安全列表的自定义头 X-serialtap: 1，跨站脚本拿不到预检
+	// 许可就发不出它；面板 fetch 已带上（apiGuard 的 Origin 校验是第一道）。
+	if r.Header.Get("X-serialtap") != "1" {
+		http.Error(w, "missing X-serialtap header", http.StatusForbidden)
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 128<<20)
 	if err := r.ParseMultipartForm(8 << 20); err != nil {
 		http.Error(w, "bad multipart: "+err.Error(), http.StatusBadRequest)

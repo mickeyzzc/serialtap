@@ -58,6 +58,18 @@ func (l *specsLog) first() flash.Spec {
 	return l.items[0]
 }
 
+// postFlash: 带 X-serialtap: 1 的 multipart POST（服务端 /api/flash 的 CSRF
+// 自定义头校验；测试直连 handler 也按生产形态带头）。
+func postFlash(url string, contentType string, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequest("POST", url, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("X-serialtap", "1")
+	return http.DefaultClient.Do(req)
+}
+
 func multipartFlash(t *testing.T, url string, pattern string, bins [][2]string,
 	offsets string) *http.Response {
 	t.Helper()
@@ -72,7 +84,7 @@ func multipartFlash(t *testing.T, url string, pattern string, bins [][2]string,
 		fw.Write([]byte(b[1]))
 	}
 	_ = mw.Close()
-	resp, err := http.Post(url, mw.FormDataContentType(), &buf)
+	resp, err := postFlash(url, mw.FormDataContentType(), &buf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +143,7 @@ func TestFlashUploadValidation(t *testing.T) {
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 	mw.Close()
-	resp, err := http.Post(ts.URL+"/api/flash", mw.FormDataContentType(), &buf)
+	resp, err := postFlash(ts.URL+"/api/flash", mw.FormDataContentType(), &buf)
 	if err != nil {
 		t.Fatal(err)
 	}

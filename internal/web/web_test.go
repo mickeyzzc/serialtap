@@ -1,9 +1,11 @@
 package web
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -443,6 +445,105 @@ func TestHandleCmdErrors(t *testing.T) {
 		} else if ok, _ := out["ok"].(bool); !ok {
 			t.Fatal("正常命令应回 ok:true")
 		}
+	}
+}
+
+// TestAPIGuardHostOrigin: /api/ 的 Host/Origin 校验（CSRF/DNS rebinding 收口）。
+// 回环绑定时 Host 必须命中白名单；任意绑定下恶意 Origin 一律 403；非回环
+// 绑定保留 LAN 暴露的文档化行为（不强制 Host）但 Origin 规则仍生效。
+func TestAPIGuardHostOrigin(t *testing.T) {
+	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{"ok": true})
+	})
+	newTS := func(addr string) *httptest.Server {
+		ts := httptest.NewServer(apiGuard(addr, ok))
+		t.Cleanup(ts.Close)
+		return ts
+	}
+	get := func(ts *httptest.Server, host, origin string) int {
+		req, err := http.NewRequest("GET", ts.URL+"/api/status", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if host != "" {
+			req.Host = host
+		}
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		resp, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	loop := newTS("127.0.0.1:8801")
+	for _, tt := range []struct {
+		name, host, origin string
+		want               int
+	}{
+		{"本机 Host 无 Origin", "127.0.0.1:8801", "", 200},
+		{"localhost 带端口", "localhost:8801", "", 200},
+		{"裸 localhost", "localhost", "", 200},
+		{"IPv6 回环", "[::1]:8801", "", 200},
+		{"恶意 Host", "evil.example", "", 403},
+		{"恶意 Host + 伪装 Origin", "evil.example", "http://127.0.0.1:8801", 403},
+		{"好 Host + 恶意 Origin", "127.0.0.1:8801", "http://evil.example", 403},
+		{"好 Host + null Origin（沙箱页）", "127.0.0.1:8801", "null", 403},
+		{"好 Host + 回环 Origin 异端口", "127.0.0.1:8801", "http://127.0.0.1:9999", 200},
+	} {
+		if got := get(loop, tt.host, tt.origin); got != tt.want {
+			t.Errorf("%s: got %d, want %d", tt.name, got, tt.want)
+		}
+	}
+
+	// 非回环绑定（LAN 暴露是用户显式选择）：不强制 Host，Origin 仍拦
+	lan := newTS("0.0.0.0:8801")
+	if got := get(lan, "evil.example", ""); got != 200 {
+		t.Errorf("LAN 绑定不应强制 Host: got %d, want 200", got)
+	}
+	if got := get(lan, "", "http://evil.example"); got != 403 {
+		t.Errorf("LAN 绑定仍应拦恶意 Origin: got %d, want 403", got)
+	}
+}
+
+// TestFlashRequiresCustomHeader: /api/flash 必须带 X-serialtap: 1（multipart
+// 简单请求绕过 CORS 预检，自定义头是第二道 CSRF 防线）。带头后应穿透到
+// handler 正常校验路径（缺 pattern → 400，而非 403）。
+func TestFlashRequiresCustomHeader(t *testing.T) {
+	s := &Server{root: t.TempDir()}
+	ts := httptest.NewServer(http.HandlerFunc(s.handleFlash))
+	defer ts.Close()
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	_ = mw.WriteField("pattern", "^x$")
+	_ = mw.Close()
+
+	post := func(hdr string) int {
+		req, _ := http.NewRequest("POST", ts.URL+"/api/flash", bytes.NewReader(buf.Bytes()))
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		if hdr != "" {
+			req.Header.Set("X-serialtap", hdr)
+		}
+		resp, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if got := post(""); got != http.StatusForbidden {
+		t.Errorf("缺 X-serialtap 应 403: got %d", got)
+	}
+	if got := post("0"); got != http.StatusForbidden {
+		t.Errorf("X-serialtap 错值应 403: got %d", got)
+	}
+	if got := post("1"); got != http.StatusServiceUnavailable && got != http.StatusBadRequest {
+		// 带头 → 穿透到 handler：无 flasher 503（有 flasher 时缺 bins 400）
+		t.Errorf("带头应穿透到 handler（503/400）: got %d", got)
 	}
 }
 

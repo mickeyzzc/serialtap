@@ -1201,7 +1201,9 @@ $("fmGo").onclick = () => {
   const fnames = (args && !$("fmArgsWrap").classList.contains("hidden")) ? [args.name || "flasher_args.json"] : fmBinFiles.map(f => f.name);
   if (!confirm(t("确认刷写：") + (peer ? peer + " · " : "") + pattern + "\n" + fnames.join(", "))) return;
   $("fmGo").disabled = true; fmState(peer ? t("上传中（随后经加密信道推送到") + " " + peer + "）…" : t("上传中…"));
-  fetch("/api/flash", {method:"POST", body:fd}).then(r=>{
+  // X-serialtap: 1 = 防 CSRF 自定义头（multipart 简单请求可绕过 CORS 预检，
+  // 服务端 /api/flash 校验此头；同源 fetch 本就带不上风险）
+  fetch("/api/flash", {method:"POST", headers:{"X-serialtap":"1"}, body:fd}).then(r=>{
     if (!r.ok) return r.text().then(t=>Promise.reject(t));
   }).then(()=>{
     fmState((peer ? t("远端") + " " + peer + " " + t("刷写中（让口 →") + " esptool " + t("→ 回采）…") : t("刷写中（让口 →") + " esptool " + t("→ 回采）…")));

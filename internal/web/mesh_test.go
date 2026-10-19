@@ -177,7 +177,11 @@ func TestFlashRoutesToMeshFlasher(t *testing.T) {
 		_ = mw.Close()
 		_ = pw.Close()
 	}()
-	resp, err := ts.Client().Post(ts.URL+"/api/flash", mw.FormDataContentType(), pr)
+	// X-serialtap: 1 = /api/flash 的 CSRF 自定义头（生产面板 fetch 带头）
+	req, _ := http.NewRequest("POST", ts.URL+"/api/flash", pr)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("X-serialtap", "1")
+	resp, err := ts.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +220,10 @@ func TestFlashPeerWithoutMeshFails(t *testing.T) {
 		_ = mw.Close()
 		_ = pw.Close()
 	}()
-	resp, err := ts.Client().Post(ts.URL+"/api/flash", mw.FormDataContentType(), pr)
+	req, _ := http.NewRequest("POST", ts.URL+"/api/flash", pr)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("X-serialtap", "1")
+	resp, err := ts.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
