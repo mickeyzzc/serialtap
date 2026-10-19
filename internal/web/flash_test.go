@@ -12,11 +12,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
-
-	"github.com/mickeyzzc/serialtap/internal/board"
 	"time"
 
+	"github.com/mickeyzzc/serialtap/internal/board"
 	"github.com/mickeyzzc/serialtap/internal/flash"
 )
 
@@ -58,6 +58,18 @@ func (l *specsLog) first() flash.Spec {
 	return l.items[0]
 }
 
+// postFlash: 带 X-serialtap: 1 的 multipart POST（服务端 /api/flash 的 CSRF
+// 自定义头校验；测试直连 handler 也按生产形态带头）。
+func postFlash(url string, contentType string, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequest("POST", url, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("X-serialtap", "1")
+	return http.DefaultClient.Do(req)
+}
+
 func multipartFlash(t *testing.T, url string, pattern string, bins [][2]string,
 	offsets string) *http.Response {
 	t.Helper()
@@ -72,7 +84,7 @@ func multipartFlash(t *testing.T, url string, pattern string, bins [][2]string,
 		fw.Write([]byte(b[1]))
 	}
 	_ = mw.Close()
-	resp, err := http.Post(url, mw.FormDataContentType(), &buf)
+	resp, err := postFlash(url, mw.FormDataContentType(), &buf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +143,7 @@ func TestFlashUploadValidation(t *testing.T) {
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 	mw.Close()
-	resp, err := http.Post(ts.URL+"/api/flash", mw.FormDataContentType(), &buf)
+	resp, err := postFlash(ts.URL+"/api/flash", mw.FormDataContentType(), &buf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,6 +164,115 @@ func TestFlashUploadValidation(t *testing.T) {
 		t.Fatalf("offsets 不匹配应 400: %d", resp3.StatusCode)
 	}
 	resp3.Body.Close()
+}
+
+// 回归（#72）：flashStream 的历史快照与订阅必须原子（同一临界区）。任务
+// 进行中连上的进度流要既拿到已发事件、又收到后续事件直到 done——拆成两
+// 段锁的话，恰在缝里收尾的任务 done 会丢，浏览器进度条永久等待。
+func TestFlashStreamMidJobSeesDone(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	_, ts, _ := newFlashServer(t, func(out func(string)) {
+		out("esptool mid-flight line")
+		close(started)
+		<-release // 阻住任务，等进度流连上并吃到历史行再放行
+	})
+
+	resp := multipartFlash(t, ts.URL+"/api/flash", "^b$",
+		[][2]string{{"a.bin", "A"}}, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("上传应 200: %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("flasher 未启动")
+	}
+
+	cl := &http.Client{Timeout: 5 * time.Second}
+	sse, err := cl.Get(ts.URL + "/api/flash/stream")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = sse.Body.Close() }()
+
+	buf := make([]byte, 0, 16*1024)
+	tmp := make([]byte, 4096)
+	released := false
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		n, _ := sse.Body.Read(tmp)
+		if n > 0 {
+			buf = append(buf, tmp[:n]...)
+		}
+		got := string(buf)
+		if !released && strings.Contains(got, "esptool mid-flight line") {
+			close(release) // 历史行已到：放行任务收尾，done 应随后经订阅到达
+			released = true
+		}
+		if released && strings.Contains(got, `"done":true`) {
+			return // 快照（历史行）+ 订阅（done）两路都吃到
+		}
+	}
+	t.Fatalf("进度流未收齐历史行与 done: %s", string(buf))
+}
+
+// 回归（#72）：任务槽 check+set 必须原子（handleFlash 此前分两次锁，检查
+// 与占坑之间有缝）。新语义 = 占坑后整个上传/执行期都持槽：阻塞中的任务
+// 期间第二个 POST 必 409，flasher 只被调一次。（旧缝隙是纯并发窗口，无法
+// 确定性复现；本测试钉住单槽契约本身。）
+func TestFlashConcurrentPostsSingleSlot(t *testing.T) {
+	block := make(chan struct{})
+	var calls int32
+	s, ts, _ := newFlashServer(t, func(out func(string)) {
+		atomic.AddInt32(&calls, 1)
+		<-block // 占住任务槽直到放行
+	})
+	defer close(block)
+
+	post := func() int {
+		var buf bytes.Buffer
+		mw := multipart.NewWriter(&buf)
+		_ = mw.WriteField("pattern", "^b$")
+		fw, _ := mw.CreateFormFile("bins", "a.bin")
+		_, _ = fw.Write([]byte("A"))
+		_ = mw.Close()
+		resp, err := postFlash(ts.URL+"/api/flash", mw.FormDataContentType(), &buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		code := resp.StatusCode
+		resp.Body.Close()
+		return code
+	}
+	c1, c2 := post(), post()
+	okCount, conflictCount := 0, 0
+	for _, c := range []int{c1, c2} {
+		switch c {
+		case http.StatusOK:
+			okCount++
+		case http.StatusConflict:
+			conflictCount++
+		}
+	}
+	if okCount != 1 || conflictCount != 1 {
+		t.Fatalf("并发 POST 应恰一 200 一 409: got %d / %d", c1, c2)
+	}
+	// 放行后等任务收尾（goroutine publish(done) 释放槽位）
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		s.job.mu.Lock()
+		active := s.job.active
+		s.job.mu.Unlock()
+		if !active {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("flasher 应只被调一次: %d", got)
+	}
 }
 
 // 深度识别：POST /api/board → boarder 执行 → 行进任务总线 → done 收尾。

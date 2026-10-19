@@ -560,7 +560,14 @@ white-space:pre-wrap;word-break:break-all;background:var(--sunken);border-radius
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
-const esc = s => { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; };
+// esc: HTML 转义（内容 + 属性值双安全）。textContent→innerHTML 只转义 & < >，
+// 不转义引号——而面板大量插值落在 title="…"/data-* 属性里，值中一个引号就能
+// 逃出属性（设备名/身份摘要/日志行都是设备侧可控文本）。补引号转义后 esc()
+// 才可安全用于属性插值，模板插值统一走它（xss_test.go 有静态门禁）。引号
+// 转义用 split/join 而非正则：面板静态分析词法（i18n/xss 测试）按字符串感知
+// 扫描、不解析正则字面量，正则里的裸引号会破坏词法。
+const esc = s => { const d = document.createElement("div"); d.textContent = s;
+  return d.innerHTML.split('"').join("&quot;").split("'").join("&#39;"); };
 const fmtKB = n => n >= 1048576 ? (n/1048576).toFixed(1)+" MB" : (n/1024).toFixed(1)+" KB";
 const fmtAgo = ms => { if (!ms || ms < 0) return "—";
   const s = Math.floor(ms/1000);
@@ -573,7 +580,10 @@ const fmtAgo = ms => { if (!ms || ms < 0) return "—";
 // 动态模板一律 t("原文")；t 只做查表，找不到就回原文（zh 恒等）。
 let LANG = localStorage.getItem("st_lang") ||
   ((navigator.language || "zh").toLowerCase().startsWith("zh") ? "zh" : "en");
-function t(s){ const d = LANG === "en" ? (window.I18N_EN || {}) : null; return (d && d[s]) || s; }
+// t 与 applyStaticI18N 的取键规则一致：先 trim 再精确匹配（静态壳文本节点
+// 常带内联标记挤出的前后空白，如 "提取正则 —— 每个 <b>…"；两条路径规则
+// 分叉会让一边翻不中）。找不到回原文（zh 恒等）。
+function t(s){ const k = (s || "").trim(); const d = LANG === "en" ? (window.I18N_EN || {}) : null; return (d && d[k]) || s; }
 function applyStaticI18n(){
   document.documentElement.lang = LANG === "en" ? "en" : "zh-CN";
   document.title = t("serialtap " + t("· 观测面板"));
@@ -909,13 +919,13 @@ function renderCards(){
     el.innerHTML = `
       <div class="top">
         <span class="name">${esc(d.name)}</span>
-        <span class="chip ${d.state}">${esc(d.state)}</span>
+        <span class="chip ${esc(d.state)}">${esc(d.state)}</span>
         ${d.proxy ? `<span class="badge">proxy ${esc(d.proxy)}</span>` : ""}
         <span class="tgap"></span>
         <span class="v-rate num"></span>
       </div>
       <div class="tty">${esc(d.tty)} · key=${esc(d.key)}</div>
-      <div class="ident" title="${t("点击查看设备身份详情")}">${identLine(d.info)}</div>
+      <div class="ident" title="${t("点击查看设备身份详情")}">${esc(identLine(d.info))}</div>
       <div class="meta">
         <span>${t("全量")} <b class="v-ssz"></b></span>
         <span>${t("事件")} <b class="v-esz"></b></span>
@@ -1194,7 +1204,9 @@ $("fmGo").onclick = () => {
   const fnames = (args && !$("fmArgsWrap").classList.contains("hidden")) ? [args.name || "flasher_args.json"] : fmBinFiles.map(f => f.name);
   if (!confirm(t("确认刷写：") + (peer ? peer + " · " : "") + pattern + "\n" + fnames.join(", "))) return;
   $("fmGo").disabled = true; fmState(peer ? t("上传中（随后经加密信道推送到") + " " + peer + "）…" : t("上传中…"));
-  fetch("/api/flash", {method:"POST", body:fd}).then(r=>{
+  // X-serialtap: 1 = 防 CSRF 自定义头（multipart 简单请求可绕过 CORS 预检，
+  // 服务端 /api/flash 校验此头；同源 fetch 本就带不上风险）
+  fetch("/api/flash", {method:"POST", headers:{"X-serialtap":"1"}, body:fd}).then(r=>{
     if (!r.ok) return r.text().then(t=>Promise.reject(t));
   }).then(()=>{
     fmState((peer ? t("远端") + " " + peer + " " + t("刷写中（让口 →") + " esptool " + t("→ 回采）…") : t("刷写中（让口 →") + " esptool " + t("→ 回采）…")));
