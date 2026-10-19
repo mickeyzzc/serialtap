@@ -188,6 +188,46 @@ func TestChannelLargeFrame(t *testing.T) {
 	}
 }
 
+// TestChannelConcurrentSendUniqueSeq: 并发 Send 的帧序唯一性（#54）。
+// AAD 的 tx 读取若在写锁外，两个并发 Send 会拿到同一序号——接收侧第二帧
+// 解封失败即拆链；-race 下同时报数据竞态。两发送者同屏障起跑，全部帧
+// 必须在接收侧无错解封。
+func TestChannelConcurrentSendUniqueSeq(t *testing.T) {
+	cli, srv, _, _ := handshakePair(t, "k", "k", Ident{ID: "a", Name: "a"}, Ident{ID: "b", Name: "b"})
+	const senders = 2
+	const perSender = 200
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	sendErr := make(chan error, senders)
+	for g := 0; g < senders; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			<-start
+			for i := 0; i < perSender; i++ {
+				if err := cli.Send(ftPing, mustJSON(map[string]int{"g": g, "i": i})); err != nil {
+					sendErr <- err
+					return
+				}
+			}
+		}(g)
+	}
+	close(start)
+
+	_ = srv.conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	for want := 0; want < senders*perSender; want++ {
+		if _, _, err := srv.Recv(); err != nil {
+			t.Fatalf("第 %d 帧解封失败（并发发送帧序重复）: %v", want, err)
+		}
+	}
+	wg.Wait()
+	select {
+	case err := <-sendErr:
+		t.Fatalf("并发发送失败: %v", err)
+	default:
+	}
+}
+
 // —— 重放测试：手工构造客户端帧序列，重放其中一帧 ——
 
 // captureConn: 只录写的假连接（客户端不发读）。

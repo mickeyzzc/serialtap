@@ -277,11 +277,13 @@ func (c *Channel) send(t byte, plain []byte) error {
 	if _, err := rand.Read(nonce); err != nil {
 		return err
 	}
+	c.wmu.Lock()
+	defer c.wmu.Unlock()
+	// AAD 帧序必须在锁内读取并自增（#54）：锁外读会让并发 Send 拿到同一
+	// 序号——接收侧第二帧解封失败即拆链，且构成数据竞态。
 	var aad [9]byte
 	aad[0] = t
 	binary.BigEndian.PutUint64(aad[1:], c.tx)
-	c.wmu.Lock()
-	defer c.wmu.Unlock()
 	c.tx++
 	ct := c.aeads[c.role].Seal(nil, nonce, plain, aad[:])
 	buf := make([]byte, 4, 5+len(nonce)+len(ct))
