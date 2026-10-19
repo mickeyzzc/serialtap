@@ -108,13 +108,13 @@ func (n *Node) handleDial(ch *Channel, payload []byte) {
 			}
 		}
 	}()
-	select {
-	case <-toPeer:
+	select { // errcheck v2.15 起检查 error 通道的裸接收——显式丢弃
+	case _ = <-toPeer:
 		_ = ch.Close() // 解除 fromPeer 的 Recv 阻塞
-		<-fromPeer
-	case <-fromPeer:
+		_ = <-fromPeer
+	case _ = <-fromPeer:
 		_ = local.Close() // 解除 toPeer 的 Read 阻塞
-		<-toPeer
+		_ = <-toPeer
 	}
 	n.logf("[mesh] 隧道结束 %s（%s）", device, ch.PeerAddr())
 }
