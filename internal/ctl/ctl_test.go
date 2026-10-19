@@ -259,9 +259,9 @@ func TestServeConcurrentDialCloseSmoke(t *testing.T) {
 // 标记让 respond 解除阻塞、handler 正常走完（#56 回归——此前 flash 流式
 // 输出会把 opMu 永久卡死）。
 func TestSlowClientWriteDeadline(t *testing.T) {
-	old := writeTimeout
-	writeTimeout = 200 * time.Millisecond
-	t.Cleanup(func() { writeTimeout = old })
+	old := writeTimeoutMs.Load()
+	writeTimeoutMs.Store(200)
+	t.Cleanup(func() { writeTimeoutMs.Store(old) })
 
 	sock := filepath.Join(t.TempDir(), "s.sock")
 	srv, err := Listen(sock)

@@ -187,7 +187,7 @@ func (s *Server) handleConn(conn net.Conn, h Handler) {
 		if dead.Load() {
 			return
 		}
-		_ = conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+		_ = conn.SetWriteDeadline(time.Now().Add(time.Duration(writeTimeoutMs.Load()) * time.Millisecond))
 		if writeJSON(conn, r) != nil {
 			dead.Store(true)
 			_ = conn.Close()
@@ -241,9 +241,13 @@ func (s *Server) Close() {
 	_ = os.Remove(s.ln.Addr().String())
 }
 
-// writeTimeout: 单次响应写超时。ctl 客户端是人/脚本终端——停住属正常
-// 故障形态，守护进程侧必须能自愈（见 handleConn 注释）。var 供测试缩短。
-var writeTimeout = 5 * time.Second
+// writeTimeoutMs: 单次响应写超时（毫秒）。ctl 客户端是人/脚本终端——停住
+// 属正常故障形态，守护进程侧必须能自愈（见 handleConn 注释）。atomic：
+// 测试可热改，且前一个测试遗留的 handler 协程仍在读（Close 有 3s 宽限
+// 期后放弃等待），普通 var 会被 -race 抓。
+var writeTimeoutMs atomic.Int64
+
+func init() { writeTimeoutMs.Store(5000) }
 
 func writeJSON(conn net.Conn, r Response) error {
 	b, err := json.Marshal(r)
