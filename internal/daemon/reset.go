@@ -170,7 +170,13 @@ func defaultUSBRestartDevice(instanceID string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), pnputilTimeout)
 	defer cancel()
-	out, _ := exec.CommandContext(ctx, "pnputil", "/restart-device", instanceID).CombinedOutput()
+	out, err := exec.CommandContext(ctx, "pnputil", "/restart-device", instanceID).CombinedOutput()
+	if err != nil {
+		// exec 级失败（pnputil 缺失/服务化环境 PATH 被剥/超时）不能当成功：
+		// 输出为空时 accessDenied/pnputilFailed 均不命中，此前会把"根本没
+		// 跑成"上报为 Reset 成功（#72）
+		return string(out), fmt.Errorf("pnputil 执行失败: %w", err)
+	}
 	s := string(out)
 	if accessDenied(s) {
 		return runPnputilElevated(instanceID)

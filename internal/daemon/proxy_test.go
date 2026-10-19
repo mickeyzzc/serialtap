@@ -200,3 +200,60 @@ func TestProxyStartNoMatch(t *testing.T) {
 	}
 	_ = fmt.Sprint(d.Collectors())
 }
+
+// 带会话拔板（#58 回归）：设备移除时不仅关 listener，还要摘除活跃代理
+// 会话——客户端连接应被关闭，否则 pump 协程挂在 conn.Read 上直到客户端
+// 自己断开，泄漏 goroutine + fd。
+func TestProxySessionClosedOnDeviceRemoval(t *testing.T) {
+	root := t.TempDir()
+	old := collector.OpenPort
+	collector.OpenPort = func(tty string, baud int) (collector.Port, error) {
+		return &testutil.FakePort{}, nil
+	}
+	t.Cleanup(func() { collector.OpenPort = old })
+
+	cfg := config.DefaultConfig()
+	cfg.Root = root
+	cfg.PollMs = 50
+	var mu sync.Mutex
+	devs := []device.DeviceInfo{{Tty: "/dev/fakeP", Key: "keyP", Name: "proxdev", ByID: "idP"}}
+	d, err := New(cfg, nil, func() ([]device.DeviceInfo, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]device.DeviceInfo(nil), devs...), nil
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(d.Shutdown)
+	d.Tick()
+
+	ep, _, _, err := d.ProxyStart("proxdev")
+	if err != nil {
+		t.Fatalf("ProxyStart: %v", err)
+	}
+	conn, err := net.Dial("tcp", ep)
+	if err != nil {
+		t.Fatalf("dial %s: %v", ep, err)
+	}
+	defer conn.Close()
+	waitProxyAttached(t, d)
+
+	mu.Lock()
+	devs = nil
+	mu.Unlock()
+	for i := 0; i < removeMissTicks; i++ {
+		d.Tick() // 移除去抖期满 → 拆采集器 + 收口会话
+	}
+	// 服务端应已主动关闭会话连接（读到 EOF），而不是等客户端超时
+	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	buf := make([]byte, 16)
+	for {
+		if _, err := conn.Read(buf); err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				t.Fatal("设备移除后会话连接未被关闭（pump/fd 泄漏）")
+			}
+			break // EOF / reset —— 期望路径
+		}
+	}
+}

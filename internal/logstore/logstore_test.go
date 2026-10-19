@@ -135,3 +135,28 @@ func TestEventsRotateBySize(t *testing.T) {
 		t.Fatalf("events 未按大小轮转: %v", m)
 	}
 }
+
+// Close 后的写入必须被拒绝且不得重开文件（#58 回归——Flash 中途拔板后
+// 迟到的 LogEvent 曾把已关闭的 events 文件重新打开，fd 再无人关闭）。
+func TestClosedWriterRejectsWrites(t *testing.T) {
+	root := t.TempDir()
+	w, err := NewDeviceWriter(root, "dev", 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.WriteLine("before close"); err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+	if err := w.WriteLine("after close"); err != ErrClosed {
+		t.Fatalf("Close 后 WriteLine 应回 ErrClosed: %v", err)
+	}
+	if err := w.WriteEvent("after close"); err != ErrClosed {
+		t.Fatalf("Close 后 WriteEvent 应回 ErrClosed: %v", err)
+	}
+	// 不应新建任何额外文件
+	entries, _ := filepath.Glob(filepath.Join(root, "dev", "*.log"))
+	if len(entries) != 2 { // serial + events 当日文件
+		t.Fatalf("Close 后不应新增文件: %v", entries)
+	}
+}
