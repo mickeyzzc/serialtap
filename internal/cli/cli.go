@@ -227,6 +227,10 @@ func cmdRun(args []string) error {
 	if err != nil {
 		return err
 	}
+	// 未知配置键告警（#61）：不阻断启动，但 typo 不许静默
+	for _, w := range cfg.Warnings {
+		stdoutLog("[config] ⚠ %s", w)
+	}
 	if *webFlag != "" {
 		cfg.WebAddr = *webFlag
 	}
