@@ -33,6 +33,7 @@ func (d *daemon) matches(pattern string) ([]string, []*collector.Collector) {
 	if err != nil {
 		return nil, nil
 	}
+	d.colMu.RLock() // ctl/web/托盘与 Tick 并发读写保护（#52）
 	var keys []string
 	cs := map[string]*collector.Collector{}
 	for k, c := range d.collectors {
@@ -44,6 +45,7 @@ func (d *daemon) matches(pattern string) ([]string, []*collector.Collector) {
 			}
 		}
 	}
+	d.colMu.RUnlock()
 	sort.Strings(keys)
 	out := make([]*collector.Collector, 0, len(keys))
 	for _, k := range keys {
@@ -61,6 +63,10 @@ func (d *daemon) Release(pattern string, forDur time.Duration, untilIdle bool) (
 	keys, cs := d.matches(pattern)
 	if len(cs) == 0 {
 		return 0, fmt.Errorf("没有匹配 %q 的采集设备", pattern)
+	}
+	if untilIdle && forDur > 0 {
+		return 0, fmt.Errorf("until_idle 与限时 --for 互斥，请二选一（ctl/mesh 裸参数此前可同时下发，" +
+			"Windows 上组合语义退化为 3 秒抢口）")
 	}
 	if untilIdle && forDur <= 0 && !device.IdleDetectSupported() {
 		return 0, fmt.Errorf("此平台不支持空闲自动回采（Windows 无 /proc/lsof 占用检测）；" +
@@ -117,7 +123,10 @@ func (d *daemon) ResumeAll(pattern string) (int, error) {
 	}
 	d.mu.Unlock()
 	for _, k := range resumed {
-		if c, ok := d.collectors[k]; ok {
+		d.colMu.RLock()
+		c, ok := d.collectors[k]
+		d.colMu.RUnlock()
+		if ok {
 			c.Resume()
 			c.LogEvent("release revoked by resume command")
 			n++
@@ -136,7 +145,9 @@ func (d *daemon) tickReleases() {
 	d.mu.Lock()
 	var done []string
 	for k, spec := range d.releases {
+		d.colMu.RLock()
 		c, ok := d.collectors[k]
+		d.colMu.RUnlock()
 		if !ok {
 			done = append(done, k) // 设备已拔走
 			continue
@@ -166,7 +177,10 @@ func (d *daemon) tickReleases() {
 		d.mu.Lock()
 		delete(d.releases, k)
 		d.mu.Unlock()
-		if c, ok := d.collectors[k]; ok {
+		d.colMu.RLock()
+		c, ok := d.collectors[k]
+		d.colMu.RUnlock()
+		if ok {
 			c.Resume()
 			c.LogEvent("port idle/time expired — resuming collection")
 		}
@@ -176,6 +190,7 @@ func (d *daemon) tickReleases() {
 // Status: 全部设备当前状态（按 key 排序——客户端按确定顺序拿到清单，
 // "取第一台"类的消费方才不会每次调用换目标）。
 func (d *daemon) Status() []ctl.DevState {
+	d.colMu.RLock()
 	keys := make([]string, 0, len(d.collectors))
 	for k := range d.collectors {
 		keys = append(keys, k)
@@ -195,6 +210,7 @@ func (d *daemon) Status() []ctl.DevState {
 			Info: c.FactsSummary(),
 		})
 	}
+	d.colMu.RUnlock()
 	return out
 }
 

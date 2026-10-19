@@ -82,6 +82,11 @@ type Collector struct {
 	openCount atomic.Int64 // 成功 open 次数（健康指标：1 = 从未断线重开）
 	lastData  atomic.Int64 // 最近一次读到字节的 UnixMilli（0 = 尚无数据）
 
+	// writeFail: 落盘失败标记（仅 Run 循环协程读写）。磁盘满/根目录不可写
+	// 时 WriteLine 持续失败但错误被 `_ =` 弃置——采集"看似正常"实则一行没
+	// 落盘。首次失败记一条事件（含原因），恢复再记一条（#64）
+	writeFail bool
+
 	// 透传桥状态（见 proxy.go）
 	proxyMu    sync.Mutex       // 保护 proxyConn
 	proxyConn  net.Conn         // 当前代理客户端（单客户端，nil = 无会话）
@@ -252,6 +257,13 @@ func (c *Collector) collectOnce() (collectExit, error) {
 	// 透传桥的写入口：端口存续期间登记，关闭即撤销（见 proxy.go）
 	c.setPortWriter(port)
 	defer c.setPortWriter(nil)
+	// open 后立即复查让出请求：Suspend 轮询 portOpen 与此处 Store 之间存在
+	// 毫秒级 TOCTOU 窗口——晚到的 Suspend 观察到已闭合会让出成功，采集器
+	// 却已把口抢回来。复查命中就按 paused 退出（defers 已就位，端口正常
+	// 关闭），下一轮由 waitHeldCleared 收口（#72）
+	if c.Held() || c.pause.Matches(c.dev) {
+		return reasonPaused, nil
+	}
 	// 见文件头注释第 2 条：open 后立即释放 DTR/RTS。例外 = dtr_hold 命中的
 	// 设备保持断言：pico-sdk CDC（RP2040）以 DTR 判"主机在听"，释放会让
 	// stdio_usb 静默丢弃全部输出（2026-09-27 rp2040-zero 实测：seq 一路
@@ -312,11 +324,26 @@ func (c *Collector) collectOnce() (collectExit, error) {
 				}
 				continue
 			}
-			_ = c.w.WriteLine(line)
+			c.writeLine(line)
 			if sig, ok := c.matchSig(line); ok {
 				_ = c.w.WriteEvent(fmt.Sprintf("[%s] %s", sig, truncate(line, 200)))
 			}
 		}
+	}
+}
+
+// writeLine: 全量落盘 + 失败/恢复事件（去抖各一次）。
+func (c *Collector) writeLine(line string) {
+	if err := c.w.WriteLine(line); err != nil {
+		if !c.writeFail {
+			c.writeFail = true
+			c.event("log write error: %v — 落盘中断（磁盘满/目录不可用？），恢复后将记事件", err)
+		}
+		return
+	}
+	if c.writeFail {
+		c.writeFail = false
+		c.event("log write recovered — 落盘恢复")
 	}
 }
 
@@ -331,7 +358,7 @@ func (c *Collector) matchSig(line string) (string, bool) {
 
 func (c *Collector) flushTail(asm *lineAssembler) {
 	if t := asm.flush(); t != "" {
-		_ = c.w.WriteLine("…partial " + t)
+		c.writeLine("…partial " + t)
 	}
 }
 

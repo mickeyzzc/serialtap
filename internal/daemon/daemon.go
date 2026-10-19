@@ -31,6 +31,7 @@ type daemon struct {
 	collectors map[string]*collector.Collector
 	namesUsed  map[string]bool
 	prevInst   map[string]string // 名 → "key\x00tty"：同名牌换实例 = 物理板更换（换板事件）
+	misses     map[string]int    // key → 连续未见拍数（移除去抖，见 removeMissTicks）
 	enum       func() ([]device.DeviceInfo, error)
 	logf       func(format string, args ...any)
 	wg         sync.WaitGroup // 采集器 Run 协程追踪（shutdown 等待，防泄漏）
@@ -40,6 +41,12 @@ type daemon struct {
 	proxies    map[string]net.Listener // 设备 key → 透传监听（见 proxy.go）
 	// opMu 串行化 Flash/Release/ResumeAll（TryLock fail-fast，见 flash.go）
 	opMu sync.Mutex
+	// colMu 保护 collectors/namesUsed/prevInst/misses。Tick（watch 协程，托盘
+	// 也会并发触发）写；ctl 每连接一协程、web 面板每请求一协程经
+	// Status/Facts/matches 并发读。此前无锁——并发读写普通 map 是
+	// runtime fatal error（直接杀进程，丢全部在采日志），面板轮询叠加热插拔
+	// 即现实触发路径（#52）。
+	colMu sync.RWMutex
 }
 
 // Daemon: daemon 的导出别名（cli 的托盘接线需要具名类型；New 返回 *daemon）。
@@ -100,6 +107,7 @@ func New(cfg config.Config, excl []*regexp.Regexp,
 		collectors: map[string]*collector.Collector{},
 		namesUsed:  map[string]bool{},
 		prevInst:   map[string]string{},
+		misses:     map[string]int{},
 		proxies:    map[string]net.Listener{},
 		enum:       enum,
 		logf:       logf,
@@ -121,17 +129,42 @@ func (d *daemon) Facts(pattern string) (map[string]facts.Fact, error) {
 	return all, nil
 }
 
+// removeMissTicks: 设备连续未见 N 拍才判移除。Windows PnP 变更窗口期
+// （恰是刷另一块板时）注册表枚举可能瞬时失败或部分 USB 条目缺 meta——
+// 单拍即拆会把还在的板当拔出处理：关口 → 复位脉冲 → 下一拍重开，
+// 违背"每物理设备恰好 open 一次"纪律（#59）。PollMs 默认 2s，3 拍 ≈ 6s。
+const removeMissTicks = 3
+
 // tick: 单轮巡检（枚举 diff、起停采集器、暂停清单热重载）。
+// 枚举失败跳过本轮 diff（只保留 pause 热重载与 release 到期处理）——
+// 把"枚举报错"当"设备全拔了"处理会拆光采集器（#59）。
 func (d *daemon) Tick() {
 	infos, err := d.enum()
 	if err != nil {
-		d.logf("[watch] 枚举失败: %v", err)
+		d.logf("[watch] 枚举失败（本轮跳过 diff）: %v", err)
+		d.reloadPause()
+		d.tickReleases()
+		return
 	}
 	seen := map[string]bool{}
 	for _, inf := range infos {
 		seen[inf.Key] = true
+	}
+	d.colMu.Lock()
+	for _, inf := range infos {
+		delete(d.misses, inf.Key)
 		if _, ok := d.collectors[inf.Key]; ok {
 			continue
+		}
+		// 快换收口：同名前任已不在本轮枚举（正处移除去抖窗口）、继任者已
+		// 到位——立即拆前任，让继任者继承裸基名并触发换板事件。不拆的话
+		// 去抖期内双活，继任者被迫挂 token 后缀、换板检测失灵（seen 先
+		// 全量建好再进本循环，双同名板并存时不会误拆）
+		for k2, c2 := range d.collectors {
+			if c2.DeviceName() == inf.Name && !seen[k2] {
+				d.logf("[watch] 快换收口 %s (key=%s)", c2.Tty(), k2)
+				d.removeCollectorLocked(k2, c2)
+			}
 		}
 		// 重名设备去重（同型号板 by-id 无序列号时撞名，如两只乐鑫原生
 		// USB-JTAG 都是 303a:1001 → 都叫 esp32s3-jtag）。后缀不按接入顺序
@@ -144,6 +177,10 @@ func (d *daemon) Tick() {
 		inf.Name = name
 		w, err := logstore.NewDeviceWriter(d.cfg.Root, name, d.cfg.RotateMB)
 		if err != nil {
+			// 占坑回滚：不回滚的话 root 目录持续不可写（盘满/权限）时，
+			// 每拍 dedupeName 都会派生 base-tok-2/-3/… 新名占坑，namesUsed
+			// 无界膨胀且每拍刷错误日志（#72）
+			delete(d.namesUsed, name)
 			d.logf("[watch] 建目录失败 %s: %v", name, err)
 			continue
 		}
@@ -169,15 +206,30 @@ func (d *daemon) Tick() {
 	}
 	for key, c := range d.collectors {
 		if !seen[key] {
+			d.misses[key]++
+			if d.misses[key] < removeMissTicks {
+				continue // 连续未见去抖：单拍缺失不拆（枚举抖动/注册表瞬时读败）
+			}
 			d.logf("[watch] 设备移除 %s (key=%s)", c.Tty(), key)
-			c.Stop()
-			d.proxyRemove(key) // 设备拔出收口其代理监听（此前漏调，监听句柄泄漏）
-			delete(d.collectors, key)
-			delete(d.namesUsed, c.DeviceName())
+			d.removeCollectorLocked(key, c)
 		}
 	}
+	d.colMu.Unlock()
 	d.reloadPause()
 	d.tickReleases()
+}
+
+// removeCollectorLocked: 拆除单个采集器——停采集、收口代理监听与会话
+// （只关 listener 不摘会话的话 pump 协程挂在 conn.Read 上直到客户端自己
+// 断开，每次"带会话拔板"泄漏一个 goroutine + 一个 fd，#58）、释放名字。
+// 需持 colMu 写锁。
+func (d *daemon) removeCollectorLocked(key string, c *collector.Collector) {
+	c.Stop()
+	d.proxyRemove(key)
+	c.DetachProxy()
+	delete(d.collectors, key)
+	delete(d.namesUsed, c.DeviceName())
+	delete(d.misses, key)
 }
 
 // reloadPause: PAUSED 文件 mtime 变更 → 热替换暂停模式表。
@@ -204,9 +256,11 @@ func (d *daemon) reloadPause() {
 // 等待、继续退出路径，宁可带病退出也不永久楔死。
 func (d *daemon) Shutdown() {
 	d.proxyCloseAll()
+	d.colMu.RLock()
 	for _, c := range d.collectors {
 		c.Stop()
 	}
+	d.colMu.RUnlock()
 	done := make(chan struct{})
 	go func() {
 		d.wg.Wait()
@@ -220,10 +274,16 @@ func (d *daemon) Shutdown() {
 }
 
 // Collectors: 当前活跃采集器数量（巡检/测试用）。
-func (d *daemon) Collectors() int { return len(d.collectors) }
+func (d *daemon) Collectors() int {
+	d.colMu.RLock()
+	defer d.colMu.RUnlock()
+	return len(d.collectors)
+}
 
 // Name: 指定 key 的采集器设备名（测试用）。
 func (d *daemon) Name(key string) string {
+	d.colMu.RLock()
+	defer d.colMu.RUnlock()
 	if c, ok := d.collectors[key]; ok {
 		return c.DeviceName()
 	}
