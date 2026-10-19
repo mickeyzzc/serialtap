@@ -3,8 +3,10 @@
 package tray
 
 import (
+	"bufio"
 	_ "embed"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -57,12 +59,19 @@ func openURL(url string) error {
 }
 
 // StartDaemon: 启动一个后台守护进程（serialtap run，无窗口）。
+// 子进程输出落 <root>/tray-spawn.log——此前 CREATE_NO_WINDOW + 无重定向，
+// 子进程秒死（如 mesh 端口被占）完全无诊断，托盘只显示"未运行"。
 func StartDaemon(sockPath, root string) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
 	cmd := exec.Command(exe, "run", "--sock", sockPath, "--root", root)
+	if f, ferr := os.OpenFile(filepath.Join(root, "tray-spawn.log"),
+		os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); ferr == nil {
+		cmd.Stdout, cmd.Stderr = f, f
+		_ = f.Close() // 子进程已继承句柄，父侧即可关
+	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW,
 	}
@@ -94,12 +103,34 @@ func RunResident(sockPath, root, webURL string, poll time.Duration) error {
 	if abs, err := filepath.Abs(root); err == nil {
 		root = abs
 	}
+	// 启动即自检：守护未运行则自动拉起（#83——此前只有菜单"启动守护进程"
+	// 可点，双击/快捷方式打开托盘后"图标有了、程序没起来"）。仅启动时一次：
+	// 运行中守护退出不自动重拉，保持"退出托盘不影响守护"的对称语义。
+	if !daemonAlive(sockPath) {
+		_ = StartDaemon(sockPath, root)
+	}
 	t := &trayUI{
 		sockPath: sockPath, root: root, webURL: webURL, poll: poll,
 		states: map[string]string{}, devUIs: map[string]*devUI{},
 	}
 	systray.Run(t.onReady, func() {})
 	return nil
+}
+
+// daemonAlive: ctl socket 上发一条 status 探活——任何一行响应即活。
+// 楔死守护（连上但永不应答）视作未运行：StartDaemon 拉起的新实例会被
+// socket 占用守卫拒绝，不会出现双守护；托盘维持"未运行"态可手动处置。
+func daemonAlive(sockPath string) bool {
+	conn, err := net.DialTimeout("unix", sockPath, 500*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(700 * time.Millisecond))
+	if _, err := conn.Write([]byte("{\"cmd\":\"status\"}\n")); err != nil {
+		return false
+	}
+	return bufio.NewScanner(conn).Scan()
 }
 
 type trayUI struct {

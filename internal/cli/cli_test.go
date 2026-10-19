@@ -46,6 +46,10 @@ func TestRunDispatch(t *testing.T) {
 		{[]string{"list"}, 0}, // 真实 sysfs，有无设备都不算错
 	}
 	for _, c := range cases {
+		if c.args == nil && runtime.GOOS == "windows" {
+			continue // Windows 无参数 = 进托盘（GUI 阻塞循环，#83）——测试进程
+			// 不能直接调；该行为由 tray 侧单测与真机验证覆盖
+		}
 		if got := Run(c.args); got != c.want {
 			t.Fatalf("Run(%v) = %d, want %d", c.args, got, c.want)
 		}
