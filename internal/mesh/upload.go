@@ -21,6 +21,10 @@ import (
 
 const uploadChunk = 1 << 20 // 1MB 原始字节/块
 
+// uploadSidCap: 单上传会话（sid）累计落盘上限（#69）——防持钥 peer 用无人
+// 消费的上传会话无限占盘。测试下调验证越限拒绝。
+var uploadSidCap int64 = 1 << 30 // 1 GiB
+
 // upFrame: ftUp 载荷。seq 从 0 起。
 type upFrame struct {
 	SID   string `json:"sid"`
@@ -56,6 +60,12 @@ func (n *Node) handleUpload(ch *Channel, payload []byte) error {
 	if !safeNameRe.MatchString(uf.Name) || !safeNameRe.MatchString(uf.SID) {
 		return ch.Send(ftUpAck, mustJSON(upAckFrame{SID: uf.SID, Name: uf.Name, LastSeq: -1}))
 	}
+	// 只读接入（#69）：上传直写本机磁盘，与写命令同权——ro 不能被 ftUp
+	// 直传帧绕过，在此咽喉拒绝（拒绝 ack 与非法名同款 LastSeq=-1）。
+	if n.readOnly() {
+		n.logf("[mesh] 拒绝只读节点的上传 %s/%s（%s）", uf.SID, uf.Name, ch.PeerAddr())
+		return ch.Send(ftUpAck, mustJSON(upAckFrame{SID: uf.SID, Name: uf.Name, LastSeq: -1}))
+	}
 	dir := filepath.Join(n.opt.Root, ".flash-upload", "mesh-"+uf.SID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
@@ -64,6 +74,18 @@ func (n *Node) handleUpload(ch *Channel, payload []byte) error {
 	data, err := unb64(uf.B64)
 	if err != nil {
 		return err
+	}
+	// 单会话累计上限（#69）：越限块直接拒（不入账不落盘），客户端见 -1 即停
+	n.mu.Lock()
+	total := n.upBytes[uf.SID] + int64(len(data))
+	over := total > uploadSidCap
+	if !over {
+		n.upBytes[uf.SID] = total
+	}
+	n.mu.Unlock()
+	if over {
+		n.logf("[mesh] 上传会话 %s 超累计上限（%d > %d B），拒绝 %s#%d", uf.SID, total, uploadSidCap, uf.Name, uf.Seq)
+		return ch.Send(ftUpAck, mustJSON(upAckFrame{SID: uf.SID, Name: uf.Name, LastSeq: -1}))
 	}
 	if uf.Seq == 0 {
 		// 新文件（同名重传 = 追加语义靠 seq 顺序；seq0 截断重建）

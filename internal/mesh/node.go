@@ -64,6 +64,7 @@ type Node struct {
 
 	mu      sync.Mutex
 	uploads map[string]map[string]string // sid → name → 已落盘绝对路径
+	upBytes map[string]int64             // sid → 累计落盘字节（#69 单会话上限）
 	dlAuth  map[string]string            // token → 可下载绝对路径（只登记本节点自建产物）
 	tunnels map[string]*tunnel           // pattern → 隧道
 	callSeq uint64
@@ -104,6 +105,7 @@ func NewNode(opt Options) (*Node, error) {
 		sec:       sec,
 		reg:       NewRegistry(3 * announce),
 		uploads:   map[string]map[string]string{},
+		upBytes:   map[string]int64{},
 		dlAuth:    map[string]string{},
 		tunnels:   map[string]*tunnel{},
 		conns:     map[net.Conn]struct{}{},
