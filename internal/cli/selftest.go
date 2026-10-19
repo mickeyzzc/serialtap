@@ -28,7 +28,10 @@ const (
 
 var ansiRe = regexp.MustCompile("\x1b\\[[0-9;]*m")
 var rssiRe = regexp.MustCompile(`(-\d+)dBm`)
-var serialFileRe = regexp.MustCompile(`^serial-(\d{8})\.log(\.\d{3})?$`)
+
+// 轮转文件名与 logstore.FileName 的实际产物对齐：serial-YYYYMMDD.log 与
+// serial-YYYYMMDD.NNN.log（后缀在 .log 前，issue #53 曾写成 .log.NNN 扫不到）。
+var serialFileRe = regexp.MustCompile(`^serial-(\d{8})(?:\.(\d{3}))?\.log$`)
 
 // SelftestEntry: 单设备的检索结果。Lines 为同一次开机的那组原始行
 // （含时间戳前缀）；Missing=回溯范围内未见自检行（固件未实现规范或
@@ -61,10 +64,10 @@ func scanDeviceSelftest(dir string, maxFiles int) SelftestEntry {
 		if m == nil {
 			continue
 		}
-		// 排序键：日期字符串 + 轮转后缀数字（.001 比 .000 即基础文件新）
+		// 排序键：日期字符串 + 轮转后缀数字（.001 比基础文件新）
 		suffix := 0
 		if m[2] != "" {
-			suffix, _ = strconv.Atoi(strings.TrimPrefix(m[2], "."))
+			suffix, _ = strconv.Atoi(m[2])
 		}
 		files = append(files, fmt.Sprintf("%s|%03d|%s", m[1], suffix, name))
 	}

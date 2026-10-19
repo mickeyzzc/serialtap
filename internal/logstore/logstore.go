@@ -47,12 +47,18 @@ func NewDeviceWriter(root, name string, maxMB int) (*DeviceWriter, error) {
 func (w *DeviceWriter) Dir() string  { return filepath.Join(w.root, w.name) }
 func (w *DeviceWriter) Name() string { return w.name }
 
-func (w *DeviceWriter) filePath(kind, day string, suffix int) string {
+// FileName: 单通道日志文件名（kind-YYYYMMDD[.NNN].log）。导出是给跨包消费
+// 方对齐命名用的——cli/selftest 的文件扫描正则以它做契约测试（issue #53）。
+func FileName(kind, day string, suffix int) string {
 	base := fmt.Sprintf("%s-%s", kind, day)
 	if suffix > 0 {
 		base += fmt.Sprintf(".%03d", suffix)
 	}
-	return filepath.Join(w.root, w.name, base+".log")
+	return base + ".log"
+}
+
+func (w *DeviceWriter) filePath(kind, day string, suffix int) string {
+	return filepath.Join(w.root, w.name, FileName(kind, day, suffix))
 }
 
 // highestSuffix: 某通道当日既有文件的最大轮转后缀（0 = 只有基础文件/无）。

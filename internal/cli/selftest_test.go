@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mickeyzzc/serialtap/internal/logstore"
 )
 
 // 写一个设备日志文件（当日），返回其路径。
@@ -82,6 +85,51 @@ func TestScanDeviceSelftestMissing(t *testing.T) {
 	entry := scanDeviceSelftest(dev, 14)
 	if !entry.Missing {
 		t.Fatalf("无自检行应 Missing=true, got %+v", entry)
+	}
+}
+
+// —— issue #53：扫描正则必须与 logstore 实际产物命名一致 ——
+// 契约：logstore.FileName 生成的文件名（基础 + 大小轮转），selftest 的
+// serialFileRe 都要能解析出日期/后缀；任一侧改名本测试即红。
+func TestSelftestFileRegexMatchesLogstoreNaming(t *testing.T) {
+	for _, sfx := range []int{0, 1, 7, 42, 999} {
+		name := logstore.FileName("serial", "20260101", sfx)
+		m := serialFileRe.FindStringSubmatch(name)
+		if m == nil {
+			t.Fatalf("正则不匹配 logstore 产物 %q", name)
+		}
+		if m[1] != "20260101" {
+			t.Fatalf("日期组错误: %v", m)
+		}
+		want := "" // 基础文件无可选后缀组
+		if sfx > 0 {
+			want = fmt.Sprintf("%03d", sfx)
+		}
+		if m[2] != want {
+			t.Fatalf("后缀组错误: %v（want %s）", m, want)
+		}
+	}
+	// events 通道与"后缀在 .log 后"的旧误命名不得混入
+	if serialFileRe.MatchString(logstore.FileName("events", "20260101", 0)) {
+		t.Fatal("events 通道不应被 serial 扫描命中")
+	}
+	if serialFileRe.MatchString("serial-20260101.log.001") {
+		t.Fatal(".log.NNN 不是 logstore 命名，不应匹配")
+	}
+}
+
+// 轮转文件（serial-YYYYMMDD.NNN.log）同样可被检索，且同日取最新后缀。
+func TestScanDeviceSelftestRotatedFiles(t *testing.T) {
+	root := t.TempDir()
+	dev := filepath.Join(root, "rot-dev")
+	writeSelftestLog(t, dev, logstore.FileName("serial", "20260101", 0),
+		"[09:00:00.000] m: SELFTEST: board=rot-old sensor=deferred\n")
+	writeSelftestLog(t, dev, logstore.FileName("serial", "20260101", 7),
+		"[11:00:00.000] m: SELFTEST: board=rot-new sensor=OV5640/0x5640\n")
+
+	entry := scanDeviceSelftest(dev, 14)
+	if entry.Missing || len(entry.Lines) != 1 || !strings.Contains(entry.Lines[0], "rot-new") {
+		t.Fatalf("应取到同日最新轮转（.007）: Missing=%v Lines=%v", entry.Missing, entry.Lines)
 	}
 }
 
