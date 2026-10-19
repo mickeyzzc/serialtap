@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,5 +72,27 @@ func TestMeshAccessParse(t *testing.T) {
 	}
 	if cfg.MeshAccess != "ro" {
 		t.Fatalf("ro 解析失败: %q", cfg.MeshAccess)
+	}
+}
+
+// —— issue #68：示例配置必须是可直接复制使用的严格 JSON ——
+// 曾带 // 注释行，json.Unmarshal 一读就炸，用户抄一份即坏配置。
+func TestExampleConfigParses(t *testing.T) {
+	example := filepath.Join("..", "..", "config.example.json")
+	data, err := os.ReadFile(example)
+	if err != nil {
+		t.Fatalf("读示例配置失败: %v", err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("示例配置不是合法 JSON（注释/尾逗号？）: %v", err)
+	}
+	cfg, err := LoadConfig(example)
+	if err != nil {
+		t.Fatalf("示例配置加载失败: %v", err)
+	}
+	// 补齐的 6 个字段（#68）取值抽查
+	if cfg.FlashBaud != 921600 || cfg.FlashTimeoutS != 600 || cfg.WebAddr != "127.0.0.1:8801" {
+		t.Fatalf("示例补齐字段取值异常: %+v", cfg)
 	}
 }
