@@ -55,11 +55,8 @@ func (j *flashJob) publish(ev flashEvent) {
 	}
 }
 
-func (j *flashJob) snapshot() (events []flashEvent, active bool) {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	return append([]flashEvent(nil), j.events...), j.active
-}
+// snapshot 已并入 flashStream 的"快照+订阅"同一临界区（拆开会在缝里丢
+// done 事件），不再单独提供。
 
 // handleFlash: POST /api/flash（multipart）。
 // 字段：pattern（必填）；peer（可选——mesh 远端节点，镜像先落本机再经
@@ -69,6 +66,14 @@ func (j *flashJob) snapshot() (events []flashEvent, active bool) {
 func (s *Server) handleFlash(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	// 自定义头防 CSRF：multipart 表单 POST 属"简单请求"，浏览器不经 CORS
+	// 预检直接发出——跨站页面可用隐藏表单打这个端点（改固件是最高危操作）。
+	// 要求非 CORS 安全列表的自定义头 X-serialtap: 1，跨站脚本拿不到预检
+	// 许可就发不出它；面板 fetch 已带上（apiGuard 的 Origin 校验是第一道）。
+	if r.Header.Get("X-serialtap") != "1" {
+		http.Error(w, "missing X-serialtap header", http.StatusForbidden)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 128<<20)
@@ -92,38 +97,47 @@ func (s *Server) handleFlash(w http.ResponseWriter, r *http.Request) {
 	}
 	all := r.FormValue("all") == "true"
 
+	// 任务槽原子占用（check + 清历史 + set 同一临界区，对齐 handleBoard）：
+	// 检查与占坑分两次加锁的话，两个并发上传都能通过检查 → 双任务串扰。
+	// 上传阶段（秒级~分钟级）就此占坑；中途出错用 publish(done+err) 释放
+	// ——顺带把失败通知给已挂上的进度流（它们在等 done 收尾）。
 	s.job.mu.Lock()
 	if s.job.active {
 		s.job.mu.Unlock()
 		http.Error(w, "已有刷写进行中，稍后再试", http.StatusConflict)
 		return
 	}
+	s.job.events = nil
+	s.job.active = true
 	s.job.mu.Unlock()
+	bail := func(status int, msg string) {
+		s.job.publish(flashEvent{Done: true, Err: msg})
+		http.Error(w, msg, status)
+	}
 
 	dir := filepath.Join(s.root, ".flash-upload", time.Now().Format("20060102-150405"))
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		bail(http.StatusInternalServerError, err.Error())
 		return
 	}
 	spec := flash.Spec{}
 	if fhs := r.MultipartForm.File["args_file"]; len(fhs) > 0 {
 		p, err := saveUpload(fhs[0], dir, "flasher_args.json")
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			bail(http.StatusBadRequest, err.Error())
 			return
 		}
 		spec.ArgsFile = p
 	} else {
 		fhs := r.MultipartForm.File["bins"]
 		if len(fhs) == 0 {
-			http.Error(w, "需要 bins 文件或 args_file 文件", http.StatusBadRequest)
+			bail(http.StatusBadRequest, "需要 bins 文件或 args_file 文件")
 			return
 		}
 		var offsets []string
 		if v := r.FormValue("offsets"); v != "" {
 			if err := json.Unmarshal([]byte(v), &offsets); err != nil || len(offsets) != len(fhs) {
-				http.Error(w, "offsets 需为与 bins 数量一致的 JSON 数组（如 [\"0x0\",\"0x8000\",\"0x10000\"]）",
-					http.StatusBadRequest)
+				bail(http.StatusBadRequest, `offsets 需为与 bins 数量一致的 JSON 数组（如 ["0x0","0x8000","0x10000"]）`)
 				return
 			}
 		} else {
@@ -132,7 +146,7 @@ func (s *Server) handleFlash(w http.ResponseWriter, r *http.Request) {
 		for i, fh := range fhs {
 			p, err := saveUpload(fh, dir, fmt.Sprintf("bin%d.img", i+1))
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
+				bail(http.StatusBadRequest, err.Error())
 				return
 			}
 			off := strings.TrimSpace(offsets[i])
@@ -143,18 +157,15 @@ func (s *Server) handleFlash(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 翻新任务槽并异步执行（daemon opMu 兜底并发互斥）；peer 非空 = 远程：
-	// 镜像已落本机 .flash-upload，由 meshFlasher 加密上传到 peer 后在对端执行
+	// 异步执行（任务槽已在上面原子占用；daemon opMu 兜底并发互斥）；
+	// peer 非空 = 远程：镜像已落本机 .flash-upload，由 meshFlasher 加密
+	// 上传到 peer 后在对端执行
 	run := s.flasher
 	if peer != "" {
 		run = func(pattern string, all bool, spec flash.Spec, out func(string)) error {
 			return s.meshFlasher(peer, pattern, all, spec, out)
 		}
 	}
-	s.job.mu.Lock()
-	s.job.events = nil
-	s.job.active = true
-	s.job.mu.Unlock()
 	go func() {
 		err := run(pattern, all, spec, func(line string) {
 			s.job.publish(flashEvent{Line: line})
@@ -193,7 +204,26 @@ func (s *Server) flashStream(w http.ResponseWriter, r *http.Request) {
 	}
 	fl.Flush()
 
-	events, active := s.job.snapshot()
+	// 快照 + 订阅同一临界区：拆成两段锁的话，在缝里收尾的任务其 done 事件
+	// 既不在快照里、又没赶上订阅——晚连的浏览器进度流永远等不到收尾，挂死。
+	ch := make(chan flashEvent, 64)
+	s.job.mu.Lock()
+	if s.job.subs == nil { // 测试直构 Server 时的懒初始化（生产路径 Start 已建）
+		s.job.subs = map[chan flashEvent]bool{}
+	}
+	events := append([]flashEvent(nil), s.job.events...)
+	active := s.job.active
+	if active {
+		s.job.subs[ch] = true
+	}
+	s.job.mu.Unlock()
+	if active {
+		defer func() {
+			s.job.mu.Lock()
+			delete(s.job.subs, ch)
+			s.job.mu.Unlock()
+		}()
+	}
 	for _, ev := range events {
 		if !send(ev) {
 			return
@@ -202,18 +232,6 @@ func (s *Server) flashStream(w http.ResponseWriter, r *http.Request) {
 	if !active {
 		return // 任务已结束（历史即全量），流自然关闭
 	}
-	ch := make(chan flashEvent, 64)
-	s.job.mu.Lock()
-	if s.job.subs == nil { // 测试直构 Server 时的懒初始化（生产路径 Start 已建）
-		s.job.subs = map[chan flashEvent]bool{}
-	}
-	s.job.subs[ch] = true
-	s.job.mu.Unlock()
-	defer func() {
-		s.job.mu.Lock()
-		delete(s.job.subs, ch)
-		s.job.mu.Unlock()
-	}()
 	heart := time.NewTicker(15 * time.Second)
 	defer heart.Stop()
 	for {

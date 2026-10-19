@@ -250,6 +250,65 @@ func TestAutoLinkFromBeacon(t *testing.T) {
 	}
 }
 
+// TestAutoLinkRestartAfterPeerExpiry (#57): peer 过期摘除后链接循环退出时
+// 必须连同 links/linkSt 死条目一起清理——残留死条目会让再上线 peer 的
+// ensureLink 只刷新地址不重启循环，自动敲门/转正停摆到进程重启。
+func TestAutoLinkRestartAfterPeerExpiry(t *testing.T) {
+	rootA := t.TempDir()
+	newA := func() *Node {
+		a, err := NewNode(Options{Name: "bench-a", Key: "k", Root: rootA, NoUDP: true, AutoApprove: true,
+			Forward:         func(req ctl.Request, respond func(ctl.Response)) { respond(ctl.Response{OK: true}) },
+			PairRetryWait:   200 * time.Millisecond,
+			LinkDialBackoff: 100 * time.Millisecond,
+			Logf:            func(string, ...any) {}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	a := newA()
+	t.Cleanup(a.Close)
+
+	// B：AnnounceS=1 → 注册表 TTL 3s、1s 一扫（缩短过期窗口）
+	b, err := NewNode(Options{Name: "bench-b", Key: "k", Root: t.TempDir(), NoUDP: true, AnnounceS: 1,
+		Forward:         func(req ctl.Request, respond func(ctl.Response)) { respond(ctl.Response{OK: true}) },
+		PairRetryWait:   200 * time.Millisecond,
+		LinkDialBackoff: 100 * time.Millisecond,
+		Logf:            func(string, ...any) {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(b.Close)
+
+	// 模拟 beacon 回调：注册表登记 + 起链接循环
+	inject := func() {
+		b.reg.UpsertBeacon(Beacon{ID: a.Self().ID, Name: "bench-a", Port: a.Self().Port}, net.IPv4(127, 0, 0, 1))
+		b.ensureLink(a.Self().ID, fmt.Sprintf("127.0.0.1:%d", a.Self().Port))
+	}
+	inject()
+	aID := a.Self().ID
+	waitPeerAuthed(t, b, aID, 5*time.Second) // 循环活着且已转正
+
+	// A 消失 → 拨号失败不再 Touch → 注册表过期摘除 → 循环退出并清理死条目
+	a.Close()
+	testutil.WaitFor(t, 12*time.Second, func() bool {
+		b.linkMu.Lock()
+		defer b.linkMu.Unlock()
+		_, hasLink := b.links[aID]
+		_, hasSt := b.linkSt[aID]
+		return !hasLink && !hasSt
+	}, "peer 过期后 links/linkSt 死条目应被清理")
+
+	// A 同 root 重启（同 id、新端口）→ 再广播 → 循环重建并自动转正
+	a = newA()
+	t.Cleanup(a.Close)
+	if a.Self().ID != aID {
+		t.Fatalf("同 root 重启 id 应不变: %s != %s", a.Self().ID, aID)
+	}
+	inject()
+	waitPeerAuthed(t, b, aID, 5*time.Second)
+}
+
 func TestPairAckFrameShape(t *testing.T) {
 	// 配对帧 JSON 形状稳定（跨版本兼容面）
 	ack := pairAckFrame{ID: "ab12", Name: "a", Approved: true}
