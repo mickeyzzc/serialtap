@@ -374,3 +374,46 @@ func TestSplitCRLFExtra(t *testing.T) {
 		t.Fatalf("\r 进度条前缀: %d %q %v", a, tok, err)
 	}
 }
+
+// flash_timeout_s 显式配 0/负值时 RunExec 应回退默认而非"无超时无 kill"
+// （#56 回归）。
+func TestRunExecTimeoutZeroStillWorks(t *testing.T) {
+	t.Setenv("FAKE_SLEEP", "100ms")
+	t.Setenv("FAKE_EXIT", "0")
+	t.Setenv("FAKE_OUT", "ok")
+	start := time.Now()
+	err := RunExec(testutil.FakeTool(t), nil, 0, func(string) {})
+	if err != nil {
+		t.Fatalf("timeout=0 应回退默认正常执行: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("timeout=0 不应退化为无超时挂死: %s", elapsed)
+	}
+}
+
+// Windows 进程树击杀：PATH 上的 esptool 解析到 .bat/.cmd 残壳时，超时
+// Kill 只杀 cmd.exe，Python 孙进程继承管道句柄继续持有 COM 口——Cancel
+// 改 taskkill /T /F 后整棵树一起死，RunExec 及时返回（#56 回归）。
+// FakeTool 的 FAKE_SPAWN_CHILD_SLEEP 模式：父睡 2s（保证超时触发时还活着），
+// 孙进程睡 10s 且继承 stdout——不杀树则管道等孙进程 EOF，总时长 ~10s。
+func TestRunTimeoutKillsProcessTree(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("进程树击杀针对 Windows .bat 残壳场景；unix 侧孙进程随管道 EOF 有界")
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "x.bin")
+	os.WriteFile(bin, []byte("x"), 0o644)
+	t.Setenv("FAKE_SLEEP", "2s")
+	t.Setenv("FAKE_SPAWN_CHILD_SLEEP", "10s")
+	t.Setenv("FAKE_EXIT", "0")
+	t.Setenv("FAKE_OUT", "")
+	start := time.Now()
+	err := Run(testutil.FakeTool(t), "/dev/ttyFAKE0",
+		Spec{Bins: []BinSpec{{Path: bin, Offset: "0x0"}}}, 400*time.Millisecond, func(string) {})
+	if err == nil || !strings.Contains(err.Error(), "超时") {
+		t.Fatalf("超时应杀进程树并报错: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("进程树未被及时终止（孙进程仍持有管道）: %s", elapsed)
+	}
+}

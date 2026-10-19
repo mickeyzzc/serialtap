@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -267,16 +268,31 @@ func Run(esptool, tty string, s Spec, timeout time.Duration, output func(line st
 	return RunExec(esptool, args, timeout, output)
 }
 
+// defaultFlashTimeout: flash_timeout_s 显式配 0/负值时的回退——此前 0 会
+// 让 RunExec 连超时 kill 都没有（#56）。
+const defaultFlashTimeout = 10 * time.Minute
+
 // RunExec: 执行任意 esptool argv（不含本体路径），流式输出语义同 Run。
 // board 包的读侧操作（info/分区/NVS/dump）共用此执行骨架。
 func RunExec(esptool string, args []string, timeout time.Duration, output func(line string)) error {
-	ctx := context.Background()
-	var cancel context.CancelFunc
-	if timeout > 0 {
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
+	if timeout <= 0 {
+		timeout = defaultFlashTimeout
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, esptool, args...)
+	if runtime.GOOS == "windows" {
+		// 超时默认只杀直接子进程：PATH 上的 esptool 解析到 .bat/.cmd 残壳时，
+		// 被杀的是 cmd.exe，Python 孙进程继承管道句柄继续活着并持有 COM 口，
+		// 两路 scan 等不到 EOF、Wait 楔死。Windows 改杀整棵进程树（#56）。
+		cmd.Cancel = func() error {
+			if cmd.Process == nil {
+				return nil
+			}
+			return exec.Command("taskkill", "/T", "/F",
+				"/PID", strconv.Itoa(cmd.Process.Pid)).Run()
+		}
+	}
 	stdout, err1 := cmd.StdoutPipe()
 	stderr, err2 := cmd.StderrPipe()
 	if err1 != nil || err2 != nil {

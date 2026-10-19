@@ -158,10 +158,20 @@ const fakeToolSrc = "package main\n" +
 	"import (\n" +
 	"\t\"fmt\"\n" +
 	"\t\"os\"\n" +
+	"\t\"os/exec\"\n" +
 	"\t\"strings\"\n" +
 	"\t\"time\"\n" +
 	")\n" +
 	"func main() {\n" +
+	// 模拟 .bat 残壳形态：孙进程继承 stdout 管道——直接子进程被 kill 后
+	// 孙进程仍持有管道写端（flash 进程树击杀测试用）
+	"\tif v := os.Getenv(\"FAKE_SPAWN_CHILD_SLEEP\"); v != \"\" {\n" +
+	"\t\tcmd := exec.Command(os.Args[0])\n" +
+	"\t\tcmd.Env = append(os.Environ(), \"FAKE_SPAWN_CHILD_SLEEP=\", \"FAKE_SLEEP=\"+v)\n" +
+	"\t\tcmd.Stdout = os.Stdout\n" +
+	"\t\tcmd.Stderr = os.Stderr\n" +
+	"\t\t_ = cmd.Start()\n" +
+	"\t}\n" +
 	"\tif v := os.Getenv(\"FAKE_SLEEP\"); v != \"\" {\n" +
 	"\t\tif d, err := time.ParseDuration(v); err == nil {\n" +
 	"\t\t\ttime.Sleep(d)\n" +
