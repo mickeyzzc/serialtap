@@ -77,6 +77,8 @@ type Node struct {
 	linkMu sync.Mutex
 	links  map[string]*linkLoop // peer id → 自动链接循环（发现即拨、心跳保活、断线重连）
 	linkSt map[string]linkState // peer id → 对端是否已授权本节点（Call 快速失败提示）
+
+	salts saltCache // 近期已见 hello salt（#71 会话重放防线；进程内有效，不持久化）
 }
 
 // NewNode: 构造并启动（监听 + beacon + 注册表清扫）。Close 时全停。
@@ -295,7 +297,7 @@ func (n *Node) acceptLoop() {
 // 字节数，帧体（可能含 NVS 值）永不落日志。
 func (n *Node) serveConn(conn net.Conn) {
 	defer func() { _ = conn.Close() }()
-	ch, peer, err := AcceptChannel(conn, n.sec, n.self)
+	ch, peer, err := AcceptChannel(conn, n.sec, n.self, &n.salts)
 	if err != nil {
 		n.logf("[mesh] 拒绝连接 %s: %v", conn.RemoteAddr(), err)
 		return

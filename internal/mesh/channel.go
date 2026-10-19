@@ -207,9 +207,44 @@ func DialChannel(conn net.Conn, sec *Secrets, self Ident) (ch *Channel, peer Ide
 	return ch, Ident{ID: peerRaw.ID, Name: peerRaw.Name, Port: peerRaw.Port}, nil
 }
 
-// AcceptChannel: 服务端——在已接受的连接上等待并完成握手。
-// 失败时关闭连接（客户端可能还挂着等回复）。
-func AcceptChannel(conn net.Conn, sec *Secrets, self Ident) (ch *Channel, peer Ident, err error) {
+// saltCacheCap: hello salt 重放防线容量——正常节点 salt 随机不重复，64 个
+// 近期 salt 足够拦原样重放，又不会让长期运行的节点无限攒内存。
+const saltCacheCap = 64
+
+// saltCache: 近期已见 hello salt 的有界环形缓存（#71）。同一 salt 的第二次
+// 握手直接拒：salt 重放 = 双向密钥流与首连接完全相同，旧帧可整段拼贴。
+type saltCache struct {
+	mu    sync.Mutex
+	order []string
+	has   map[string]bool
+}
+
+// dup: 登记 salt 并报告它是否已见过（已见的不重复入账）。
+func (s *saltCache) dup(salt string) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.has == nil {
+		s.has = map[string]bool{}
+	}
+	if s.has[salt] {
+		return true
+	}
+	s.has[salt] = true
+	s.order = append(s.order, salt)
+	if len(s.order) > saltCacheCap {
+		delete(s.has, s.order[0])
+		s.order = s.order[1:]
+	}
+	return false
+}
+
+// AcceptChannel: 服务端——在已接受的连接上等待并完成握手。salts 为 hello
+// salt 重放防线（nil = 不检查，仅测试用）。失败时关闭连接（客户端可能还
+// 挂着等回复）。
+func AcceptChannel(conn net.Conn, sec *Secrets, self Ident, salts *saltCache) (ch *Channel, peer Ident, err error) {
 	defer func() {
 		if err != nil {
 			_ = conn.Close()
@@ -235,6 +270,9 @@ func AcceptChannel(conn net.Conn, sec *Secrets, self Ident) (ch *Channel, peer I
 	var salt []byte
 	if salt, err = unb64(hello.Salt); err != nil || len(salt) == 0 {
 		return nil, Ident{}, errors.New("mesh hello salt 非法")
+	}
+	if salts.dup(hello.Salt) {
+		return nil, Ident{}, errors.New("mesh hello salt 重复（会话重放）")
 	}
 	var c2s, s2c cipher.AEAD
 	if c2s, s2c, err = deriveConnKeys(sec.master, salt); err != nil {

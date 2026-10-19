@@ -55,7 +55,7 @@ func handshakePair(t *testing.T, clientKey, serverKey string, client Ident, serv
 	if err != nil {
 		t.Fatalf("接受连接失败: %v", err)
 	}
-	srvCh, srvPeer, err := AcceptChannel(srvConn, testSecrets(t, serverKey), server)
+	srvCh, srvPeer, err := AcceptChannel(srvConn, testSecrets(t, serverKey), server, nil)
 	cr := <-cliCh
 	if cr.err != nil {
 		t.Fatalf("客户端握手失败: %v", cr.err)
@@ -149,7 +149,7 @@ func TestChannelWrongKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("接受失败: %v", err)
 	}
-	if _, _, err = AcceptChannel(srvConn, testSecrets(t, "server-key"), Ident{ID: "s", Name: "s"}); err == nil {
+	if _, _, err = AcceptChannel(srvConn, testSecrets(t, "server-key"), Ident{ID: "s", Name: "s"}, nil); err == nil {
 		t.Fatal("密钥不匹配时服务端握手必须失败")
 	}
 	select {
