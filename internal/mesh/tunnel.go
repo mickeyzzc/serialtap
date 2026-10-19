@@ -72,49 +72,51 @@ func (n *Node) handleDial(ch *Channel, payload []byte) {
 	}
 	n.logf("[mesh] 隧道建立 %s ← %s（%s）", device, ch.PeerAddr(), endpoint)
 
-	// 设备 → 发起侧
-	toPeer := make(chan error, 1)
+	// 双向泵的完成信号通道用 struct{} 而非 error：错误值无人消费，而
+	// golangci v2.15 里 errcheck 抓 error 通道的裸接收、staticcheck S1005
+	// 又反对显式 _ = 丢弃——信号通道本就不该带类型
+	toPeer := make(chan struct{}, 1)
 	go func() {
 		buf := make([]byte, 32<<10)
 		for {
 			nr, rerr := local.Read(buf)
 			if nr > 0 {
 				if serr := ch.Send(ftWire, buf[:nr]); serr != nil {
-					toPeer <- serr
+					toPeer <- struct{}{}
 					return
 				}
 			}
 			if rerr != nil {
-				toPeer <- rerr
+				toPeer <- struct{}{}
 				return
 			}
 		}
 	}()
 	// 发起侧 → 设备
-	fromPeer := make(chan error, 1)
+	fromPeer := make(chan struct{}, 1)
 	go func() {
 		for {
 			t, p, rerr := ch.Recv()
 			if rerr != nil {
-				fromPeer <- rerr
+				fromPeer <- struct{}{}
 				return
 			}
 			if t != ftWire {
 				continue
 			}
 			if _, werr := local.Write(p); werr != nil {
-				fromPeer <- werr
+				fromPeer <- struct{}{}
 				return
 			}
 		}
 	}()
-	select { // errcheck v2.15 起检查 error 通道的裸接收——显式丢弃
-	case _ = <-toPeer:
+	select {
+	case <-toPeer:
 		_ = ch.Close() // 解除 fromPeer 的 Recv 阻塞
-		_ = <-fromPeer
-	case _ = <-fromPeer:
+		<-fromPeer
+	case <-fromPeer:
 		_ = local.Close() // 解除 toPeer 的 Read 阻塞
-		_ = <-toPeer
+		<-toPeer
 	}
 	n.logf("[mesh] 隧道结束 %s（%s）", device, ch.PeerAddr())
 }
@@ -217,19 +219,20 @@ func (n *Node) dropTunnel(t *tunnel) {
 func (t *tunnel) bridge(conn net.Conn) {
 	defer func() { _ = conn.Close() }()
 
-	toUser := make(chan error, 1)
-	go func() { // 信道 → 用户连接
+	// 信道 → 用户连接（完成信号通道用 struct{}，同 handleDial 注释）
+	toUser := make(chan struct{}, 1)
+	go func() {
 		for {
 			typ, payload, rerr := t.ch.Recv()
 			if rerr != nil {
-				toUser <- rerr
+				toUser <- struct{}{}
 				return
 			}
 			if typ != ftWire {
 				continue
 			}
 			if _, werr := conn.Write(payload); werr != nil {
-				toUser <- werr
+				toUser <- struct{}{}
 				return
 			}
 		}
