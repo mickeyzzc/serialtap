@@ -1,6 +1,40 @@
 # Changelog
 
-## Unreleased
+## v0.2.0 (2026-10-19)
+
+- **fix: 发版前全面评审修复批（21 项，#52–#72）**——四模块并行修复（daemon
+  编排 / web 安全 / mesh / cli-config 工具链），全部带回归测试，多数先红后绿：
+  - **daemon 核心**：collectors map 并发读写 fatal 崩溃（面板轮询叠加热插拔
+    即触发、崩溃丢全部在采日志——加 RWMutex + 并发 -race 测试）；Suspend
+    超时回滚（此前采集器永久悬挂、resume 无效）；ctl 响应写超时 + 死连接
+    标记（慢客户端不再永久楔死 opMu）；Windows 超时杀整棵 esptool 进程树
+    （.bat 残壳孙进程持口）；带会话拔板泄漏（移除路径补 DetachProxy）；
+    logstore Close 后拒绝重开（fd 泄漏）；枚举瞬时失败不再全员拆采集器
+    （跳过 diff + 连续 3 拍 miss 去抖 + 快换收口）；落盘失败/恢复事件化。
+  - **web 安全**：面板存储型 XSS 收口（设备自报 facts 未转义进
+    innerHTML/title——恶意固件可横向刷全部在接设备；esc() 补引号转义 +
+    模板插值静态门禁）；/api/flash CSRF（multipart 免预检表单直刷）与
+    DNS rebinding（全 API Host/Origin 校验 + X-serialtap 自定义头）；
+    mesh 尾随 SSE 并发写 ResponseWriter 竞态；flashStream 快照+订阅
+    原子化（done 事件不再丢、任务槽不双占）。
+  - **mesh**：Channel.send 帧序 AAD 移入锁内（并发 Send 竞态 + 误拆链）；
+    handleUpload 绕过 mesh_access=ro 收口（+单 sid 总量上限）；linkLoop
+    退出自摘残尸条目（peer 短暂离线后自动链接不再永久失效）；.mesh-share
+    NVS dump / .flash-upload 镜像 / dlAuth token 全生命周期回收（TTL +
+    用后即删 + 启动清扫）；加固批（会话重放 salt 查重 / registerIncoming
+    端口精确匹配 / Call 整体 deadline + AggregateStatus 竞态 / pending
+    TTL / Windows 保留设备名 / 单连接单尾随）。
+  - **cli/config/board/logstore**：selftest 轮转文件名正则与 logstore 实际
+    命名对齐（此前恰在日志量最大的板子上失效）+ 跨包契约测试；
+    config.example.json 去注释可解析 + 补齐 6 个已实现字段（README 引导
+    cp 的示例此前首跑即报错）；未知配置键告警（typo 不再静默）；selftest
+    --files 与 tray --poll-ms 下界钳制；Windows 控制台 UTF-8 代码页；
+    board dump 参数校验传播（顺带修掉 Plan() NVS 分支恒报假错的潜伏
+    bug）；NVS 掩码正则补 psk/cred/auth；SweepRetention 删除失败可见化；
+    README 补 mesh 信任模型与 Windows 控制通道边界一节。
+  - 工程侧：golangci-lint v2.15 适配（error 通道信号语义修正 + 静态门禁
+    tagged switch）；CI 三平台矩阵 + lint + 80% 覆盖率门禁全绿；Windows
+    真机（2 板在采 + 4 节点 mesh 互通）与 WSL Linux 全量 -race 验证。
 
 - feat(cli): **`selftest [RE]` 子命令——固件自检行聚合与异常发现**（工作区
   "固件自检行"规范的配套工具端）：反向检索各设备归档日志里最近一次开机的
