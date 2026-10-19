@@ -560,7 +560,14 @@ white-space:pre-wrap;word-break:break-all;background:var(--sunken);border-radius
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
-const esc = s => { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; };
+// esc: HTML 转义（内容 + 属性值双安全）。textContent→innerHTML 只转义 & < >，
+// 不转义引号——而面板大量插值落在 title="…"/data-* 属性里，值中一个引号就能
+// 逃出属性（设备名/身份摘要/日志行都是设备侧可控文本）。补引号转义后 esc()
+// 才可安全用于属性插值，模板插值统一走它（xss_test.go 有静态门禁）。引号
+// 转义用 split/join 而非正则：面板静态分析词法（i18n/xss 测试）按字符串感知
+// 扫描、不解析正则字面量，正则里的裸引号会破坏词法。
+const esc = s => { const d = document.createElement("div"); d.textContent = s;
+  return d.innerHTML.split('"').join("&quot;").split("'").join("&#39;"); };
 const fmtKB = n => n >= 1048576 ? (n/1048576).toFixed(1)+" MB" : (n/1024).toFixed(1)+" KB";
 const fmtAgo = ms => { if (!ms || ms < 0) return "—";
   const s = Math.floor(ms/1000);
@@ -909,13 +916,13 @@ function renderCards(){
     el.innerHTML = `
       <div class="top">
         <span class="name">${esc(d.name)}</span>
-        <span class="chip ${d.state}">${esc(d.state)}</span>
+        <span class="chip ${esc(d.state)}">${esc(d.state)}</span>
         ${d.proxy ? `<span class="badge">proxy ${esc(d.proxy)}</span>` : ""}
         <span class="tgap"></span>
         <span class="v-rate num"></span>
       </div>
       <div class="tty">${esc(d.tty)} · key=${esc(d.key)}</div>
-      <div class="ident" title="${t("点击查看设备身份详情")}">${identLine(d.info)}</div>
+      <div class="ident" title="${t("点击查看设备身份详情")}">${esc(identLine(d.info))}</div>
       <div class="meta">
         <span>${t("全量")} <b class="v-ssz"></b></span>
         <span>${t("事件")} <b class="v-esz"></b></span>
