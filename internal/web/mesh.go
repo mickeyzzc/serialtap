@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mickeyzzc/serialtap/internal/ctl"
@@ -32,6 +33,10 @@ func WithMesh(m MeshService) Option { return func(s *Server) { s.mesh = m } }
 func WithMeshFlasher(f MeshFlasher) Option { return func(s *Server) { s.meshFlasher = f } }
 
 var meshPeerRe = regexp.MustCompile(`^[A-Za-z0-9._:-]+$`)
+
+// meshPingEvery: 远程尾随 SSE 的心跳周期。包级变量只为测试能缩短（-race 下
+// 压出数据帧与心跳的真实交错），生产值 15s 与本地尾随一致。
+var meshPingEvery = 15 * time.Second
 
 // handleMeshStatus: GET /api/mesh/status → {enabled, peers}。未启用时
 // enabled=false（面板据此隐藏 mesh 区）。
@@ -84,10 +89,16 @@ func (s *Server) handleMeshDevice(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache, no-store")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
+	// 尾随数据帧（TailStream goroutine）与 15s 心跳 ping（主循环）并发写
+	// 同一 ResponseWriter —— 必须互斥（对齐 handleLiveMulti，那边是 -race
+	// 实测过的教训；http.ResponseWriter 非并发安全）。
+	var mu sync.Mutex
 	send := func(b []byte) bool {
 		if len(b) == 0 {
 			return true
 		}
+		mu.Lock()
+		defer mu.Unlock()
 		payload, _ := json.Marshal(string(b))
 		if _, err := fmt.Fprintf(w, "data: %s\n\n", payload); err != nil {
 			return false
@@ -95,10 +106,20 @@ func (s *Server) handleMeshDevice(w http.ResponseWriter, r *http.Request) {
 		fl.Flush()
 		return true
 	}
-	heart := time.NewTicker(15 * time.Second)
+	ping := func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
+			return false
+		}
+		fl.Flush()
+		return true
+	}
+	heart := time.NewTicker(meshPingEvery)
 	defer heart.Stop()
-	fmt.Fprint(w, ": ping\n\n")
-	fl.Flush()
+	if !ping() { // 首帧立刻发，逼出缓冲路径的 early flush
+		return
+	}
 
 	done := make(chan struct{})
 	ctx, cancel := context.WithCancel(r.Context())
@@ -117,10 +138,9 @@ func (s *Server) handleMeshDevice(w http.ResponseWriter, r *http.Request) {
 		case <-done:
 			return
 		case <-heart.C:
-			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
+			if !ping() {
 				return
 			}
-			fl.Flush()
 		}
 	}
 }
