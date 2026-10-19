@@ -76,16 +76,15 @@ func TestAccessReadOnlyGate(t *testing.T) {
 		}
 	}
 	// 写：pause / flash / board / reset / proxy / release / reopen / resume 全拒
+	//（Call 的 End 帧裁决修复后，ro 闸门的 OK:false 终帧以错误形态返回——
+	// 信息同样指明只读模式，两种形态都算正确拒绝）
 	for _, cmd := range []string{"pause", "resume", "proxy", "release", "reopen", "reset", "flash", "board"} {
 		resp, err := callPeer(t, b, "bench-a", cmd)
-		if err != nil {
-			t.Fatalf("%s: %v", cmd, err)
-		}
-		if resp.OK {
+		if err == nil && resp.OK {
 			t.Fatalf("ro 节点必须拒绝写命令 %s", cmd)
 		}
-		if !strings.Contains(resp.Error, "只读") {
-			t.Fatalf("%s 拒绝信息应指明只读模式: %+v", cmd, resp)
+		if !strings.Contains(fmt.Sprint(err, " ", resp.Error), "只读") {
+			t.Fatalf("%s 拒绝信息应指明只读模式: err=%v resp=%+v", cmd, err, resp)
 		}
 	}
 }

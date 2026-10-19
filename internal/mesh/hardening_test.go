@@ -306,3 +306,41 @@ func TestServeConnSingleTailPerConn(t *testing.T) {
 	}
 	t.Fatal("第二个尾随请求未收到拒绝（EOF）帧")
 }
+
+// Call 对拒绝帧必须返回错误（End 帧裁决回归）：清掉链接状态强制走真拨号
+// 路径（绕开 peerAuthedFresh 快速失败）后，未授权闸门的 OK:false+End 帧
+// 此前被当"成功"静默吞掉——调用方只见零响应与 nil 错误。
+func TestCallReturnsErrorOnRejectionFrame(t *testing.T) {
+	a, b := pairNodePair(t, false, false)
+	testutil.WaitFor(t, 3*time.Second, func() bool {
+		_, pending, _ := a.pairs.Overview()
+		return len(pending) == 1
+	}, "A 未收到 B 的敲门")
+
+	b.linkMu.Lock()
+	b.linkSt = map[string]linkState{} // 制造"状态未知"窗口
+	b.linkMu.Unlock()
+	_, err := b.Call("bench-a", ctl.Request{Cmd: "status"}, func(ctl.Response) bool { return false })
+	if err == nil {
+		t.Fatal("拒绝帧被当成功返回 nil——End 帧裁决失效")
+	}
+	if !containsAll(err.Error(), "未授权") {
+		t.Fatalf("拒绝错误应带未授权信息: %v", err)
+	}
+
+	// 批准后正常放行（OK 流不受影响）
+	if _, err := a.ApprovePeer(b.Self().ID); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_, err := b.Call("bench-a", ctl.Request{Cmd: "status"}, nil)
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("批准后操作未放行: %v", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
