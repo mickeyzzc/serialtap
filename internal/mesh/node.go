@@ -496,7 +496,14 @@ func accessReadable(cmd string) bool {
 
 // Call: 向 peer 转发一条 ctl 请求，流式回收响应直到 End 帧（或 onResp
 // 返回 true 提前结束）。返回 End 帧携带的产物引用（通常为 nil）。
+// 无整体截止（刷机等长流式命令可能耗时数分钟）。
 func (n *Node) Call(peerName string, req ctl.Request, onResp func(ctl.Response) bool) (*fileRef, error) {
+	return n.call(peerName, req, onResp, 0)
+}
+
+// call: Call 的实现。deadline > 0 时在握手完成后给整条连接设截止——楔死
+// 对端（握手后不应答）不再永久挂住调用 goroutine 与连接（#71）。
+func (n *Node) call(peerName string, req ctl.Request, onResp func(ctl.Response) bool, deadline time.Duration) (*fileRef, error) {
 	peer, err := n.reg.Match(peerName)
 	if err != nil {
 		return nil, err
@@ -513,6 +520,9 @@ func (n *Node) Call(peerName string, req ctl.Request, onResp func(ctl.Response) 
 	ch, ident, err := DialChannel(conn, n.sec, n.self)
 	if err != nil {
 		return nil, fmt.Errorf("与 peer %s 握手失败（密钥不一致？）: %w", peerName, err)
+	}
+	if deadline > 0 {
+		_ = conn.SetDeadline(time.Now().Add(deadline))
 	}
 	n.reg.Touch(ident.ID)
 	if peer.Static || peer.ID == "" {
@@ -593,7 +603,9 @@ func (n *Node) AggregateStatus(timeout time.Duration) []ctl.PeerStatus {
 			resCh := make(chan res, 1)
 			go func() {
 				devs := []ctl.DevState{}
-				_, cerr := n.Call(p.NameOrAddr(), ctl.Request{Cmd: "status"}, func(r ctl.Response) bool {
+				// deadline=timeout：楔死对端由连接截止兜底回收（#71），内层
+				// goroutine 不会永久泄漏；其迟到写只落在 ps 上、被超时分支丢弃
+				_, cerr := n.call(p.NameOrAddr(), ctl.Request{Cmd: "status"}, func(r ctl.Response) bool {
 					if r.OK {
 						devs = r.Devices
 						ps.Access = r.Access // 对端接入模式（ro/rw）随 status 响应传播
@@ -601,7 +613,7 @@ func (n *Node) AggregateStatus(timeout time.Duration) []ctl.PeerStatus {
 						ps.Err = r.Error
 					}
 					return false
-				})
+				}, timeout)
 				resCh <- res{devs: devs, err: cerr}
 			}()
 			start := time.Now()
@@ -613,10 +625,22 @@ func (n *Node) AggregateStatus(timeout time.Duration) []ctl.PeerStatus {
 				} else {
 					ps.State, ps.Devices = "online", r.devs
 				}
+				out[i] = ps
 			case <-time.After(timeout):
-				ps.State, ps.Err = "offline", fmt.Sprintf("查询超时（>%s）", timeout)
+				// 超时分支只写本地副本（#71）：共享 ps 可能仍被内层 goroutine
+				// 迟到写，从 p 重建结果，避免数据竞态
+				tp := ctl.PeerStatus{ID: p.ID, Name: p.NameOrAddr(), Addr: p.Addr, Static: p.Static,
+					State: "offline", Err: fmt.Sprintf("查询超时（>%s）", timeout)}
+				if p.ID != "" {
+					if n.pairs.Approved(p.ID) {
+						tp.Auth = "approved"
+					}
+					if authed, known := n.peerAuthedFresh(p.ID); known {
+						tp.PeerAuthed = authed
+					}
+				}
+				out[i] = tp
 			}
-			out[i] = ps
 		}(i, p)
 	}
 	wg.Wait()
