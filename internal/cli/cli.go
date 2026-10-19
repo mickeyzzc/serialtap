@@ -39,7 +39,7 @@ import (
 )
 
 // Version: ldflags 可注入（CI 发布打 -X ...cli.Version=<tag>），默认开发版本。
-var Version = "0.1.0"
+var Version = "0.2.0"
 
 func usage() {
 	fmt.Fprintf(os.Stderr, `serialtap v%s — USB 串口持续采集器
