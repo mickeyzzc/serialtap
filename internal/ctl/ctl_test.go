@@ -5,7 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-"runtime"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
