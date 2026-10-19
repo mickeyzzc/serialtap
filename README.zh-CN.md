@@ -14,6 +14,21 @@
 
 [English](README.md) | **简体中文**
 
+## 界面截图
+
+双语面板（EN/中文）跑在真实双机台架上——mesh 互联两台 PC、五块板子，
+一个页面看全仪表盘 / 日志 / 波形 / 刷机：
+
+| 仪表盘——设备卡、KPI 与运行配置速览 | 日志——5 窗格（含 mesh 远程设备） |
+| --- | --- |
+| ![仪表盘](docs/screenshots/dashboard.png) | ![日志](docs/screenshots/logs.png) |
+
+| 波形——全网命名通道 | 刷机弹窗——镜像 / IDF 构建产物二选一 |
+| --- | --- |
+| ![波形](docs/screenshots/waveform.png) | ![刷机](docs/screenshots/flash-dialog.png) |
+
+> 截图取自真实台架；其中主机名、路径与网络标识已脱敏。
+
 ## 特性
 
 - **热插拔自动采集**：轮询发现 USB 串口（1s），每设备一个采集协程，插上即采、拔走即停
