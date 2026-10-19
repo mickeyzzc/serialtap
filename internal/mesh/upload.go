@@ -51,6 +51,27 @@ type blockFrame struct {
 
 var safeNameRe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
+// windowsReserved: Windows 保留设备名（#71）——服务端可能跑在 Windows 上，
+// 落盘名的主干（首个 '.' 前）撞上保留名会写进设备（如 con）或被系统拒绝。
+var windowsReserved = func() map[string]bool {
+	m := map[string]bool{"CON": true, "PRN": true, "AUX": true, "NUL": true}
+	for i := 1; i <= 9; i++ {
+		m[fmt.Sprintf("COM%d", i)] = true
+		m[fmt.Sprintf("LPT%d", i)] = true
+	}
+	return m
+}()
+
+// reservedName: 文件名是否撞 Windows 保留设备名（大小写不敏感，按首个
+// '.' 前的主干判断——"con" 与 "con.bin" 同样危险）。
+func reservedName(name string) bool {
+	stem := name
+	if i := strings.IndexByte(name, '.'); i >= 0 {
+		stem = name[:i]
+	}
+	return windowsReserved[strings.ToUpper(stem)]
+}
+
 // handleUpload: 服务端——分块追加落盘，逐块应答（客户端按 ack 流控）。
 // 同名文件按到达顺序追加；同一连接顺序发送即天然有序。
 func (n *Node) handleUpload(ch *Channel, payload []byte) error {
@@ -58,7 +79,7 @@ func (n *Node) handleUpload(ch *Channel, payload []byte) error {
 	if err := json.Unmarshal(payload, &uf); err != nil {
 		return err
 	}
-	if !safeNameRe.MatchString(uf.Name) || !safeNameRe.MatchString(uf.SID) {
+	if !safeNameRe.MatchString(uf.Name) || !safeNameRe.MatchString(uf.SID) || reservedName(uf.Name) {
 		return ch.Send(ftUpAck, mustJSON(upAckFrame{SID: uf.SID, Name: uf.Name, LastSeq: -1}))
 	}
 	// 只读接入（#69）：上传直写本机磁盘，与写命令同权——ro 不能被 ftUp
