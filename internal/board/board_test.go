@@ -209,8 +209,66 @@ func TestPlanValidation(t *testing.T) {
 	if _, err := Plan("ttyX", Spec{Action: ActionDump, Addr: "0x10", Size: "", OutPath: "f"}); err == nil {
 		t.Fatal("空 size 必须报错")
 	}
+	if _, err := Plan("ttyX", Spec{Action: ActionDump, Addr: "0x100000000", Size: "0x10", OutPath: "f"}); err == nil {
+		t.Fatal("addr 超 32 位必须在 Plan 层报错")
+	}
 	if _, err := Plan("ttyX", Spec{Action: "explode"}); err == nil {
 		t.Fatal("未知操作必须报错")
+	}
+	// nvs 不带 addr/size 也必须能过 Plan（读地址按分区表动态定位，issue #63）
+	if _, err := Plan("ttyX", Spec{Action: ActionNVS}); err != nil {
+		t.Fatalf("nvs plan 不应报错: %v", err)
+	}
+}
+
+// —— issue #63：dump 的坏参数必须在 Exec 层报错——此前 parseHex 的错误
+// 被吞掉当 0 用，读到的是 0 地址的内容还落成文件。 ——
+func TestExecDumpValidatesAddrSize(t *testing.T) {
+	read := func(addr, size uint32) ([]byte, error) { return make([]byte, size), nil }
+	out := filepath.Join(t.TempDir(), "d.bin")
+	cases := []Spec{
+		{Action: ActionDump, Addr: "zz", Size: "0x10", OutPath: out},          // 坏十六进制
+		{Action: ActionDump, Addr: "0x100000000", Size: "0x10", OutPath: out}, // 2^32：uint32 截断
+		{Action: ActionDump, Addr: "0x10", Size: "0x0", OutPath: out},         // 空读
+		{Action: ActionDump, Addr: "0xFFFFFFF0", Size: "0x20", OutPath: out},  // 区间越 32 位尾部
+	}
+	for i, spec := range cases {
+		if err := Exec("ttyX", spec, 0, func(string) {}, read); err == nil {
+			t.Fatalf("case %d（addr=%s size=%s）必须报错", i, spec.Addr, spec.Size)
+		}
+	}
+	if _, err := os.Stat(out); err == nil {
+		t.Fatal("坏参数不应产出 dump 文件")
+	}
+}
+
+// —— issue #63：psk/cred/auth 形键也要掩码 ——
+func TestParseNVSMaskingExtendedSecretKeys(t *testing.T) {
+	pg := make([]byte, nvsPageSize)
+	binary.LittleEndian.PutUint32(pg[0:4], 0xFFFFFFFC)
+	off := nvsEntryStart
+	put := func(b ...[]byte) {
+		for _, x := range b {
+			copy(pg[off:], x)
+			off += len(x)
+		}
+	}
+	put(nvsEntry(4, typeString, "wifi_psk", "psk-secret", nil), strSlot("psk-secret\x00"))
+	put(nvsEntry(4, typeString, "credential", "cred-secret", nil), strSlot("cred-secret\x00"))
+	put(nvsEntry(4, typeString, "auth_nonce", "auth-secret", nil), strSlot("auth-secret\x00"))
+	put(nvsEntry(4, typeString, "nickname", "plain-value", nil), strSlot("plain-value\x00"))
+
+	byKey := map[string]Entry{}
+	for _, e := range ParseNVS(pg, false) {
+		byKey[e.Key] = e
+	}
+	for _, k := range []string{"wifi_psk", "credential", "auth_nonce"} {
+		if e := byKey[k]; e.Value != "****" {
+			t.Fatalf("%s 必须掩码: %+v", k, e)
+		}
+	}
+	if e := byKey["nickname"]; e.Value != "plain-value" {
+		t.Fatalf("非凭据键不应误伤: %+v", e)
 	}
 }
 

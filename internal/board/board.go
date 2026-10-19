@@ -2,6 +2,7 @@ package board
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -46,15 +47,17 @@ func Plan(tty string, s Spec) ([]string, error) {
 		return append(args, "flash_id"), nil
 	case ActionPartitions:
 		return append(args, "read_flash", hexOrDie(PartTableOffset), strconv.Itoa(PartTableSize), "<tmp>"), nil
-	case ActionNVS, ActionDump:
-		if s.Action == ActionDump && s.OutPath == "" {
+	case ActionNVS:
+		// nvs 的读地址/长度由 Exec 按分区表动态定位（先读表再读 nvs 分区），
+		// 不吃 spec 的 addr/size——此前误走 dump 的空值校验，Plan 恒报错
+		// （issue #63：daemon 要把 Plan 错误升级为中止，先修掉这个假错）。
+		return append(args, "read_flash", hexOrDie(PartTableOffset), strconv.Itoa(PartTableSize), "<tmp>"), nil
+	case ActionDump:
+		if s.OutPath == "" {
 			return nil, fmt.Errorf("dump 需要 --out 输出文件")
 		}
-		if _, err := parseHex(s.Addr); err != nil {
-			return nil, fmt.Errorf("addr 非法: %w", err)
-		}
-		if _, err := parseHex(s.Size); err != nil {
-			return nil, fmt.Errorf("size 非法: %w", err)
+		if _, _, err := validateDumpRange(s.Addr, s.Size); err != nil {
+			return nil, err
 		}
 		return append(args, "read_flash", s.Addr, s.Size, "<tmp>"), nil
 	}
@@ -118,8 +121,12 @@ func Exec(tty string, s Spec, timeout time.Duration, out func(line string),
 		return nil
 
 	case ActionDump:
-		addr, _ := parseHex(s.Addr)
-		size, _ := parseHex(s.Size)
+		// 参数校验：坏值此前被 parseHex 的错误吞掉当 0 用（issue #63）——
+		// 空值/越界/uint32 截断在读侧必须前置拒绝
+		addr, size, err := validateDumpRange(s.Addr, s.Size)
+		if err != nil {
+			return err
+		}
 		data, err := readRegion(uint32(addr), uint32(size))
 		if err != nil {
 			return err
@@ -174,6 +181,27 @@ func parseHex(s string) (uint64, error) {
 		return 0, fmt.Errorf("空值")
 	}
 	return strconv.ParseUint(s, 16, 64)
+}
+
+// validateDumpRange: dump 的 addr/size 校验（Plan 与 Exec 共用）——十六进制
+// 合法、size>0、区间不越 32 位地址空间（readRegion 的参数是 uint32，
+// 越界值截断后读到的根本不是请求的地址）。
+func validateDumpRange(addrS, sizeS string) (uint64, uint64, error) {
+	addr, err := parseHex(addrS)
+	if err != nil {
+		return 0, 0, fmt.Errorf("addr 非法: %w", err)
+	}
+	size, err := parseHex(sizeS)
+	if err != nil {
+		return 0, 0, fmt.Errorf("size 非法: %w", err)
+	}
+	if size == 0 {
+		return 0, 0, fmt.Errorf("size 必须大于 0")
+	}
+	if addr > math.MaxUint32 || size > math.MaxUint32 || addr+size > math.MaxUint32 {
+		return 0, 0, fmt.Errorf("读区间 0x%X+0x%X 超出 32 位地址空间", addr, size)
+	}
+	return addr, size, nil
 }
 
 func hexOrDie(v uint32) string { return fmt.Sprintf("0x%X", v) }
