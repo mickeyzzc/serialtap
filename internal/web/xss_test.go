@@ -315,13 +315,13 @@ func splitTopOps(expr string) []string {
 func closesAtEnd(seg string, open int) bool {
 	depth := 0
 	for i := open; i < len(seg); {
-		switch {
-		case seg[i] == '\'' || seg[i] == '"' || seg[i] == '`':
+		switch seg[i] {
+		case '\'', '"', '`':
 			i = scanStr(seg, i) // 无后置 i++，闭引号后的 ')' 不会被跳过
 			continue
-		case seg[i] == '(' || seg[i] == '[' || seg[i] == '{':
+		case '(', '[', '{':
 			depth++
-		case seg[i] == ')' || seg[i] == ']' || seg[i] == '}':
+		case ')', ']', '}':
 			depth--
 			if depth == 0 {
 				return i == len(seg)-1
