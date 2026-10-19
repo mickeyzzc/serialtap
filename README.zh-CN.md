@@ -195,6 +195,17 @@ Web 面板会多出一个 **mesh** 区：每个 peer 及其板子、远程日志
 - 防火墙放行端口（Linux `ufw allow 8802`、Windows 首次弹窗放行、macOS 15+
   的"本地网络"权限）；路由器 AP/客户端隔离会整体掐断 mesh——若两机之间
   路由仍通，可用静态 `mesh_peers` 兜底
+- **配对身份是自报的**：peer 的节点 ID 与名字都是对端自报、凭共享 PSK 过
+  加密门，没有硬件级身份背书——拿到 `mesh_key` 的任何人都能冒用已批准的
+  ID。真正的边界是**密钥的持有范围**：mesh 只开在可信 LAN，key 泄露视同
+  全部板子沦陷；`mesh revoke` 挡不住换一个随机 ID 重新敲门的持钥对端
+  （`mesh_auto_approve: true` 时更是如此）——换 `mesh_key` 才是根治
+- Web 面板**没有任何鉴权**：`"web_addr": "0.0.0.0:8801"` 暴露到 LAN 即
+  局域网内任何人可暂停/刷机/读 NVS（默认只听 127.0.0.1 回环；跨机访问
+  的取舍见 `docs/zh-CN/deployment.md`）
+- Windows 控制通道是 `%LOCALAPPDATA%\serialtap` 下的 AF_UNIX 文件 socket，
+  而 **Windows 的 AF_UNIX 没有文件权限语义**——本机任意进程都能发
+  flash/board 命令（Unix 侧 socket 为 0600 同用户，暴露面更窄）
 
 ## 快速开始
 
