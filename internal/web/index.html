@@ -580,7 +580,10 @@ const fmtAgo = ms => { if (!ms || ms < 0) return "—";
 // 动态模板一律 t("原文")；t 只做查表，找不到就回原文（zh 恒等）。
 let LANG = localStorage.getItem("st_lang") ||
   ((navigator.language || "zh").toLowerCase().startsWith("zh") ? "zh" : "en");
-function t(s){ const d = LANG === "en" ? (window.I18N_EN || {}) : null; return (d && d[s]) || s; }
+// t 与 applyStaticI18N 的取键规则一致：先 trim 再精确匹配（静态壳文本节点
+// 常带内联标记挤出的前后空白，如 "提取正则 —— 每个 <b>…"；两条路径规则
+// 分叉会让一边翻不中）。找不到回原文（zh 恒等）。
+function t(s){ const k = (s || "").trim(); const d = LANG === "en" ? (window.I18N_EN || {}) : null; return (d && d[k]) || s; }
 function applyStaticI18n(){
   document.documentElement.lang = LANG === "en" ? "en" : "zh-CN";
   document.title = t("serialtap " + t("· 观测面板"));
