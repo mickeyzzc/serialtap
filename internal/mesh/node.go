@@ -311,6 +311,7 @@ func (n *Node) serveConn(conn net.Conn) {
 	n.logf("[mesh] peer %s(%s) 接入 %s", peer.Name, peer.ID, ch.PeerAddr())
 	ctx, cancel := context.WithCancel(n.ctx)
 	defer cancel()
+	var tail tailGuard // 本连接的尾随闸（单连接单流，#71）
 
 	for {
 		t, payload, err := ch.Recv()
@@ -357,9 +358,17 @@ func (n *Node) serveConn(conn net.Conn) {
 					return
 				}
 			case ftTail:
+				if !tail.begin() {
+					// 单连接单尾随（#71）：第二条流会与第一条交错 ftBlock，
+					// 客户端无法区分归属——回 EOF 空块拒绝，不起新 goroutine
+					n.logf("[mesh] 拒绝同连接的重复尾随请求（%s）", peer.Name)
+					_ = ch.Send(ftBlock, mustJSON(blockFrame{EOF: true}))
+					break
+				}
 				n.wg.Add(1)
 				go func() {
 					defer n.wg.Done()
+					defer tail.end()
 					_ = n.handleTail(ch, ctx, payload)
 				}()
 			case ftDial:
