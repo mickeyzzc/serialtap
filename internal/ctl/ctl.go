@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mickeyzzc/serialtap/internal/board"
@@ -176,15 +177,30 @@ func (s *Server) Serve(h Handler) {
 
 func (s *Server) handleConn(conn net.Conn, h Handler) {
 	defer func() { _ = conn.Close() }()
+	// 写超时 + 死连接标记：客户端停住（终端冻结/Ctrl+Z）后 socket 缓冲填满，
+	// 无超时的 Write 会永久阻塞——flash 流式输出经 respond 卡住 scan 协程，
+	// RunExec 的 <-done 等不到、opMu 永久被占，此后所有 flash/release 一律
+	// "另一个操作进行中"直到重启守护（#56）。写失败一次即判死：后续响应
+	// 丢弃、连接关闭，让 handler 正常走完退出路径。
+	var dead atomic.Bool
+	respond := func(r Response) {
+		if dead.Load() {
+			return
+		}
+		_ = conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+		if writeJSON(conn, r) != nil {
+			dead.Store(true)
+			_ = conn.Close()
+		}
+	}
 	sc := bufio.NewScanner(conn)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
 		var req Request
 		if err := json.Unmarshal(sc.Bytes(), &req); err != nil {
-			writeJSON(conn, Response{OK: false, Error: "bad request: " + err.Error()})
+			respond(Response{OK: false, Error: "bad request: " + err.Error()})
 			continue
 		}
-		respond := func(r Response) { writeJSON(conn, r) }
 		h(req, respond)
 	}
 }
@@ -225,12 +241,17 @@ func (s *Server) Close() {
 	_ = os.Remove(s.ln.Addr().String())
 }
 
-func writeJSON(conn net.Conn, r Response) {
+// writeTimeout: 单次响应写超时。ctl 客户端是人/脚本终端——停住属正常
+// 故障形态，守护进程侧必须能自愈（见 handleConn 注释）。var 供测试缩短。
+var writeTimeout = 5 * time.Second
+
+func writeJSON(conn net.Conn, r Response) error {
 	b, err := json.Marshal(r)
 	if err != nil {
-		return
+		return err
 	}
-	_, _ = conn.Write(append(b, '\n'))
+	_, err = conn.Write(append(b, '\n'))
+	return err
 }
 
 // Send: 客户端 —— 发送请求并消费响应流直到 flash-done（或首个非流响应）。
