@@ -316,6 +316,9 @@ func TestSuspendTimeout(t *testing.T) {
 		t.Fatal("端口未关闭时 Suspend 应超时返回 false")
 	}
 	c.sr.portOpen.Store(false)
+	if c.Held() {
+		t.Fatal("Suspend 超时后 held 应回滚——否则无人 Resume，采集器永久悬挂（#55）")
+	}
 }
 
 // —— issue #4：成功会话后退避必须复位，不得棘轮到上限 ——
