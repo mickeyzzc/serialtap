@@ -410,3 +410,15 @@ func TestBoardAndAtArgErrors(t *testing.T) {
 		t.Fatal("at 无守护应报错")
 	}
 }
+
+// —— issue #62：数值旗标下界钳制（selftest --files / tray --poll-ms）——
+func TestClampMin(t *testing.T) {
+	for _, c := range []struct{ v, min, want int }{
+		{-5, 1, 1}, {0, 1, 1}, {1, 1, 1}, {14, 1, 14},
+		{0, 50, 50}, {49, 50, 50}, {50, 50, 50}, {2000, 50, 2000},
+	} {
+		if got := clampMin(c.v, c.min); got != c.want {
+			t.Errorf("clampMin(%d, %d) = %d, want %d", c.v, c.min, got, c.want)
+		}
+	}
+}

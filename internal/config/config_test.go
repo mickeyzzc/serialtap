@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,5 +72,75 @@ func TestMeshAccessParse(t *testing.T) {
 	}
 	if cfg.MeshAccess != "ro" {
 		t.Fatalf("ro 解析失败: %q", cfg.MeshAccess)
+	}
+}
+
+// —— issue #68：示例配置必须是可直接复制使用的严格 JSON ——
+// 曾带 // 注释行，json.Unmarshal 一读就炸，用户抄一份即坏配置。
+func TestExampleConfigParses(t *testing.T) {
+	example := filepath.Join("..", "..", "config.example.json")
+	data, err := os.ReadFile(example)
+	if err != nil {
+		t.Fatalf("读示例配置失败: %v", err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("示例配置不是合法 JSON（注释/尾逗号？）: %v", err)
+	}
+	cfg, err := LoadConfig(example)
+	if err != nil {
+		t.Fatalf("示例配置加载失败: %v", err)
+	}
+	// 补齐的 6 个字段（#68）取值抽查
+	if cfg.FlashBaud != 921600 || cfg.FlashTimeoutS != 600 || cfg.WebAddr != "127.0.0.1:8801" {
+		t.Fatalf("示例补齐字段取值异常: %+v", cfg)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("示例配置不应有未知键告警: %v", cfg.Warnings)
+	}
+}
+
+// —— issue #61：未知顶层键必须告警（不阻断加载）——
+func TestUnknownKeyWarns(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "typo.json")
+	os.WriteFile(f, []byte(`{"root":"/x","mesh_keyy":"typo-here"}`), 0o644)
+	cfg, err := LoadConfig(f)
+	if err != nil {
+		t.Fatalf("未知键不应导致加载失败（前向兼容）: %v", err)
+	}
+	if cfg.Root != "/x" {
+		t.Fatalf("合法键仍应生效: %+v", cfg)
+	}
+	joined := strings.Join(cfg.Warnings, "\n")
+	if !strings.Contains(joined, "mesh_keyy") {
+		t.Fatalf("告警应点名未知键 mesh_keyy: %v", cfg.Warnings)
+	}
+	if strings.Contains(joined, `"root"`) {
+		t.Fatalf("合法键不应被告警: %v", cfg.Warnings)
+	}
+}
+
+// 全量合法键（含 json:"-" 的 Warnings 不算）零告警；反射清单天然与结构同步。
+func TestAllKnownKeysNoWarnings(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "all.json")
+	os.WriteFile(f, []byte(`{
+		"root":"/x","baud":1,"poll_interval_ms":1,"silent_reopen_s":1,"reopen_min_s":1,
+		"reopen_max_s":1,"rotate_max_mb":1,"retention_days":1,"exclude":[],"names":[],
+		"signatures_extra":[],"elf_map":{},"control_socket":"","esptool_cmd":"",
+		"flash_baud":1,"flash_timeout_s":1,"proxy_tap_exclude":"","dtr_hold":[],
+		"web_addr":"127.0.0.1:1","mesh_enabled":false,"mesh_name":"n","mesh_port":1,
+		"mesh_key":"k","mesh_access":"rw","mesh_announce_s":1,"mesh_peers":[],"mesh_auto_approve":false
+	}`), 0o644)
+	cfg, err := LoadConfig(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("全量合法键不应告警: %v", cfg.Warnings)
+	}
+	if known := knownKeys(); !known["root"] || !known["mesh_auto_approve"] {
+		t.Fatalf("knownKeys 反射缺字段: %v", known)
 	}
 }

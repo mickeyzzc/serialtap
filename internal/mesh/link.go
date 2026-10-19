@@ -63,7 +63,21 @@ func (l *linkLoop) run() {
 		// 地址以注册表最新为准（beacon 可能换了端口）
 		addr := l.resolvedAddr()
 		if addr == "" {
-			return // peer 已从注册表消失且无静态地址
+			// peer 已从注册表消失且无静态地址（#57）：摘除自身条目再退出。
+			// 残留死条目会让 peer 再上线时 ensureLink 只刷新地址不重启循环，
+			// 自动敲门/转正停摆到进程重启；linkSt 只增不减，一并清理。
+			n.linkMu.Lock()
+			if cur, ok := n.links[l.key]; ok && cur == l {
+				delete(n.links, l.key)
+				delete(n.linkSt, l.key)
+			}
+			n.linkMu.Unlock()
+			// 摘除后复查：与 beacon 回调赛跑时注册表可能刚被重新填上——
+			// 重新起循环兜底（ensureLink 幂等）
+			if l.resolvedAddr() != "" {
+				n.ensureLink(l.key, "")
+			}
+			return
 		}
 		ok := l.linkOnce(addr)
 		wait := linkRetryUnauthed

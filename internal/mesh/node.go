@@ -64,7 +64,8 @@ type Node struct {
 
 	mu      sync.Mutex
 	uploads map[string]map[string]string // sid → name → 已落盘绝对路径
-	dlAuth  map[string]string            // token → 可下载绝对路径（只登记本节点自建产物）
+	upBytes map[string]int64             // sid → 累计落盘字节（#69 单会话上限）
+	dlAuth  map[string]dlGrant           // token → 一次性下载授权（只登记本节点自建产物，#70 带 TTL）
 	tunnels map[string]*tunnel           // pattern → 隧道
 	callSeq uint64
 
@@ -76,6 +77,8 @@ type Node struct {
 	linkMu sync.Mutex
 	links  map[string]*linkLoop // peer id → 自动链接循环（发现即拨、心跳保活、断线重连）
 	linkSt map[string]linkState // peer id → 对端是否已授权本节点（Call 快速失败提示）
+
+	salts saltCache // 近期已见 hello salt（#71 会话重放防线；进程内有效，不持久化）
 }
 
 // NewNode: 构造并启动（监听 + beacon + 注册表清扫）。Close 时全停。
@@ -104,7 +107,8 @@ func NewNode(opt Options) (*Node, error) {
 		sec:       sec,
 		reg:       NewRegistry(3 * announce),
 		uploads:   map[string]map[string]string{},
-		dlAuth:    map[string]string{},
+		upBytes:   map[string]int64{},
+		dlAuth:    map[string]dlGrant{},
 		tunnels:   map[string]*tunnel{},
 		conns:     map[net.Conn]struct{}{},
 		pairConns: map[string]map[net.Conn]struct{}{},
@@ -137,6 +141,7 @@ func (n *Node) logf(format string, args ...any) {
 }
 
 func (n *Node) start(announce time.Duration) error {
+	n.startupSweep() // 陈旧产物清扫（#70）：上次运行遗留的超龄目录先清再服务
 	var err error
 	n.ln, err = net.Listen("tcp", fmt.Sprintf(":%d", n.opt.Port))
 	if err != nil {
@@ -191,6 +196,7 @@ func (n *Node) start(announce time.Duration) error {
 				for _, id := range n.reg.Expire() {
 					n.logf("[mesh] peer %s 过期摘除（连续 %s 未见 beacon）", id, 3*announce)
 				}
+				n.pruneDlAuth() // 过期下载 token 连带产物目录（#70），挂在同一清扫节拍上
 			}
 		}
 	}()
@@ -224,7 +230,15 @@ func (n *Node) Close() {
 		t.close()
 	}
 	n.tunnels = map[string]*tunnel{}
+	leftover := make([]dlGrant, 0, len(n.dlAuth)) // 停机兜底（#70）：未下载的产物目录随 token 一起清
+	for _, g := range n.dlAuth {
+		leftover = append(leftover, g)
+	}
+	n.dlAuth = map[string]dlGrant{}
 	n.mu.Unlock()
+	for _, g := range leftover {
+		n.removeArtifact(g.path)
+	}
 	n.linkMu.Lock()
 	links := make([]*linkLoop, 0, len(n.links))
 	for _, l := range n.links {
@@ -283,7 +297,7 @@ func (n *Node) acceptLoop() {
 // 字节数，帧体（可能含 NVS 值）永不落日志。
 func (n *Node) serveConn(conn net.Conn) {
 	defer func() { _ = conn.Close() }()
-	ch, peer, err := AcceptChannel(conn, n.sec, n.self)
+	ch, peer, err := AcceptChannel(conn, n.sec, n.self, &n.salts)
 	if err != nil {
 		n.logf("[mesh] 拒绝连接 %s: %v", conn.RemoteAddr(), err)
 		return
@@ -297,6 +311,7 @@ func (n *Node) serveConn(conn net.Conn) {
 	n.logf("[mesh] peer %s(%s) 接入 %s", peer.Name, peer.ID, ch.PeerAddr())
 	ctx, cancel := context.WithCancel(n.ctx)
 	defer cancel()
+	var tail tailGuard // 本连接的尾随闸（单连接单流，#71）
 
 	for {
 		t, payload, err := ch.Recv()
@@ -343,9 +358,17 @@ func (n *Node) serveConn(conn net.Conn) {
 					return
 				}
 			case ftTail:
+				if !tail.begin() {
+					// 单连接单尾随（#71）：第二条流会与第一条交错 ftBlock，
+					// 客户端无法区分归属——回 EOF 空块拒绝，不起新 goroutine
+					n.logf("[mesh] 拒绝同连接的重复尾随请求（%s）", peer.Name)
+					_ = ch.Send(ftBlock, mustJSON(blockFrame{EOF: true}))
+					break
+				}
 				n.wg.Add(1)
 				go func() {
 					defer n.wg.Done()
+					defer tail.end()
 					_ = n.handleTail(ch, ctx, payload)
 				}()
 			case ftDial:
@@ -366,9 +389,17 @@ func (n *Node) registerIncoming(ch *Channel, peer Ident) {
 	}
 	n.reg.Touch(peer.ID)
 	for _, sp := range n.reg.List() {
-		if h, _, serr := net.SplitHostPort(sp.Addr); serr == nil && h == host {
-			n.reg.LearnedIdent(sp.Addr, peer)
+		h, port, serr := net.SplitHostPort(sp.Addr)
+		if serr != nil || h != host {
+			continue
 		}
+		// 同 IP 多节点（本机多实例/NAT 后双节点，#71）：只回填端口与对端
+		// 自报一致（或对端未报端口无法核对时不回填）的条目——按 IP 段盲
+		// 回填会把 peers[X] 的地址改写成 Y 的端口。
+		if peer.Port <= 0 || fmt.Sprintf("%d", peer.Port) != port {
+			continue
+		}
+		n.reg.LearnedIdent(sp.Addr, peer)
 	}
 	if peer.Port > 0 {
 		addr := net.JoinHostPort(host, fmt.Sprintf("%d", peer.Port))
@@ -409,6 +440,11 @@ func (n *Node) handleReq(ch *Channel, payload []byte) error {
 
 	req := rf.Req
 	req.Peer = "" // 链路终点：剥掉 peer 字段再进本机 handler，防对端二次转发/成环
+	if req.Cmd == "flash" {
+		// mesh 刷机会话目录随命令结束清理（#70）——目录建在 flash 命令到达
+		// 之前，成功失败皆清；flash 永不到达则由启动清扫兜底。
+		defer n.cleanupFlashUploads(req.Spec)
+	}
 	var file *fileRef
 	cleanup := func() {}
 	if req.Cmd == "board" && req.Board != nil && req.Board.Action == "dump" && req.Board.OutPath == "" {
@@ -427,7 +463,7 @@ func (n *Node) handleReq(ch *Channel, payload []byte) error {
 			}
 			token := randomHex(16)
 			n.mu.Lock()
-			n.dlAuth[token] = p
+			n.dlAuth[token] = dlGrant{path: p, at: time.Now()}
 			n.mu.Unlock()
 			file = &fileRef{Token: token, Name: filepath.Base(p), Size: fi.Size()}
 		}
@@ -469,7 +505,14 @@ func accessReadable(cmd string) bool {
 
 // Call: 向 peer 转发一条 ctl 请求，流式回收响应直到 End 帧（或 onResp
 // 返回 true 提前结束）。返回 End 帧携带的产物引用（通常为 nil）。
+// 无整体截止（刷机等长流式命令可能耗时数分钟）。
 func (n *Node) Call(peerName string, req ctl.Request, onResp func(ctl.Response) bool) (*fileRef, error) {
+	return n.call(peerName, req, onResp, 0)
+}
+
+// call: Call 的实现。deadline > 0 时在握手完成后给整条连接设截止——楔死
+// 对端（握手后不应答）不再永久挂住调用 goroutine 与连接（#71）。
+func (n *Node) call(peerName string, req ctl.Request, onResp func(ctl.Response) bool, deadline time.Duration) (*fileRef, error) {
 	peer, err := n.reg.Match(peerName)
 	if err != nil {
 		return nil, err
@@ -486,6 +529,9 @@ func (n *Node) Call(peerName string, req ctl.Request, onResp func(ctl.Response) 
 	ch, ident, err := DialChannel(conn, n.sec, n.self)
 	if err != nil {
 		return nil, fmt.Errorf("与 peer %s 握手失败（密钥不一致？）: %w", peerName, err)
+	}
+	if deadline > 0 {
+		_ = conn.SetDeadline(time.Now().Add(deadline))
 	}
 	n.reg.Touch(ident.ID)
 	if peer.Static || peer.ID == "" {
@@ -566,7 +612,9 @@ func (n *Node) AggregateStatus(timeout time.Duration) []ctl.PeerStatus {
 			resCh := make(chan res, 1)
 			go func() {
 				devs := []ctl.DevState{}
-				_, cerr := n.Call(p.NameOrAddr(), ctl.Request{Cmd: "status"}, func(r ctl.Response) bool {
+				// deadline=timeout：楔死对端由连接截止兜底回收（#71），内层
+				// goroutine 不会永久泄漏；其迟到写只落在 ps 上、被超时分支丢弃
+				_, cerr := n.call(p.NameOrAddr(), ctl.Request{Cmd: "status"}, func(r ctl.Response) bool {
 					if r.OK {
 						devs = r.Devices
 						ps.Access = r.Access // 对端接入模式（ro/rw）随 status 响应传播
@@ -574,7 +622,7 @@ func (n *Node) AggregateStatus(timeout time.Duration) []ctl.PeerStatus {
 						ps.Err = r.Error
 					}
 					return false
-				})
+				}, timeout)
 				resCh <- res{devs: devs, err: cerr}
 			}()
 			start := time.Now()
@@ -586,10 +634,22 @@ func (n *Node) AggregateStatus(timeout time.Duration) []ctl.PeerStatus {
 				} else {
 					ps.State, ps.Devices = "online", r.devs
 				}
+				out[i] = ps
 			case <-time.After(timeout):
-				ps.State, ps.Err = "offline", fmt.Sprintf("查询超时（>%s）", timeout)
+				// 超时分支只写本地副本（#71）：共享 ps 可能仍被内层 goroutine
+				// 迟到写，从 p 重建结果，避免数据竞态
+				tp := ctl.PeerStatus{ID: p.ID, Name: p.NameOrAddr(), Addr: p.Addr, Static: p.Static,
+					State: "offline", Err: fmt.Sprintf("查询超时（>%s）", timeout)}
+				if p.ID != "" {
+					if n.pairs.Approved(p.ID) {
+						tp.Auth = "approved"
+					}
+					if authed, known := n.peerAuthedFresh(p.ID); known {
+						tp.PeerAuthed = authed
+					}
+				}
+				out[i] = tp
 			}
-			out[i] = ps
 		}(i, p)
 	}
 	wg.Wait()
@@ -611,6 +671,66 @@ func (p Peer) NameOrAddr() string {
 }
 
 // —— 小工具 ——
+
+// dlGrant: 一次性下载授权（#70）——token 只在内存，随产物目录创建时登记，
+// 下载即消耗；超 TTL 未下载由周期清扫/访问懒清连带目录删除。
+type dlGrant struct {
+	path string
+	at   time.Time
+}
+
+const (
+	dlAuthTTL   = 10 * time.Minute // 下载 token 有效期（#70：此前永不过期）
+	sweepMaxAge = 24 * time.Hour   // 启动清扫的产物陈旧阈值（mtime）
+)
+
+// pruneDlAuth: 摘除过期 token 并连带删产物目录。挂在注册表清扫 ticker 上
+// 周期执行；下载路径访问时另有懒清。
+func (n *Node) pruneDlAuth() {
+	n.mu.Lock()
+	var stale []dlGrant
+	for tok, g := range n.dlAuth {
+		if time.Since(g.at) > dlAuthTTL {
+			stale = append(stale, g)
+			delete(n.dlAuth, tok)
+		}
+	}
+	n.mu.Unlock()
+	for _, g := range stale {
+		n.removeArtifact(g.path)
+	}
+}
+
+// removeArtifact: 删除产物文件所在目录——仅限 root/.mesh-share/ 之下（防
+// 恶意登记路径变删除 oracle）。
+func (n *Node) removeArtifact(path string) {
+	dir := filepath.Dir(path)
+	share := filepath.Join(n.opt.Root, ".mesh-share")
+	if strings.HasPrefix(dir, share+string(filepath.Separator)) {
+		_ = os.RemoveAll(dir)
+	}
+}
+
+// startupSweep: 启动清扫（#70）——上次运行遗留的 .mesh-share/* 与
+// .flash-upload/* 超 sweepMaxAge（mtime）整目录删除；新近的留给可能还在
+// 进行的会话（token 不跨进程存活，真正可用期只到进程结束）。
+func (n *Node) startupSweep() {
+	for _, sub := range []string{".mesh-share", ".flash-upload"} {
+		base := filepath.Join(n.opt.Root, sub)
+		entries, err := os.ReadDir(base)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			fi, err := e.Info()
+			if err != nil || time.Since(fi.ModTime()) < sweepMaxAge {
+				continue
+			}
+			_ = os.RemoveAll(filepath.Join(base, e.Name()))
+			n.logf("[mesh] 启动清扫陈旧产物 %s", filepath.Join(base, e.Name()))
+		}
+	}
+}
 
 func loadOrCreateID(root string) (string, error) {
 	if err := os.MkdirAll(root, 0o755); err != nil {

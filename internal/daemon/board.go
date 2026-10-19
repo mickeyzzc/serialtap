@@ -40,16 +40,21 @@ func (d *daemon) Board(pattern string, all bool, spec board.Spec, out func(line 
 	for _, c := range cs {
 		c.LogEvent("board %s start (addr=%s size=%s show_secrets=%v)",
 			spec.Action, spec.Addr, spec.Size, spec.ShowSecrets)
-		if argv, err := board.Plan(c.Tty(), spec); err == nil {
-			c.LogEvent("board plan: %s", strings.Join(argv, " "))
+		// Plan 校验失败 = 请求参数坏，整体中止（issue #63：此前只落事件、
+		// 执行照旧，坏 addr 会被当 0 读）。校验在让口之前，端口不受扰动。
+		argv, err := board.Plan(c.Tty(), spec)
+		if err != nil {
+			c.LogEvent("board %s abort: %v", spec.Action, err)
+			return fmt.Errorf("%s: %w", c.DeviceName(), err)
 		}
+		c.LogEvent("board plan: %s", strings.Join(argv, " "))
 		if !c.Suspend(10 * time.Second) {
 			c.LogEvent("board %s abort: port did not release", spec.Action)
 			return fmt.Errorf("%s: 端口让出超时", c.DeviceName())
 		}
 		c.SetFlashing(true)
 		outFacts := func(line string) { c.FactsFeedProbe(line); out(line) } // 探测输出回填身份事实
-		err := board.Exec(c.Tty(), spec, timeout, outFacts,
+		err = board.Exec(c.Tty(), spec, timeout, outFacts,
 			board.EsptoolReader(c.Tty(), spec, timeout, outFacts))
 		c.SetFlashing(false)
 		c.LogEvent("board %s finished (err=%v)", spec.Action, err)

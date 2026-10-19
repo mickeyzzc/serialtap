@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -30,6 +31,30 @@ type tailFrame struct {
 }
 
 var tailKindRe = regexp.MustCompile(`^(serial|events)$`)
+
+// tailGuard: 单连接的活动尾随闸（#71）——同连接只允许一个 ftTail 流：两条
+// 尾随会在同一信道上交错 ftBlock，客户端无法区分归属。重复请求回 EOF 空
+// 块拒绝；尾随结束（写失败返回/ctx 取消）后可再次请求。
+type tailGuard struct {
+	mu     sync.Mutex
+	active bool
+}
+
+func (g *tailGuard) begin() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.active {
+		return false
+	}
+	g.active = true
+	return true
+}
+
+func (g *tailGuard) end() {
+	g.mu.Lock()
+	g.active = false
+	g.mu.Unlock()
+}
 
 // latestTailFile: 设备目录下最新的 kind-*.log（轮转感知排序，与面板同规则）。
 // 排序键必须是 (日期, 数字后缀) 语义：同日内 .001/.002 比基础文件**新**（写满

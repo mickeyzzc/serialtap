@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -236,6 +237,31 @@ func TestUploadRejectsBadNames(t *testing.T) {
 	_, err := p.b.uploadSession("bench-a", map[string][]byte{"../evil.bin": []byte("x")})
 	if err == nil {
 		t.Fatal("路径穿越文件名必须被拒")
+	}
+}
+
+// TestUploadSidByteCap: 单 sid 累计字节上限（#69）——超限块被拒（LastSeq=-1），
+// 上限内照常；防持钥 peer 用不消费的上传会话无限占盘。
+func TestUploadSidByteCap(t *testing.T) {
+	old := uploadSidCap
+	uploadSidCap = 8
+	defer func() { uploadSidCap = old }()
+	p := newNodePair(t, func(req ctl.Request, respond func(ctl.Response)) { respond(ctl.Response{OK: true}) }, nil)
+	// 单块超限 → 拒绝
+	if _, err := p.b.uploadSession("bench-a", map[string][]byte{"bin0.img": []byte("0123456789")}); err == nil {
+		t.Fatal("超过单会话累计上限的上传必须被拒")
+	}
+	// 同会话累计：两文件合计超限 → 后到者被拒
+	if _, err := p.b.uploadSession("bench-a", map[string][]byte{"a.img": []byte("012345"), "b.img": []byte("6789")}); err == nil {
+		t.Fatal("会话内累计超限必须被拒")
+	}
+	// 上限内 → 放行且 ack 带路径
+	remote, err := p.b.uploadSession("bench-a", map[string][]byte{"bin0.img": []byte("0123")})
+	if err != nil {
+		t.Fatalf("上限内上传必须放行: %v", err)
+	}
+	if p := remote["bin0.img"]; !strings.Contains(p, ".flash-upload") {
+		t.Fatalf("ack 未携带落盘路径: %q", p)
 	}
 }
 

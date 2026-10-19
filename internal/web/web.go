@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -134,17 +135,20 @@ func Start(addr, root string, status StatusProvider, commander Commander,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
-	mux.HandleFunc("/api/status", s.handleStatus)
-	mux.HandleFunc("/api/config", s.handleConfig)
-	mux.HandleFunc("/api/events", s.handleEvents)
-	mux.HandleFunc("/api/cmd", s.handleCmd)
-	mux.HandleFunc("/api/flash", s.handleFlash)              // POST 上传镜像并启动刷写
-	mux.HandleFunc("/api/flash/stream", s.flashStream)       // SSE 进度（历史回放+实时；board 深度识别共用）
-	mux.HandleFunc("/api/board", s.handleBoard)              // 深度识别（esptool info → 事实回填）
-	mux.HandleFunc("/api/devices/", s.handleDevice)          // {name}/files|tail|live
-	mux.HandleFunc("/api/live", s.handleLiveMulti)           // 单条 SSE 多路设备尾随（浏览器连接池友好）
-	mux.HandleFunc("/api/mesh/status", s.handleMeshStatus)   // mesh 聚合（未启用时 enabled:false）
-	mux.HandleFunc("/api/mesh/devices/", s.handleMeshDevice) // {peer}/{name}/live（远程 SSE 尾随）
+	// /api/ 全部过 apiGuard（Host/Origin 校验，见其注释）；面板无认证，
+	// 操作面（暂停/刷机/命令）全开放，浏览器侧跨站请求必须挡在外面。
+	api := func(h http.HandlerFunc) http.Handler { return apiGuard(addr, h) }
+	mux.Handle("/api/status", api(s.handleStatus))
+	mux.Handle("/api/config", api(s.handleConfig))
+	mux.Handle("/api/events", api(s.handleEvents))
+	mux.Handle("/api/cmd", api(s.handleCmd))
+	mux.Handle("/api/flash", api(s.handleFlash))        // POST 上传镜像并启动刷写
+	mux.Handle("/api/flash/stream", api(s.flashStream)) // SSE 进度（历史回放+实时；board 深度识别共用）
+	mux.Handle("/api/board", api(s.handleBoard))        // 深度识别（esptool info → 事实回填）
+	mux.Handle("/api/devices/", api(s.handleDevice))    // {name}/files|tail|live
+	mux.Handle("/api/live", api(s.handleLiveMulti))     // 单条 SSE 多路设备尾随（浏览器连接池友好）
+	mux.Handle("/api/mesh/status", api(s.handleMeshStatus))
+	mux.Handle("/api/mesh/devices/", api(s.handleMeshDevice)) // {peer}/{name}/live（远程 SSE 尾随）
 	s.srv = &http.Server{Addr: addr, Handler: mux}
 	go func() {
 		logf("[web] 观测面板: http://%s/", addr)
@@ -171,6 +175,53 @@ func isLoopbackBind(addr string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback() || host == "localhost"
+}
+
+// apiGuard: /api/ 路由的 Host/Origin 校验中间件（CSRF/DNS rebinding 收口）。
+// 面板无认证，操作面（暂停/刷机/命令/尾随）全开放——浏览器侧的跨站请求
+// 必须挡：
+//   - Host 校验仅在回环绑定时启用：允许 127.0.0.1/localhost/[::1]（带本
+//     服务端口或裸名）。非回环绑定 = 用户显式选择暴露给 LAN（Start 处已有
+//     告警日志，属文档化行为），保留不强制 Host——但 Origin 规则两态都生效；
+//   - 带 Origin 且其 host 部分非回环 → 403（恶意网页/沙箱 "null" 源都挡；
+//     curl 等非浏览器客户端不发 Origin，不受影响）。SSE 的 EventSource 无法
+//     带自定义头，跨站防线的最后一道也在这里。
+func apiGuard(addr string, next http.Handler) http.Handler {
+	enforceHost := isLoopbackBind(addr)
+	_, port, _ := net.SplitHostPort(addr)
+	allowedHost := map[string]bool{"127.0.0.1": true, "localhost": true, "[::1]": true}
+	if port != "" {
+		allowedHost["127.0.0.1:"+port] = true
+		allowedHost["localhost:"+port] = true
+		allowedHost["[::1]:"+port] = true
+	}
+	forbidden := func(w http.ResponseWriter, why string) {
+		w.WriteHeader(http.StatusForbidden)
+		writeJSON(w, map[string]any{"ok": false, "error": why})
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if enforceHost && !allowedHost[strings.ToLower(r.Host)] {
+			forbidden(w, "forbidden host")
+			return
+		}
+		if origin := r.Header.Get("Origin"); origin != "" {
+			u, err := url.Parse(origin)
+			if err != nil || !loopbackHostname(u.Hostname()) {
+				forbidden(w, "forbidden origin")
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// loopbackHostname: 主机名（无端口形态）是否回环。
+func loopbackHostname(h string) bool {
+	if h == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
 }
 
 // Close: 停止服务（零值安全）。
