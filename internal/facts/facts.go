@@ -24,6 +24,9 @@ const (
 	OriginLog   = "log"   // 被动日志提取——零打扰、插上即积累
 )
 
+// maxDevKeys: #DEV 键空间上限（正常固件 <10 键；32 已留足余量）。
+const maxDevKeys = 32
+
 var originRank = map[string]int{OriginDev: 3, OriginProbe: 2, OriginLog: 1}
 
 // Fact: 一条事实。Source 是证据原始行（截断），审计与排错用。
@@ -137,12 +140,17 @@ func (s *Store) Feed(line string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// #DEV 自述行：k=v 全量入表（origin=dev，最高优先级）
+	// #DEV 自述行：k=v 全量入表（origin=dev，最高优先级）。键空间设备可控：
+	// 异常/恶意固件持续吐新键会无限撑大 facts map 与 info.json（每次变化全量
+	// 落盘）——已知键照常更新，新键只在 maxDevKeys 余量内收，值超长截断（#72）
 	if m := devLineRe.FindStringSubmatch(body); m != nil {
 		changed := false
 		for _, kv := range devKVRe.FindAllStringSubmatch(m[1], -1) {
+			if _, ok := s.facts[kv[1]]; !ok && len(s.facts) >= maxDevKeys {
+				continue
+			}
 			v := strings.Trim(kv[2], `"`)
-			if s.set(kv[1], v, body, now, OriginDev) {
+			if s.set(kv[1], truncate(v, 256), body, now, OriginDev) {
 				changed = true
 			}
 		}

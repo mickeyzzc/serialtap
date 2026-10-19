@@ -1,8 +1,10 @@
 package facts
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -228,5 +230,28 @@ func TestSSIDFormats(t *testing.T) {
 		if got := s.Snapshot()["ssid"].Value; got != c[1] {
 			t.Fatalf("%q → %q，期望 %q", c[0], got, c[1])
 		}
+	}
+}
+
+// #DEV 键空间与值长上限（#72 回归）：异常/恶意固件持续吐新键不得无限
+// 撑大 facts map 与 info.json；超限后已知键仍可更新。
+func TestDevKeysCapped(t *testing.T) {
+	s := Open(t.TempDir())
+	var sb strings.Builder
+	sb.WriteString("#DEV")
+	for i := 0; i < maxDevKeys+20; i++ {
+		fmt.Fprintf(&sb, " k%d=v%d", i, i)
+	}
+	s.Feed(sb.String())
+	if got := len(s.Snapshot()); got != maxDevKeys {
+		t.Fatalf("键数应封顶 %d: %d", maxDevKeys, got)
+	}
+	// 超限后既有键仍可更新，值超长截断
+	long := strings.Repeat("x", 1000)
+	if !s.Feed("#DEV k1=" + long) {
+		t.Fatal("既有键更新应生效")
+	}
+	if v := s.Snapshot()["k1"].Value; len(v) != 259 { // 256 字节 + "…"（UTF-8 3 字节）
+		t.Fatalf("值应截断到 256+…: %d", len(v))
 	}
 }
