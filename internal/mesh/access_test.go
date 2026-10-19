@@ -141,3 +141,32 @@ func TestAccessReadOnlyRejectsTunnel(t *testing.T) {
 		t.Fatalf("ro 节点必须拒绝隧道: err=%v", err)
 	}
 }
+
+// ro 节点拒绝上传（#69）：ftUp 直传帧不能绕过 mesh_access=ro——远程刷机
+// 的镜像通道与写命令同权。
+func TestAccessReadOnlyRejectsUpload(t *testing.T) {
+	_, b := accessPair(t, "ro")
+	testutil.WaitFor(t, 5*time.Second, func() bool {
+		resp, err := callPeer(t, b, "bench-a", "status")
+		return err == nil && resp.OK
+	}, "等 B→A 链路就绪")
+	if _, err := b.uploadSession("bench-a", map[string][]byte{"bin0.img": []byte("IMG")}); err == nil {
+		t.Fatal("ro 节点必须拒绝上传")
+	}
+}
+
+// rw 节点上传照常落盘（回归：ro 闸门不得误伤 rw）。
+func TestAccessReadWriteUploadWorks(t *testing.T) {
+	_, b := accessPair(t, "")
+	testutil.WaitFor(t, 5*time.Second, func() bool {
+		resp, err := callPeer(t, b, "bench-a", "status")
+		return err == nil && resp.OK
+	}, "等 B→A 链路就绪")
+	remote, err := b.uploadSession("bench-a", map[string][]byte{"bin0.img": []byte("IMG")})
+	if err != nil {
+		t.Fatalf("rw 节点上传必须放行: %v", err)
+	}
+	if p := remote["bin0.img"]; !strings.Contains(p, ".flash-upload") || !strings.Contains(p, "mesh-") {
+		t.Fatalf("上传 ack 应携带落盘路径: %q", p)
+	}
+}

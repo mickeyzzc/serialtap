@@ -55,7 +55,7 @@ func handshakePair(t *testing.T, clientKey, serverKey string, client Ident, serv
 	if err != nil {
 		t.Fatalf("接受连接失败: %v", err)
 	}
-	srvCh, srvPeer, err := AcceptChannel(srvConn, testSecrets(t, serverKey), server)
+	srvCh, srvPeer, err := AcceptChannel(srvConn, testSecrets(t, serverKey), server, nil)
 	cr := <-cliCh
 	if cr.err != nil {
 		t.Fatalf("客户端握手失败: %v", cr.err)
@@ -149,7 +149,7 @@ func TestChannelWrongKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("接受失败: %v", err)
 	}
-	if _, _, err = AcceptChannel(srvConn, testSecrets(t, "server-key"), Ident{ID: "s", Name: "s"}); err == nil {
+	if _, _, err = AcceptChannel(srvConn, testSecrets(t, "server-key"), Ident{ID: "s", Name: "s"}, nil); err == nil {
 		t.Fatal("密钥不匹配时服务端握手必须失败")
 	}
 	select {
@@ -185,6 +185,46 @@ func TestChannelLargeFrame(t *testing.T) {
 		if got[i] != payload[i] {
 			t.Fatalf("大帧内容错误 @%d", i)
 		}
+	}
+}
+
+// TestChannelConcurrentSendUniqueSeq: 并发 Send 的帧序唯一性（#54）。
+// AAD 的 tx 读取若在写锁外，两个并发 Send 会拿到同一序号——接收侧第二帧
+// 解封失败即拆链；-race 下同时报数据竞态。两发送者同屏障起跑，全部帧
+// 必须在接收侧无错解封。
+func TestChannelConcurrentSendUniqueSeq(t *testing.T) {
+	cli, srv, _, _ := handshakePair(t, "k", "k", Ident{ID: "a", Name: "a"}, Ident{ID: "b", Name: "b"})
+	const senders = 2
+	const perSender = 200
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	sendErr := make(chan error, senders)
+	for g := 0; g < senders; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			<-start
+			for i := 0; i < perSender; i++ {
+				if err := cli.Send(ftPing, mustJSON(map[string]int{"g": g, "i": i})); err != nil {
+					sendErr <- err
+					return
+				}
+			}
+		}(g)
+	}
+	close(start)
+
+	_ = srv.conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	for want := 0; want < senders*perSender; want++ {
+		if _, _, err := srv.Recv(); err != nil {
+			t.Fatalf("第 %d 帧解封失败（并发发送帧序重复）: %v", want, err)
+		}
+	}
+	wg.Wait()
+	select {
+	case err := <-sendErr:
+		t.Fatalf("并发发送失败: %v", err)
+	default:
 	}
 }
 

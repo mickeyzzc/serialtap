@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/mickeyzzc/serialtap/internal/ctl"
@@ -20,6 +21,10 @@ import (
 // 此读 daemon 用户的任意文件。
 
 const uploadChunk = 1 << 20 // 1MB 原始字节/块
+
+// uploadSidCap: 单上传会话（sid）累计落盘上限（#69）——防持钥 peer 用无人
+// 消费的上传会话无限占盘。测试下调验证越限拒绝。
+var uploadSidCap int64 = 1 << 30 // 1 GiB
 
 // upFrame: ftUp 载荷。seq 从 0 起。
 type upFrame struct {
@@ -46,6 +51,27 @@ type blockFrame struct {
 
 var safeNameRe = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
+// windowsReserved: Windows 保留设备名（#71）——服务端可能跑在 Windows 上，
+// 落盘名的主干（首个 '.' 前）撞上保留名会写进设备（如 con）或被系统拒绝。
+var windowsReserved = func() map[string]bool {
+	m := map[string]bool{"CON": true, "PRN": true, "AUX": true, "NUL": true}
+	for i := 1; i <= 9; i++ {
+		m[fmt.Sprintf("COM%d", i)] = true
+		m[fmt.Sprintf("LPT%d", i)] = true
+	}
+	return m
+}()
+
+// reservedName: 文件名是否撞 Windows 保留设备名（大小写不敏感，按首个
+// '.' 前的主干判断——"con" 与 "con.bin" 同样危险）。
+func reservedName(name string) bool {
+	stem := name
+	if i := strings.IndexByte(name, '.'); i >= 0 {
+		stem = name[:i]
+	}
+	return windowsReserved[strings.ToUpper(stem)]
+}
+
 // handleUpload: 服务端——分块追加落盘，逐块应答（客户端按 ack 流控）。
 // 同名文件按到达顺序追加；同一连接顺序发送即天然有序。
 func (n *Node) handleUpload(ch *Channel, payload []byte) error {
@@ -53,7 +79,13 @@ func (n *Node) handleUpload(ch *Channel, payload []byte) error {
 	if err := json.Unmarshal(payload, &uf); err != nil {
 		return err
 	}
-	if !safeNameRe.MatchString(uf.Name) || !safeNameRe.MatchString(uf.SID) {
+	if !safeNameRe.MatchString(uf.Name) || !safeNameRe.MatchString(uf.SID) || reservedName(uf.Name) {
+		return ch.Send(ftUpAck, mustJSON(upAckFrame{SID: uf.SID, Name: uf.Name, LastSeq: -1}))
+	}
+	// 只读接入（#69）：上传直写本机磁盘，与写命令同权——ro 不能被 ftUp
+	// 直传帧绕过，在此咽喉拒绝（拒绝 ack 与非法名同款 LastSeq=-1）。
+	if n.readOnly() {
+		n.logf("[mesh] 拒绝只读节点的上传 %s/%s（%s）", uf.SID, uf.Name, ch.PeerAddr())
 		return ch.Send(ftUpAck, mustJSON(upAckFrame{SID: uf.SID, Name: uf.Name, LastSeq: -1}))
 	}
 	dir := filepath.Join(n.opt.Root, ".flash-upload", "mesh-"+uf.SID)
@@ -64,6 +96,18 @@ func (n *Node) handleUpload(ch *Channel, payload []byte) error {
 	data, err := unb64(uf.B64)
 	if err != nil {
 		return err
+	}
+	// 单会话累计上限（#69）：越限块直接拒（不入账不落盘），客户端见 -1 即停
+	n.mu.Lock()
+	total := n.upBytes[uf.SID] + int64(len(data))
+	over := total > uploadSidCap
+	if !over {
+		n.upBytes[uf.SID] = total
+	}
+	n.mu.Unlock()
+	if over {
+		n.logf("[mesh] 上传会话 %s 超累计上限（%d > %d B），拒绝 %s#%d", uf.SID, total, uploadSidCap, uf.Name, uf.Seq)
+		return ch.Send(ftUpAck, mustJSON(upAckFrame{SID: uf.SID, Name: uf.Name, LastSeq: -1}))
 	}
 	if uf.Seq == 0 {
 		// 新文件（同名重传 = 追加语义靠 seq 顺序；seq0 截断重建）
@@ -85,25 +129,37 @@ func (n *Node) handleUpload(ch *Channel, payload []byte) error {
 	return ch.Send(ftUpAck, mustJSON(upAckFrame{SID: uf.SID, Name: uf.Name, LastSeq: uf.Seq, Path: path}))
 }
 
-// handleDownload: 服务端——dlAuth token → 分块回传。一次性（发完即撤销 token）。
+// handleDownload: 服务端——dlAuth token → 分块回传。一次性（发完即撤销 token），
+// 目录随回传收尾清理（#70：成败皆清，token 已消耗产物即无用）；过期 token
+// 拒绝并懒清（摘 token + 删目录）。
 func (n *Node) handleDownload(ch *Channel, _ context.Context, payload []byte) error {
 	var df downFrame
 	if err := json.Unmarshal(payload, &df); err != nil {
 		return err
 	}
+	expired := false
 	n.mu.Lock()
-	path, ok := n.dlAuth[df.Token]
-	if ok && (df.Name == "" || df.Name != filepath.Base(path)) {
+	g, ok := n.dlAuth[df.Token]
+	if ok && (df.Name == "" || df.Name != filepath.Base(g.path)) {
 		ok = false
 	}
-	if ok {
+	if ok && time.Since(g.at) > dlAuthTTL {
+		ok = false
+		expired = true
+	}
+	if ok || expired {
 		delete(n.dlAuth, df.Token)
 	}
 	n.mu.Unlock()
+	if expired {
+		n.logf("[mesh] 下载 token 已过期（>%s），产物目录懒清", dlAuthTTL)
+		n.removeArtifact(g.path)
+	}
 	if !ok {
 		return ch.Send(ftBlock, mustJSON(blockFrame{EOF: true}))
 	}
-	f, err := os.Open(path)
+	defer n.removeArtifact(g.path)
+	f, err := os.Open(g.path)
 	if err != nil {
 		return ch.Send(ftBlock, mustJSON(blockFrame{EOF: true}))
 	}
@@ -122,6 +178,30 @@ func (n *Node) handleDownload(ch *Channel, _ context.Context, payload []byte) er
 	}
 	n.logf("[mesh] 产物下载 %s（%s）", df.Name, ch.PeerAddr())
 	return ch.Send(ftBlock, mustJSON(blockFrame{EOF: true}))
+}
+
+// cleanupFlashUploads: mesh 远程刷机结束后（成功/失败）清理引用的上传会话
+// 目录与字节账（#70）。只清 root/.flash-upload/mesh-<sid> 形制的自管目录——
+// spec 由对端构造，不能给它任意路径删除能力。
+func (n *Node) cleanupFlashUploads(spec flash.Spec) {
+	base := filepath.Join(n.opt.Root, ".flash-upload")
+	done := map[string]bool{}
+	for _, b := range spec.Bins {
+		dir := filepath.Dir(b.Path)
+		if filepath.Dir(dir) != base {
+			continue
+		}
+		sid := strings.TrimPrefix(filepath.Base(dir), "mesh-")
+		if sid == "" || !safeNameRe.MatchString(sid) || done[dir] {
+			continue
+		}
+		done[dir] = true
+		_ = os.RemoveAll(dir)
+		n.mu.Lock()
+		delete(n.upBytes, sid)
+		n.mu.Unlock()
+		n.logf("[mesh] 刷机会话 %s 目录已清理", sid)
+	}
 }
 
 // uploadSession: 客户端——一条连接上传若干命名文件，返回 name → 远端

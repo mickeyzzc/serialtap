@@ -16,6 +16,10 @@ import (
 // （ftPair），一切操作帧（req/upload/download/tail/dial）都被拒。
 // 授权表持久化在 <root>/.mesh-peers.json，守护进程单一写者。
 
+// pendingTTL: pending 敲门记录的保留期（#71）——未知 ID 的敲门此前只增不
+// 清且每次落盘；扫描/误连产生的陈旧记录超期后摘除（活跃敲门会刷新 At）。
+const pendingTTL = 24 * time.Hour
+
 // PairEntry: 单个 peer 的授权记录。
 type PairEntry struct {
 	ID   string    `json:"id"`
@@ -60,6 +64,9 @@ func LoadPairStore(root string) (*PairStore, error) {
 	if st.f.Revoked == nil {
 		st.f.Revoked = map[string]PairEntry{}
 	}
+	st.mu.Lock()
+	st.prunePendingLocked() // 载入即清（#71）：陈旧 pending 不进工作集
+	st.mu.Unlock()
 	return st, nil
 }
 
@@ -67,7 +74,18 @@ func emptyPairFile() pairFile {
 	return pairFile{Approved: map[string]PairEntry{}, Pending: map[string]PairEntry{}, Revoked: map[string]PairEntry{}}
 }
 
+// prunePendingLocked: 摘除超期 pending（调用方持锁）。approved/revoked 是
+// 明确的授权决策，不随时间失效。
+func (s *PairStore) prunePendingLocked() {
+	for id, e := range s.f.Pending {
+		if time.Since(e.At) > pendingTTL {
+			delete(s.f.Pending, id)
+		}
+	}
+}
+
 func (s *PairStore) saveLocked() error {
+	s.prunePendingLocked() // 落盘即清（#71）：文件里的 pending 恒为新鲜集
 	data, err := json.MarshalIndent(&s.f, "", "  ")
 	if err != nil {
 		return err

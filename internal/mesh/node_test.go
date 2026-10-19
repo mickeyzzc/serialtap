@@ -173,10 +173,13 @@ func TestRemoteFlashUploadsImages(t *testing.T) {
 		t.Fatal(err)
 	}
 	var seenPath string
+	var seenLen = -1 // 在 A 侧刷写时刻读取（#70 后 flash 完成即清 mesh-<sid> 目录，
+	// 事后读盘会撞清理；内容校验全部在 handler 内完成）
 	forward := func(req ctl.Request, respond func(ctl.Response)) {
 		if req.Cmd == "flash" && len(req.Spec.Bins) == 1 {
 			seenPath = req.Spec.Bins[0].Path
 			b, _ := os.ReadFile(seenPath)
+			seenLen = len(b)
 			respond(ctl.Response{OK: true, Event: "flash-log", Line: fmt.Sprintf("size=%d head=%q", len(b), b[:8])})
 			respond(ctl.Response{OK: true, Event: "flash-done"})
 		} else {
@@ -218,9 +221,8 @@ func TestRemoteFlashUploadsImages(t *testing.T) {
 	if seenPath == "" {
 		t.Fatal("第二次刷写未见路径")
 	}
-	got, err := os.ReadFile(seenPath)
-	if err != nil || len(got) != len(big) {
-		t.Fatalf("A 侧大镜像落盘错误: %d B (err=%v)", len(got), err)
+	if seenLen != len(big) {
+		t.Fatalf("A 侧大镜像落盘错误: 刷写时刻读到 %d B（期望 %d B）", seenLen, len(big))
 	}
 }
 
