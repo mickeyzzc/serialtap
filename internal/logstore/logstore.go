@@ -2,6 +2,7 @@
 package logstore
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,9 @@ import (
 )
 
 const tsFormat = "2006-01-02 15:04:05.000"
+
+// ErrClosed: Close 之后的写入（如 Flash 中途拔板后迟到的 LogEvent）。
+var ErrClosed = errors.New("logstore: writer closed")
 
 // Stamp: 事件行统一的时间戳格式。
 func Stamp(t time.Time) string { return t.Format(tsFormat) }
@@ -33,6 +37,10 @@ type DeviceWriter struct {
 	serialSuffix   int
 	eventsSuffix   int
 	eventsMaxBytes int64 // events 通道大小轮转阈值（默认同 maxBytes）
+	closed         bool  // Close 后拒绝一切写入——否则 ensureDayLocked 会把
+	// 文件重新打开且再无人关闭：fd 泄漏 + Windows 上被占文件让留存清扫
+	// 静默删不掉（Flash 进行中拔板后 LogEvent 落在已 Close 的 writer 上，
+	// #58）
 }
 
 func NewDeviceWriter(root, name string, maxMB int) (*DeviceWriter, error) {
@@ -68,6 +76,9 @@ func (w *DeviceWriter) highestSuffix(kind, day string) int {
 }
 
 func (w *DeviceWriter) ensureDayLocked(now time.Time) error {
+	if w.closed {
+		return ErrClosed
+	}
 	day := now.Format("20060102")
 	if w.day == day && w.serialF != nil {
 		return nil
@@ -162,6 +173,7 @@ func (w *DeviceWriter) WriteEvent(line string) error {
 func (w *DeviceWriter) Close() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	w.closed = true
 	if w.serialF != nil {
 		_ = w.serialF.Close()
 		w.serialF = nil
