@@ -178,20 +178,30 @@ func (w *DeviceWriter) Close() {
 	}
 }
 
-// SweepRetention: 删除 mtime 早于 N 天前的 <root>/*/*.log。
-func SweepRetention(root string, days int) (int, error) {
+// SweepStats: 保留期清理结果。Failed/FailedPaths 把逐文件删除失败暴露
+// 出来（文件被占用、路径是目录等）——此前静默吞错，"删了但没删成"磁盘
+// 逐日膨胀却无人知晓（issue #64）。
+type SweepStats struct {
+	Removed     int
+	Failed      int
+	FailedPaths []string
+}
+
+// SweepRetention: 删除 mtime 早于 N 天前的 <root>/*/*.log。名为 *.log 的
+// 非空目录（异常产物）删除失败会计入 Failed——可见化而非跳过。
+func SweepRetention(root string, days int) (SweepStats, error) {
+	var st SweepStats
 	if days <= 0 {
-		return 0, nil
+		return st, nil
 	}
 	cutoff := time.Now().AddDate(0, 0, -days)
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return 0, nil
+			return st, nil
 		}
-		return 0, err
+		return st, err
 	}
-	removed := 0
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
@@ -202,17 +212,21 @@ func SweepRetention(root string, days int) (int, error) {
 			continue
 		}
 		for _, f := range files {
-			if f.IsDir() || !strings.HasSuffix(f.Name(), ".log") {
+			if !strings.HasSuffix(f.Name(), ".log") {
 				continue
 			}
 			info, err := f.Info()
 			if err != nil || !info.ModTime().Before(cutoff) {
 				continue
 			}
-			if err := os.Remove(filepath.Join(dir, f.Name())); err == nil {
-				removed++
+			p := filepath.Join(dir, f.Name())
+			if err := os.Remove(p); err != nil {
+				st.Failed++
+				st.FailedPaths = append(st.FailedPaths, p)
+			} else {
+				st.Removed++
 			}
 		}
 	}
-	return removed, nil
+	return st, nil
 }

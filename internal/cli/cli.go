@@ -262,8 +262,13 @@ func cmdRun(args []string) error {
 		return err
 	}
 
-	if n, err := logstore.SweepRetention(cfg.Root, cfg.RetentionDays); err == nil && n > 0 {
-		stdoutLog("[watch] 保留期清理: 删除 %d 个旧日志", n)
+	if st, err := logstore.SweepRetention(cfg.Root, cfg.RetentionDays); err == nil {
+		if st.Removed > 0 {
+			stdoutLog("[watch] 保留期清理: 删除 %d 个旧日志", st.Removed)
+		}
+		for _, p := range st.FailedPaths { // 删除失败可见化（#64）：文件被占用等，下轮重试
+			stdoutLog("[watch] 保留期清理: %s 删除失败（被占用？）", p)
+		}
 	}
 	stdoutLog("[watch] serialtap run v%s root=%s poll=%dms", Version, cfg.Root, cfg.PollMs)
 
@@ -542,8 +547,13 @@ func cmdRun(args []string) error {
 				return
 			case <-tick.C:
 			case <-sweepTick.C:
-				if n, err := logstore.SweepRetention(cfg.Root, cfg.RetentionDays); err == nil && n > 0 {
-					stdoutLog("[watch] 保留期清理: 删除 %d 个旧日志", n)
+				if st, err := logstore.SweepRetention(cfg.Root, cfg.RetentionDays); err == nil {
+					if st.Removed > 0 {
+						stdoutLog("[watch] 保留期清理: 删除 %d 个旧日志", st.Removed)
+					}
+					for _, p := range st.FailedPaths {
+						stdoutLog("[watch] 保留期清理: %s 删除失败（被占用？）", p)
+					}
 				}
 			}
 		}

@@ -66,12 +66,12 @@ func TestSweepRetention(t *testing.T) {
 	fresh := filepath.Join(root, "dev1", "serial-today.log")
 	os.WriteFile(fresh, []byte("x"), 0o644)
 
-	if n, err := SweepRetention(root, 0); err != nil || n != 0 {
-		t.Fatalf("retention=0 应为无操作: n=%d err=%v", n, err)
+	if st, err := SweepRetention(root, 0); err != nil || st.Removed != 0 {
+		t.Fatalf("retention=0 应为无操作: st=%+v err=%v", st, err)
 	}
-	n, err := SweepRetention(root, 14)
-	if err != nil || n != 1 {
-		t.Fatalf("清理数量错误: n=%d err=%v", n, err)
+	st, err := SweepRetention(root, 14)
+	if err != nil || st.Removed != 1 {
+		t.Fatalf("清理数量错误: st=%+v err=%v", st, err)
 	}
 	if _, err := os.Stat(old); !os.IsNotExist(err) {
 		t.Fatal("旧文件未删除")
@@ -79,8 +79,40 @@ func TestSweepRetention(t *testing.T) {
 	if _, err := os.Stat(fresh); err != nil {
 		t.Fatal("新文件被误删")
 	}
-	if n, err := SweepRetention(filepath.Join(root, "nope"), 14); err != nil || n != 0 {
-		t.Fatalf("不存在根目录应安静返回: n=%d err=%v", n, err)
+	if st, err := SweepRetention(filepath.Join(root, "nope"), 14); err != nil || st.Removed != 0 {
+		t.Fatalf("不存在根目录应安静返回: st=%+v err=%v", st, err)
+	}
+}
+
+// —— issue #64：删除失败必须可见（Failed/FailedPaths），不再静默吞掉 ——
+// 名为 *.log 的非空子目录：Remove 在全平台都失败（directory not empty）。
+func TestSweepRetentionReportsFailures(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "dev1", "stuck.log")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	inner := filepath.Join(dir, "nested.txt")
+	if err := os.WriteFile(inner, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().AddDate(0, 0, -30)
+	if err := os.Chtimes(dir, past, past); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := SweepRetention(root, 14)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Failed != 1 || len(st.FailedPaths) != 1 || st.FailedPaths[0] != dir {
+		t.Fatalf("失败应被上报: %+v", st)
+	}
+	if st.Removed != 0 {
+		t.Fatalf("失败的不应计入 Removed: %+v", st)
+	}
+	if _, err := os.Stat(inner); err != nil {
+		t.Fatal("非空目录内部文件不应被误删")
 	}
 }
 
