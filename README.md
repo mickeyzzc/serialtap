@@ -16,6 +16,22 @@ uploading images and flashing — can be done from a browser.
 
 **English** | [简体中文](README.zh-CN.md)
 
+## Screenshots
+
+The bilingual panel (EN/中文) below runs live on a two-node bench — five
+devices across two PCs over mesh, everything from one page:
+
+| Dashboard — devices, KPIs & running config | Logs — 5 panes incl. remote mesh devices |
+| --- | --- |
+| ![dashboard](docs/screenshots/dashboard.png) | ![logs](docs/screenshots/logs.png) |
+
+| Waveforms — named channels across the fleet | Flash dialog — image or IDF build, drag & drop |
+| --- | --- |
+| ![waveform](docs/screenshots/waveform.png) | ![flash](docs/screenshots/flash-dialog.png) |
+
+> Live captures from a real bench; hostnames, paths and network identifiers
+> in them are masked.
+
 ## Features
 
 - **Hot-plug capture**: polls for USB serial ports (1 s), one collector
