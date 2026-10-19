@@ -380,9 +380,17 @@ func (n *Node) registerIncoming(ch *Channel, peer Ident) {
 	}
 	n.reg.Touch(peer.ID)
 	for _, sp := range n.reg.List() {
-		if h, _, serr := net.SplitHostPort(sp.Addr); serr == nil && h == host {
-			n.reg.LearnedIdent(sp.Addr, peer)
+		h, port, serr := net.SplitHostPort(sp.Addr)
+		if serr != nil || h != host {
+			continue
 		}
+		// 同 IP 多节点（本机多实例/NAT 后双节点，#71）：只回填端口与对端
+		// 自报一致（或对端未报端口无法核对时不回填）的条目——按 IP 段盲
+		// 回填会把 peers[X] 的地址改写成 Y 的端口。
+		if peer.Port <= 0 || fmt.Sprintf("%d", peer.Port) != port {
+			continue
+		}
+		n.reg.LearnedIdent(sp.Addr, peer)
 	}
 	if peer.Port > 0 {
 		addr := net.JoinHostPort(host, fmt.Sprintf("%d", peer.Port))
