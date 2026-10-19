@@ -125,6 +125,15 @@ func fileExists(p string) bool {
 	return err == nil
 }
 
+// clampMin: 数值旗标下界钳制（防呆——0/负值会让切片越界 panic 或把
+// 轮询频率打爆，issue #62）。
+func clampMin(v, min int) int {
+	if v < min {
+		return min
+	}
+	return v
+}
+
 func stdoutLog(format string, args ...any) {
 	fmt.Printf("["+logstore.Stamp(time.Now())+"] "+format+"\n", args...)
 }
@@ -133,6 +142,7 @@ func discardLog(string, ...any) {}
 
 // Run: 命令分发入口（返回退出码）。
 func Run(args []string) int {
+	setupConsole() // Windows: 控制台输出切 UTF-8 代码页（其余平台空操作）
 	if len(args) == 0 {
 		usage()
 		return 2

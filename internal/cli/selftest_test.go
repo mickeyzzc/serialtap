@@ -88,6 +88,30 @@ func TestScanDeviceSelftestMissing(t *testing.T) {
 	}
 }
 
+// —— issue #62：--files ≤ 0 不再 panic（files[:N] 越界），钳到 1 ——
+func TestRunSelftestFilesClamp(t *testing.T) {
+	root := t.TempDir()
+	dev := filepath.Join(root, "clamp-dev")
+	writeSelftestLog(t, dev, "serial-20261010.log",
+		"[10:00:00.000] m: SELFTEST: board=clamp-dev fw=v0.1 chip=esp32s3\n")
+
+	for _, flagVal := range []string{"--files=0", "--files=-3"} {
+		old := os.Stdout
+		r, w, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		os.Stdout = w
+		code := runSelftest([]string{"--root", root, flagVal})
+		w.Close()
+		os.Stdout = old
+		out, _ := io.ReadAll(r)
+		if code != 0 || !strings.Contains(string(out), "clamp-dev") {
+			t.Fatalf("%s: code=%d out=%s", flagVal, code, out)
+		}
+	}
+}
+
 // —— issue #53：扫描正则必须与 logstore 实际产物命名一致 ——
 // 契约：logstore.FileName 生成的文件名（基础 + 大小轮转），selftest 的
 // serialFileRe 都要能解析出日期/后缀；任一侧改名本测试即红。

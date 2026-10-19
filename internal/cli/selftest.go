@@ -166,6 +166,7 @@ func runSelftest(args []string) int {
 	}
 	_ = fs.Parse(args)
 	rest := fs.Args()
+	maxFiles := clampMin(*filesN, 1) // --files ≤ 0 会让 files[:N] 越界 panic（issue #62）
 
 	cfg, err := loadCfgMerged(*configPath, *rootFlag, 0)
 	if err != nil {
@@ -202,11 +203,11 @@ func runSelftest(args []string) int {
 		if re != nil && !re.MatchString(name) {
 			continue
 		}
-		entry := scanDeviceSelftest(filepath.Join(root, name), *filesN)
+		entry := scanDeviceSelftest(filepath.Join(root, name), maxFiles)
 		fmt.Printf("== %s\n", name)
 		if entry.Missing {
 			missing++
-			fmt.Printf("   （近 %d 个日志未见自检行——固件未实现规范或已轮转）\n", *filesN)
+			fmt.Printf("   （近 %d 个日志未见自检行——固件未实现规范或已轮转）\n", maxFiles)
 			continue
 		}
 		found++
