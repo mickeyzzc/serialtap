@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -54,9 +55,12 @@ func TestLifecycle(t *testing.T) {
 		t.Fatalf("重复起采集器: %d", d.Collectors())
 	}
 
-	// 设备移除 → 采集器停止并释放名字
+	// 设备移除 → 采集器停止并释放名字（连续 removeMissTicks 拍未见才拆：
+	// 枚举去抖，见 #59）
 	devs = devs[:1]
-	d.Tick()
+	for i := 0; i < removeMissTicks; i++ {
+		d.Tick()
+	}
 	if d.Collectors() != 1 {
 		t.Fatalf("设备移除后应剩 1 个: %d", d.Collectors())
 	}
@@ -535,7 +539,9 @@ func TestBoardSwapEvent(t *testing.T) {
 	t.Cleanup(d.Shutdown)
 	d.Tick() // 第一块板
 	devs = nil
-	d.Tick() // 拔出（单独一轮，名字释放）
+	for i := 0; i < removeMissTicks; i++ {
+		d.Tick() // 拔出（连续未见拍数到阈值，名字释放）
+	}
 	devs = []device.DeviceInfo{{Tty: "COM11", Key: "keyB", Name: "esp32s3-jtag", ByID: "idB"}}
 	d.Tick() // 换上的第二块板：同名、不同实例
 
@@ -550,6 +556,169 @@ func TestBoardSwapEvent(t *testing.T) {
 	if !strings.Contains(string(b), "[board-swap] 物理板已更换：COM10 → COM11") {
 		t.Fatalf("换板事件缺失，events 内容:\n%s", b)
 	}
+}
+
+// 快换场景：前任拔出不足 removeMissTicks 拍、继任者已枚举到位——立即收口
+// 前任（不等去抖期满），继任者继承裸基名、换板事件照常触发（#59 回归）。
+func TestBoardSwapFastPath(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.DefaultConfig()
+	cfg.Root = root
+	cfg.PollMs = 10
+
+	devs := []device.DeviceInfo{{Tty: "COM10", Key: "keyA", Name: "esp32s3-jtag", ByID: "idA"}}
+	d, err := New(cfg, nil, func() ([]device.DeviceInfo, error) { return devs, nil }, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(d.Shutdown)
+	d.Tick()
+	devs = nil
+	d.Tick() // 1 拍未见：仍在去抖窗口，采集器保留
+	if d.Collectors() != 1 {
+		t.Fatalf("去抖窗口内不应拆除: %d", d.Collectors())
+	}
+	devs = []device.DeviceInfo{{Tty: "COM11", Key: "keyB", Name: "esp32s3-jtag", ByID: "idB"}}
+	d.Tick() // 继任者到位 → 快换收口
+
+	if d.Collectors() != 1 {
+		t.Fatalf("快换后应仍只有 1 个采集器: %d", d.Collectors())
+	}
+	if want := "esp32s3-jtag"; d.Name("keyB") != want {
+		t.Fatalf("继任者应继承裸基名 %q, got %q", want, d.Name("keyB"))
+	}
+	evs, _ := filepath.Glob(filepath.Join(root, "esp32s3-jtag", "events-*.log"))
+	if len(evs) == 0 {
+		t.Fatal("没有 events 文件")
+	}
+	b, err := os.ReadFile(evs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "[board-swap] 物理板已更换：COM10 → COM11") {
+		t.Fatalf("快换场景换板事件缺失，events 内容:\n%s", b)
+	}
+}
+
+// 枚举去抖与失败保护（#59）：枚举报错不动既有采集器；单拍缺失不拆。
+func TestEnumFlapKeepsCollectors(t *testing.T) {
+	root := t.TempDir()
+	old := collector.OpenPort
+	collector.OpenPort = func(tty string, baud int) (collector.Port, error) {
+		return &testutil.FakePort{}, nil
+	}
+	t.Cleanup(func() { collector.OpenPort = old })
+
+	cfg := config.DefaultConfig()
+	cfg.Root = root
+	cfg.PollMs = 10
+	var devs = []device.DeviceInfo{{Tty: "/dev/fakeA", Key: "keyA", Name: "fakeA"}}
+	failing := false
+	d, err := New(cfg, nil, func() ([]device.DeviceInfo, error) {
+		if failing {
+			return nil, os.ErrNotExist
+		}
+		return devs, nil
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(d.Shutdown)
+	d.Tick()
+	if d.Collectors() != 1 {
+		t.Fatal("前置条件失败：应有 1 个采集器")
+	}
+
+	failing = true // 枚举瞬时失败：本轮跳过 diff，不能当成全拔了
+	d.Tick()
+	if d.Collectors() != 1 {
+		t.Fatalf("枚举失败不应拆采集器: %d", d.Collectors())
+	}
+
+	failing = false
+	devs = nil
+	d.Tick() // 1 拍未见：去抖
+	if d.Collectors() != 1 {
+		t.Fatalf("单拍缺失不应拆采集器: %d", d.Collectors())
+	}
+	for i := 1; i < removeMissTicks; i++ {
+		d.Tick()
+	}
+	if d.Collectors() != 0 {
+		t.Fatalf("连续 %d 拍未见应拆除: %d", removeMissTicks, d.Collectors())
+	}
+}
+
+// 并发访问保护（#52）：watch 协程 Tick（增删采集器）与 ctl/web 侧并发
+// Status/Facts/matches——此前 collectors map 无锁，-race 直接 fatal。
+func TestConcurrentTickAndStatus(t *testing.T) {
+	root := t.TempDir()
+	old := collector.OpenPort
+	collector.OpenPort = func(tty string, baud int) (collector.Port, error) {
+		return &testutil.FakePort{}, nil
+	}
+	t.Cleanup(func() { collector.OpenPort = old })
+
+	cfg := config.DefaultConfig()
+	cfg.Root = root
+	cfg.PollMs = 5
+	var mu sync.Mutex
+	var devs = []device.DeviceInfo{
+		{Tty: "/dev/fakeA", Key: "keyA", Name: "fakeA"},
+		{Tty: "/dev/fakeB", Key: "keyB", Name: "fakeB"},
+	}
+	d, err := New(cfg, nil, func() ([]device.DeviceInfo, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]device.DeviceInfo(nil), devs...), nil
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(d.Shutdown)
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() { // watch 协程：热插拔翻转
+		defer wg.Done()
+		online := true
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			mu.Lock()
+			if online {
+				devs = devs[:1]
+			} else {
+				devs = append(devs[:1], device.DeviceInfo{Tty: "/dev/fakeB", Key: "keyB", Name: "fakeB"})
+			}
+			online = !online
+			mu.Unlock()
+			d.Tick()
+		}
+	}()
+	for i := 0; i < 4; i++ { // ctl/web 模拟：每请求一协程
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				_ = d.Status()
+				_, _ = d.Facts(".")
+				_ = d.Collectors()
+			}
+		}()
+	}
+	time.Sleep(400 * time.Millisecond)
+	close(stop)
+	wg.Wait()
 }
 
 // facts 全量查询：日志行 → 被动事实 → d.Facts 返回（含证据行）。
