@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/mickeyzzc/serialtap/internal/ctl"
@@ -107,25 +108,37 @@ func (n *Node) handleUpload(ch *Channel, payload []byte) error {
 	return ch.Send(ftUpAck, mustJSON(upAckFrame{SID: uf.SID, Name: uf.Name, LastSeq: uf.Seq, Path: path}))
 }
 
-// handleDownload: 服务端——dlAuth token → 分块回传。一次性（发完即撤销 token）。
+// handleDownload: 服务端——dlAuth token → 分块回传。一次性（发完即撤销 token），
+// 目录随回传收尾清理（#70：成败皆清，token 已消耗产物即无用）；过期 token
+// 拒绝并懒清（摘 token + 删目录）。
 func (n *Node) handleDownload(ch *Channel, _ context.Context, payload []byte) error {
 	var df downFrame
 	if err := json.Unmarshal(payload, &df); err != nil {
 		return err
 	}
+	expired := false
 	n.mu.Lock()
-	path, ok := n.dlAuth[df.Token]
-	if ok && (df.Name == "" || df.Name != filepath.Base(path)) {
+	g, ok := n.dlAuth[df.Token]
+	if ok && (df.Name == "" || df.Name != filepath.Base(g.path)) {
 		ok = false
 	}
-	if ok {
+	if ok && time.Since(g.at) > dlAuthTTL {
+		ok = false
+		expired = true
+	}
+	if ok || expired {
 		delete(n.dlAuth, df.Token)
 	}
 	n.mu.Unlock()
+	if expired {
+		n.logf("[mesh] 下载 token 已过期（>%s），产物目录懒清", dlAuthTTL)
+		n.removeArtifact(g.path)
+	}
 	if !ok {
 		return ch.Send(ftBlock, mustJSON(blockFrame{EOF: true}))
 	}
-	f, err := os.Open(path)
+	defer n.removeArtifact(g.path)
+	f, err := os.Open(g.path)
 	if err != nil {
 		return ch.Send(ftBlock, mustJSON(blockFrame{EOF: true}))
 	}
@@ -144,6 +157,30 @@ func (n *Node) handleDownload(ch *Channel, _ context.Context, payload []byte) er
 	}
 	n.logf("[mesh] 产物下载 %s（%s）", df.Name, ch.PeerAddr())
 	return ch.Send(ftBlock, mustJSON(blockFrame{EOF: true}))
+}
+
+// cleanupFlashUploads: mesh 远程刷机结束后（成功/失败）清理引用的上传会话
+// 目录与字节账（#70）。只清 root/.flash-upload/mesh-<sid> 形制的自管目录——
+// spec 由对端构造，不能给它任意路径删除能力。
+func (n *Node) cleanupFlashUploads(spec flash.Spec) {
+	base := filepath.Join(n.opt.Root, ".flash-upload")
+	done := map[string]bool{}
+	for _, b := range spec.Bins {
+		dir := filepath.Dir(b.Path)
+		if filepath.Dir(dir) != base {
+			continue
+		}
+		sid := strings.TrimPrefix(filepath.Base(dir), "mesh-")
+		if sid == "" || !safeNameRe.MatchString(sid) || done[dir] {
+			continue
+		}
+		done[dir] = true
+		_ = os.RemoveAll(dir)
+		n.mu.Lock()
+		delete(n.upBytes, sid)
+		n.mu.Unlock()
+		n.logf("[mesh] 刷机会话 %s 目录已清理", sid)
+	}
 }
 
 // uploadSession: 客户端——一条连接上传若干命名文件，返回 name → 远端

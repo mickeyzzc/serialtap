@@ -65,7 +65,7 @@ type Node struct {
 	mu      sync.Mutex
 	uploads map[string]map[string]string // sid → name → 已落盘绝对路径
 	upBytes map[string]int64             // sid → 累计落盘字节（#69 单会话上限）
-	dlAuth  map[string]string            // token → 可下载绝对路径（只登记本节点自建产物）
+	dlAuth  map[string]dlGrant           // token → 一次性下载授权（只登记本节点自建产物，#70 带 TTL）
 	tunnels map[string]*tunnel           // pattern → 隧道
 	callSeq uint64
 
@@ -106,7 +106,7 @@ func NewNode(opt Options) (*Node, error) {
 		reg:       NewRegistry(3 * announce),
 		uploads:   map[string]map[string]string{},
 		upBytes:   map[string]int64{},
-		dlAuth:    map[string]string{},
+		dlAuth:    map[string]dlGrant{},
 		tunnels:   map[string]*tunnel{},
 		conns:     map[net.Conn]struct{}{},
 		pairConns: map[string]map[net.Conn]struct{}{},
@@ -139,6 +139,7 @@ func (n *Node) logf(format string, args ...any) {
 }
 
 func (n *Node) start(announce time.Duration) error {
+	n.startupSweep() // 陈旧产物清扫（#70）：上次运行遗留的超龄目录先清再服务
 	var err error
 	n.ln, err = net.Listen("tcp", fmt.Sprintf(":%d", n.opt.Port))
 	if err != nil {
@@ -193,6 +194,7 @@ func (n *Node) start(announce time.Duration) error {
 				for _, id := range n.reg.Expire() {
 					n.logf("[mesh] peer %s 过期摘除（连续 %s 未见 beacon）", id, 3*announce)
 				}
+				n.pruneDlAuth() // 过期下载 token 连带产物目录（#70），挂在同一清扫节拍上
 			}
 		}
 	}()
@@ -226,7 +228,15 @@ func (n *Node) Close() {
 		t.close()
 	}
 	n.tunnels = map[string]*tunnel{}
+	leftover := make([]dlGrant, 0, len(n.dlAuth)) // 停机兜底（#70）：未下载的产物目录随 token 一起清
+	for _, g := range n.dlAuth {
+		leftover = append(leftover, g)
+	}
+	n.dlAuth = map[string]dlGrant{}
 	n.mu.Unlock()
+	for _, g := range leftover {
+		n.removeArtifact(g.path)
+	}
 	n.linkMu.Lock()
 	links := make([]*linkLoop, 0, len(n.links))
 	for _, l := range n.links {
@@ -411,6 +421,11 @@ func (n *Node) handleReq(ch *Channel, payload []byte) error {
 
 	req := rf.Req
 	req.Peer = "" // 链路终点：剥掉 peer 字段再进本机 handler，防对端二次转发/成环
+	if req.Cmd == "flash" {
+		// mesh 刷机会话目录随命令结束清理（#70）——目录建在 flash 命令到达
+		// 之前，成功失败皆清；flash 永不到达则由启动清扫兜底。
+		defer n.cleanupFlashUploads(req.Spec)
+	}
 	var file *fileRef
 	cleanup := func() {}
 	if req.Cmd == "board" && req.Board != nil && req.Board.Action == "dump" && req.Board.OutPath == "" {
@@ -429,7 +444,7 @@ func (n *Node) handleReq(ch *Channel, payload []byte) error {
 			}
 			token := randomHex(16)
 			n.mu.Lock()
-			n.dlAuth[token] = p
+			n.dlAuth[token] = dlGrant{path: p, at: time.Now()}
 			n.mu.Unlock()
 			file = &fileRef{Token: token, Name: filepath.Base(p), Size: fi.Size()}
 		}
@@ -613,6 +628,66 @@ func (p Peer) NameOrAddr() string {
 }
 
 // —— 小工具 ——
+
+// dlGrant: 一次性下载授权（#70）——token 只在内存，随产物目录创建时登记，
+// 下载即消耗；超 TTL 未下载由周期清扫/访问懒清连带目录删除。
+type dlGrant struct {
+	path string
+	at   time.Time
+}
+
+const (
+	dlAuthTTL   = 10 * time.Minute // 下载 token 有效期（#70：此前永不过期）
+	sweepMaxAge = 24 * time.Hour   // 启动清扫的产物陈旧阈值（mtime）
+)
+
+// pruneDlAuth: 摘除过期 token 并连带删产物目录。挂在注册表清扫 ticker 上
+// 周期执行；下载路径访问时另有懒清。
+func (n *Node) pruneDlAuth() {
+	n.mu.Lock()
+	var stale []dlGrant
+	for tok, g := range n.dlAuth {
+		if time.Since(g.at) > dlAuthTTL {
+			stale = append(stale, g)
+			delete(n.dlAuth, tok)
+		}
+	}
+	n.mu.Unlock()
+	for _, g := range stale {
+		n.removeArtifact(g.path)
+	}
+}
+
+// removeArtifact: 删除产物文件所在目录——仅限 root/.mesh-share/ 之下（防
+// 恶意登记路径变删除 oracle）。
+func (n *Node) removeArtifact(path string) {
+	dir := filepath.Dir(path)
+	share := filepath.Join(n.opt.Root, ".mesh-share")
+	if strings.HasPrefix(dir, share+string(filepath.Separator)) {
+		_ = os.RemoveAll(dir)
+	}
+}
+
+// startupSweep: 启动清扫（#70）——上次运行遗留的 .mesh-share/* 与
+// .flash-upload/* 超 sweepMaxAge（mtime）整目录删除；新近的留给可能还在
+// 进行的会话（token 不跨进程存活，真正可用期只到进程结束）。
+func (n *Node) startupSweep() {
+	for _, sub := range []string{".mesh-share", ".flash-upload"} {
+		base := filepath.Join(n.opt.Root, sub)
+		entries, err := os.ReadDir(base)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			fi, err := e.Info()
+			if err != nil || time.Since(fi.ModTime()) < sweepMaxAge {
+				continue
+			}
+			_ = os.RemoveAll(filepath.Join(base, e.Name()))
+			n.logf("[mesh] 启动清扫陈旧产物 %s", filepath.Join(base, e.Name()))
+		}
+	}
+}
 
 func loadOrCreateID(root string) (string, error) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
