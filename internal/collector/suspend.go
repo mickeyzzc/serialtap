@@ -23,6 +23,10 @@ const (
 )
 
 // Suspend: 请求让出端口并等待确认（端口已关闭）或超时。
+// 超时必须回滚 held：调用方（Flash/Release/Reset/Board）超时后都直接放弃
+// 返回错误，无人调 Resume——不回滚的话采集器在 waitHeldCleared 永久等待，
+// 且它不在 daemon.releases 里，resume 命令遍历不到，只能重插板或重启守护
+// （#55）。
 func (c *Collector) Suspend(timeout time.Duration) bool {
 	c.sr.mu.Lock()
 	c.sr.held = true
@@ -35,6 +39,9 @@ func (c *Collector) Suspend(timeout time.Duration) bool {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+	c.sr.mu.Lock()
+	c.sr.held = false
+	c.sr.mu.Unlock()
 	return false
 }
 

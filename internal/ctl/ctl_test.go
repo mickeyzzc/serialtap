@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -251,5 +252,44 @@ func TestServeConcurrentDialCloseSmoke(t *testing.T) {
 		}
 		close(stop)
 		dialers.Wait()
+	}
+}
+
+// 慢客户端（终端冻结/Ctrl+Z 后不读）不能楔死 handler：写超时 + 死连接
+// 标记让 respond 解除阻塞、handler 正常走完（#56 回归——此前 flash 流式
+// 输出会把 opMu 永久卡死）。
+func TestSlowClientWriteDeadline(t *testing.T) {
+	old := writeTimeoutMs.Load()
+	writeTimeoutMs.Store(200)
+	t.Cleanup(func() { writeTimeoutMs.Store(old) })
+
+	sock := filepath.Join(t.TempDir(), "s.sock")
+	srv, err := Listen(sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handlerDone := make(chan struct{})
+	go srv.Serve(func(req Request, respond func(Response)) {
+		defer close(handlerDone)
+		// 远超 socket 缓冲的响应量：不读的客户端必然把写堵死
+		for i := 0; i < 100000; i++ {
+			respond(Response{OK: true, Line: strings.Repeat("x", 96)})
+		}
+	})
+	t.Cleanup(func() { srv.Close() })
+
+	conn, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.Write([]byte("{\"cmd\":\"noop\"}\n")); err != nil {
+		t.Fatal(err)
+	}
+	// 不读——模拟停住的客户端
+	select {
+	case <-handlerDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("慢客户端楔死了 handler——写超时/死标记未生效")
 	}
 }
