@@ -47,10 +47,12 @@ type Entry struct {
 	Value     string // 可读值；blob 报字节数
 }
 
-var secretKeyRe = regexp.MustCompile(`(?i)pass|pswd|pwd|secret|token|seed|key`)
+// secretKeyRe: 凭据形键的掩码判定。保守取向——多掩不伤，漏掩即泄
+// （wifi_psk/credential/auth_* 一类命名真机常见，issue #63 补齐）。
+var secretKeyRe = regexp.MustCompile(`(?i)pass|pswd|pwd|secret|token|seed|key|psk|cred|auth`)
 
-// ParseNVS: 解析 NVS 分区镜像。凭据形键（pass/token/secret/seed/key）
-// 默认掩码为 "****"；showSecrets=true 时原样输出。
+// ParseNVS: 解析 NVS 分区镜像。凭据形键（pass/pwd/token/secret/seed/key/
+// psk/cred/auth）默认掩码为 "****"；showSecrets=true 时原样输出。
 func ParseNVS(data []byte, showSecrets bool) []Entry {
 	nsNames := map[byte]string{} // nsIndex -> 命名空间名
 	type rawEntry struct {

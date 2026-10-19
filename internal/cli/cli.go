@@ -125,6 +125,15 @@ func fileExists(p string) bool {
 	return err == nil
 }
 
+// clampMin: 数值旗标下界钳制（防呆——0/负值会让切片越界 panic 或把
+// 轮询频率打爆，issue #62）。
+func clampMin(v, min int) int {
+	if v < min {
+		return min
+	}
+	return v
+}
+
 func stdoutLog(format string, args ...any) {
 	fmt.Printf("["+logstore.Stamp(time.Now())+"] "+format+"\n", args...)
 }
@@ -133,6 +142,7 @@ func discardLog(string, ...any) {}
 
 // Run: 命令分发入口（返回退出码）。
 func Run(args []string) int {
+	setupConsole() // Windows: 控制台输出切 UTF-8 代码页（其余平台空操作）
 	if len(args) == 0 {
 		usage()
 		return 2
@@ -227,6 +237,10 @@ func cmdRun(args []string) error {
 	if err != nil {
 		return err
 	}
+	// 未知配置键告警（#61）：不阻断启动，但 typo 不许静默
+	for _, w := range cfg.Warnings {
+		stdoutLog("[config] ⚠ %s", w)
+	}
 	if *webFlag != "" {
 		cfg.WebAddr = *webFlag
 	}
@@ -248,8 +262,13 @@ func cmdRun(args []string) error {
 		return err
 	}
 
-	if n, err := logstore.SweepRetention(cfg.Root, cfg.RetentionDays); err == nil && n > 0 {
-		stdoutLog("[watch] 保留期清理: 删除 %d 个旧日志", n)
+	if st, err := logstore.SweepRetention(cfg.Root, cfg.RetentionDays); err == nil {
+		if st.Removed > 0 {
+			stdoutLog("[watch] 保留期清理: 删除 %d 个旧日志", st.Removed)
+		}
+		for _, p := range st.FailedPaths { // 删除失败可见化（#64）：文件被占用等，下轮重试
+			stdoutLog("[watch] 保留期清理: %s 删除失败（被占用？）", p)
+		}
 	}
 	stdoutLog("[watch] serialtap run v%s root=%s poll=%dms", Version, cfg.Root, cfg.PollMs)
 
@@ -528,8 +547,13 @@ func cmdRun(args []string) error {
 				return
 			case <-tick.C:
 			case <-sweepTick.C:
-				if n, err := logstore.SweepRetention(cfg.Root, cfg.RetentionDays); err == nil && n > 0 {
-					stdoutLog("[watch] 保留期清理: 删除 %d 个旧日志", n)
+				if st, err := logstore.SweepRetention(cfg.Root, cfg.RetentionDays); err == nil {
+					if st.Removed > 0 {
+						stdoutLog("[watch] 保留期清理: 删除 %d 个旧日志", st.Removed)
+					}
+					for _, p := range st.FailedPaths {
+						stdoutLog("[watch] 保留期清理: %s 删除失败（被占用？）", p)
+					}
 				}
 			}
 		}

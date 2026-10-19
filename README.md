@@ -247,6 +247,23 @@ Security model, briefly (details in `docs/en/architecture.md`):
   prompt, macOS 15+ asks for *Local Network* permission); AP/client isolation
   on the router blocks mesh entirely — use static `mesh_peers` only if the
   network still routes between the hosts
+- **pairing identity is self-reported**: a peer's node ID and name come from
+  the peer itself, vouched only by the shared PSK passing the crypto gate —
+  there is no hardware-backed identity. Anyone holding `mesh_key` can
+  impersonate an approved ID, so the real boundary is **who holds the key**:
+  run mesh on trusted LANs only, and treat a leaked key as "every board
+  compromised". `mesh revoke` cannot stop a key holder that re-knocks under
+  a fresh random ID (all the more with `mesh_auto_approve: true`) —
+  rotating `mesh_key` is the actual fix
+- the web panel has **no authentication at all**: binding
+  `"web_addr": "0.0.0.0:8801"` lets anyone on the LAN pause, flash, or read
+  NVS (the default listens on 127.0.0.1 loopback only; see
+  `docs/en/deployment.md` before exposing it)
+- the Windows control channel is an AF_UNIX file socket under
+  `%LOCALAPPDATA%\serialtap`, and **AF_UNIX on Windows carries no
+  file-permission semantics** — any local process can issue flash/board
+  commands over it (the Unix side is a 0600 same-user socket, a narrower
+  surface)
 
 ## Quick start
 

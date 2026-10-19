@@ -3,8 +3,12 @@ package config
 // Package config 定义 serialtap 的运行配置与加载。
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
+	"strings"
 )
 
 // NameRule: by-id 正则 → 设备目录名。配置里的规则优先于内置默认规则。
@@ -43,6 +47,9 @@ type Config struct {
 	MeshAnnounceS   int      `json:"mesh_announce_s"`   // beacon 广播间隔秒（默认 5；peer 超 3 个间隔未见即摘除）
 	MeshPeers       []string `json:"mesh_peers"`        // 静态种子 peer（"host:port"，广播被 AP 隔离/跨网段时的兜底）
 	MeshAutoApprove bool     `json:"mesh_auto_approve"` // 配对自动批准（false=同密钥节点敲门后须 mesh approve 才放行；true=回到 PSK-only 行为）
+
+	// Warnings: 加载期告警（未知键等），非配置项。调用方（cli）负责展示。
+	Warnings []string `json:"-"`
 }
 
 func DefaultConfig() Config {
@@ -62,7 +69,23 @@ func DefaultConfig() Config {
 	}
 }
 
+// knownKeys: Config 的全部顶层 JSON 键。反射 struct 的 json tag 生成，
+// 结构加字段自动跟上——没有第二份手工清单可失同步（issue #61）。
+func knownKeys() map[string]bool {
+	t := reflect.TypeOf(Config{})
+	keys := make(map[string]bool, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		if name != "" && name != "-" {
+			keys[name] = true
+		}
+	}
+	return keys
+}
+
 // LoadConfig: 先填默认值，再用 JSON 覆盖，零值字段回填默认。
+// 未知顶层键不报错（前向兼容），但记入 cfg.Warnings——typo 静默失效
+// 比报错更难排查（issue #61）。
 func LoadConfig(path string) (Config, error) {
 	cfg := DefaultConfig()
 	if path == "" {
@@ -74,6 +97,23 @@ func LoadConfig(path string) (Config, error) {
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return cfg, err
+	}
+	// 未知键检测：.Unmarshal 到 struct 会静默丢弃，这里对 raw map 复核一遍
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return cfg, err
+	}
+	known := knownKeys()
+	unknown := make([]string, 0)
+	for k := range raw {
+		if !known[k] {
+			unknown = append(unknown, k)
+		}
+	}
+	sort.Strings(unknown) // map 遍历无序，告警要稳定可读
+	for _, k := range unknown {
+		cfg.Warnings = append(cfg.Warnings,
+			fmt.Sprintf("未知配置键 %q（已忽略——多半是拼写错误，全量字段见 config.example.json）", k))
 	}
 	def := DefaultConfig()
 	if cfg.Baud == 0 {
