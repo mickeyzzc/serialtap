@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- docs: **文档体系重构**——截图目录标准化为 `docs/images/panel-*.png` 并
+  新增设备身份/配置速览/mesh 三张（共 7 张，DOM 级脱敏：用户名/节点名/
+  SSID/内网段/MAC 全替换）；新增**用户教程**（`docs/{en,zh-CN}/tutorial.md`：
+  五分钟上手→面板导览→日常操作→身份体检→mesh 组网→问题速查）；**架构
+  文档扩充**三节（设备身份画像 facts / 托盘与守护生命周期 / 安全模型
+  总览，双语）；README 文档节去重（Control protocol 此前列了两次）并接
+  入教程；清理 docs 根层三个"已迁移"占位文件。
+
 ## v0.2.1 (2026-10-20)
 
 - fix(tray/cli): **Windows 托盘三连修（双击/多开"程序没起来"的完整闭环，#83）**：
@@ -442,7 +452,7 @@ D
 - `reopen`/`reset` 与 flash 共用多设备门禁（未锚定匹配多台默认拒绝、列出
   设备名、`--all` 显式确认）——门禁从 flash 抽出为 `gateMulti` 共用
 - ctl 协议新增 `reopen`/`reset` 命令（复用 `pattern`/`all` 字段），完整语义
-  见 docs/ctl-protocol.md
+  见 docs/en/control-protocol.md
 
 ### flash 失败自动重试（Windows CDC 瞬时失败）
 

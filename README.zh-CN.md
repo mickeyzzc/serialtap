@@ -16,18 +16,23 @@
 
 ## 界面截图
 
-双语面板（EN/中文）跑在真实双机台架上——mesh 互联两台 PC、五块板子，
-一个页面看全仪表盘 / 日志 / 波形 / 刷机：
+双语面板（EN/中文）跑在真实多机台架上——mesh 互联数台 PC、十几块板子，
+一个页面看全仪表盘 / 日志 / 波形 / 刷机（完整导览见
+[用户教程](docs/zh-CN/tutorial.md)）：
 
-| 仪表盘——设备卡、KPI 与运行配置速览 | 日志——5 窗格（含 mesh 远程设备） |
+| 仪表盘——设备卡、KPI 与运行配置速览 | 日志——多窗格（含 mesh 远程设备） |
 | --- | --- |
-| ![仪表盘](docs/screenshots/dashboard.png) | ![日志](docs/screenshots/logs.png) |
+| ![仪表盘](docs/images/panel-dashboard.png) | ![日志](docs/images/panel-logs.png) |
 
 | 波形——全网命名通道 | 刷机弹窗——镜像 / IDF 构建产物二选一 |
 | --- | --- |
-| ![波形](docs/screenshots/waveform.png) | ![刷机](docs/screenshots/flash-dialog.png) |
+| ![波形](docs/images/panel-waveform.png) | ![刷机](docs/images/panel-flash.png) |
 
-> 截图取自真实台架；其中主机名、路径与网络标识已脱敏。
+| 设备身份——每条事实带证据行 | mesh——全网拓扑一屏看全 |
+| --- | --- |
+| ![身份](docs/images/panel-identity.png) | ![mesh](docs/images/panel-mesh.png) |
+
+> 截图取自真实台架；其中主机名、路径、MAC 与网络标识已脱敏。
 
 ## 特性
 
@@ -298,18 +303,20 @@ flags（`--root/--baud/--config/--poll-ms/--exclude/--sock`）可写在位置参
 
 ## 文档
 
+- [用户教程](docs/zh-CN/tutorial.md) —— 从零到浏览器里刷机：安装、面板
+  导览、日常操作、mesh 组网、问题速查
 - [架构](docs/zh-CN/architecture.md) —— 包分层与依赖规则、采集器状态机、
-  open-once-and-hold、release/flash/reopen 编排、可测性 seam 一览
+  open-once-and-hold、release/flash/reopen 编排、设备身份画像、托盘生命
+  周期、安全模型、可测性 seam 一览
 - [CLI 参考](docs/zh-CN/cli-reference.md) —— 全部命令与 flag
-- [控制协议](docs/zh-CN/control-protocol.md) —— 用任意语言直连守护进程的
-  JSON 行协议；`peer` 字段经 mesh 信道路由到远端节点
 - [配置参考](docs/zh-CN/configuration.md) —— 全部字段与默认值、设备命名链、
   PAUSED 文件、内置签名表、日志轮转
+- [控制协议](docs/zh-CN/control-protocol.md) —— 用任意语言直连守护进程的
+  JSON 行协议完整语义（脚本化集成、SSH 隧道远程使用）；`peer` 字段经
+  mesh 信道路由到远端节点
 - [波形观测指南](docs/zh-CN/waveform-guide.md) —— 面板示波器从零到会读图：
   自动识别原理、自定义提取正则教程（模板+实时试跑）、读图方法与案例
   （面板右上角 ? 内置精简版帮助页）
-- [控制协议](docs/zh-CN/control-protocol.md) —— ctl socket 的 JSON 行协议完整
-  语义（脚本化集成、SSH 隧道远程使用）
 - [部署指南](docs/zh-CN/deployment.md) —— 安装包、systemd/launchd/任务计划、
   磁盘管理
 - [贡献指南](CONTRIBUTING.md) —— 构建/测试/lint、TDD 与注入 seam、平台注意事项、发布流程
