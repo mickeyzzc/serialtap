@@ -100,6 +100,39 @@ func TestUSBSerialMetaAt(t *testing.T) {
 	}
 }
 
+// 残留兄弟板条目下的复合设备身份：同 VID:PID 板插拔过后 Enum 树会留下
+// 已拔父条目（无对应活接口子键），singleInstance 因实例数 >1 误判退化；
+// ParentIdPrefix 前缀匹配应仍锚定到当前接口实例的真实父（MAC 序列号）。
+// （真机场景：两只 303a:1001 板 + 一条残留 → 两板 Key 全退化为 USB 口
+// 位置派生值，换口即换身份、by-id 丢 MAC，配置 names 按 MAC 命名失效。）
+func TestUSBSerialMetaAtStaleSiblingParent(t *testing.T) {
+	root := testEnumRoot + `\` + filepath.Base(t.TempDir())
+	parent := root + `\USB\VID_303A&PID_1001`
+	// 现役父（MAC 序列号）：ParentIdPrefix 与接口实例前缀一致
+	mustCreateKey(t, parent+`\DC:06:75:F7:67:00`)
+	mustSetString(t, parent+`\DC:06:75:F7:67:00`, "ParentIdPrefix", "6&371a1be5&1")
+	// 残留父（已拔板）：前缀对不上任何活接口实例
+	mustCreateKey(t, parent+`\B4:3A:45:59:00:1C`)
+	mustSetString(t, parent+`\B4:3A:45:59:00:1C`, "ParentIdPrefix", "6&a73f803&0")
+	// 接口子键持串口，实例 = 现役父前缀 + "&0000"
+	mi := root + `\USB\VID_303A&PID_1001&MI_00\6&371a1be5&1&0000\Device Parameters`
+	mustCreateKey(t, mi)
+	mustSetString(t, mi, "PortName", "COM10")
+
+	t.Cleanup(func() { regDeleteTree(testEnumRoot) })
+	meta := usbSerialMetaAt(registry.CURRENT_USER, root+`\USB`)
+	m, ok := meta["COM10"]
+	if !ok {
+		t.Fatalf("COM10 应被识别: %+v", meta)
+	}
+	if m.instance != `DC:06:75:F7:67:00` {
+		t.Fatalf("残留兄弟条目下身份应仍锚定父序列号（MAC），得到 %q", m.instance)
+	}
+	if m.pnp != `USB\VID_303A&PID_1001\DC:06:75:F7:67:00` {
+		t.Fatalf("by-id 应为父级 PNP 路径: %q", m.pnp)
+	}
+}
+
 // 端口清单 + 注册表元数据 → 完整身份：Key=实例、名字走 VID 规则、
 // 非 USB 串口（无元数据）被过滤。
 func TestDevicesFromMeta(t *testing.T) {
