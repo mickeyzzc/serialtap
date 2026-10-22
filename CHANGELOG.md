@@ -2,6 +2,67 @@
 
 ## Unreleased
 
+- docs: **文档体系重构**——截图目录标准化为 `docs/images/panel-*.png` 并
+  新增设备身份/配置速览/mesh 三张（共 7 张，DOM 级脱敏：用户名/节点名/
+  SSID/内网段/MAC 全替换）；新增**用户教程**（`docs/{en,zh-CN}/tutorial.md`：
+  五分钟上手→面板导览→日常操作→身份体检→mesh 组网→问题速查）；**架构
+  文档扩充**三节（设备身份画像 facts / 托盘与守护生命周期 / 安全模型
+  总览，双语）；README 文档节去重（Control protocol 此前列了两次）并接
+  入教程；清理 docs 根层三个"已迁移"占位文件。
+
+## v0.2.1 (2026-10-20)
+
+- fix(tray/cli): **Windows 托盘三连修（双击/多开"程序没起来"的完整闭环，#83）**：
+  1. **托盘单实例守卫**（命名互斥体）——安装包快捷方式/双击反复触发时不再
+     堆叠多枚托盘图标，后开实例提示"托盘已在运行"即退；
+  2. **启动托盘即自动拉起守护进程**（ctl socket 探活 + 后台无窗口 spawn）——
+     此前守护未运行只显示"未运行"等用户手点菜单「启动守护进程」，双击/
+     快捷方式打开后"图标有了、程序没起来"即是此因；仅启动时拉起一次，
+     运行中守护退出不自动重拉（保持"退出托盘不影响守护"的对称语义）；
+  3. **无参数双击 = 进托盘**（此前只打印用法即退，窗口一闪而过）——
+     Windows 上双击 `serialtap.exe` 即 托盘 + 自动守护，portable 包开箱
+     即用；`-h/--help` 照旧可看全部命令，非 Windows 平台维持打印用法。
+  4. 配套：mesh 端口被占不再杀死守护进程（采集优先，本实例 mesh 降级
+     关闭并记日志——托盘拉起的子守护在端口冲突时此前会秒死）；托盘拉起
+     的守护子进程输出落 `<root>/tray-spawn.log`（无窗口进程此前完全无
+     诊断）。
+
+## v0.2.0 (2026-10-19)
+
+- **fix: 发版前全面评审修复批（21 项，#52–#72）**——四模块并行修复（daemon
+  编排 / web 安全 / mesh / cli-config 工具链），全部带回归测试，多数先红后绿：
+  - **daemon 核心**：collectors map 并发读写 fatal 崩溃（面板轮询叠加热插拔
+    即触发、崩溃丢全部在采日志——加 RWMutex + 并发 -race 测试）；Suspend
+    超时回滚（此前采集器永久悬挂、resume 无效）；ctl 响应写超时 + 死连接
+    标记（慢客户端不再永久楔死 opMu）；Windows 超时杀整棵 esptool 进程树
+    （.bat 残壳孙进程持口）；带会话拔板泄漏（移除路径补 DetachProxy）；
+    logstore Close 后拒绝重开（fd 泄漏）；枚举瞬时失败不再全员拆采集器
+    （跳过 diff + 连续 3 拍 miss 去抖 + 快换收口）；落盘失败/恢复事件化。
+  - **web 安全**：面板存储型 XSS 收口（设备自报 facts 未转义进
+    innerHTML/title——恶意固件可横向刷全部在接设备；esc() 补引号转义 +
+    模板插值静态门禁）；/api/flash CSRF（multipart 免预检表单直刷）与
+    DNS rebinding（全 API Host/Origin 校验 + X-serialtap 自定义头）；
+    mesh 尾随 SSE 并发写 ResponseWriter 竞态；flashStream 快照+订阅
+    原子化（done 事件不再丢、任务槽不双占）。
+  - **mesh**：Channel.send 帧序 AAD 移入锁内（并发 Send 竞态 + 误拆链）；
+    handleUpload 绕过 mesh_access=ro 收口（+单 sid 总量上限）；linkLoop
+    退出自摘残尸条目（peer 短暂离线后自动链接不再永久失效）；.mesh-share
+    NVS dump / .flash-upload 镜像 / dlAuth token 全生命周期回收（TTL +
+    用后即删 + 启动清扫）；加固批（会话重放 salt 查重 / registerIncoming
+    端口精确匹配 / Call 整体 deadline + AggregateStatus 竞态 / pending
+    TTL / Windows 保留设备名 / 单连接单尾随）。
+  - **cli/config/board/logstore**：selftest 轮转文件名正则与 logstore 实际
+    命名对齐（此前恰在日志量最大的板子上失效）+ 跨包契约测试；
+    config.example.json 去注释可解析 + 补齐 6 个已实现字段（README 引导
+    cp 的示例此前首跑即报错）；未知配置键告警（typo 不再静默）；selftest
+    --files 与 tray --poll-ms 下界钳制；Windows 控制台 UTF-8 代码页；
+    board dump 参数校验传播（顺带修掉 Plan() NVS 分支恒报假错的潜伏
+    bug）；NVS 掩码正则补 psk/cred/auth；SweepRetention 删除失败可见化；
+    README 补 mesh 信任模型与 Windows 控制通道边界一节。
+  - 工程侧：golangci-lint v2.15 适配（error 通道信号语义修正 + 静态门禁
+    tagged switch）；CI 三平台矩阵 + lint + 80% 覆盖率门禁全绿；Windows
+    真机（2 板在采 + 4 节点 mesh 互通）与 WSL Linux 全量 -race 验证。
+
 - feat(cli): **`selftest [RE]` 子命令——固件自检行聚合与异常发现**（工作区
   "固件自检行"规范的配套工具端）：反向检索各设备归档日志里最近一次开机的
   `SELFTEST:` 行（板/flash/PSRAM/传感器/WiFi 扫描体检证据，同次开机相邻行
@@ -391,7 +452,7 @@ D
 - `reopen`/`reset` 与 flash 共用多设备门禁（未锚定匹配多台默认拒绝、列出
   设备名、`--all` 显式确认）——门禁从 flash 抽出为 `gateMulti` 共用
 - ctl 协议新增 `reopen`/`reset` 命令（复用 `pattern`/`all` 字段），完整语义
-  见 docs/ctl-protocol.md
+  见 docs/en/control-protocol.md
 
 ### flash 失败自动重试（Windows CDC 瞬时失败）
 

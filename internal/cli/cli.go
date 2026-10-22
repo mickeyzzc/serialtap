@@ -39,7 +39,7 @@ import (
 )
 
 // Version: ldflags 可注入（CI 发布打 -X ...cli.Version=<tag>），默认开发版本。
-var Version = "0.1.0"
+var Version = "0.2.1"
 
 func usage() {
 	fmt.Fprintf(os.Stderr, `serialtap v%s — USB 串口持续采集器
@@ -60,6 +60,8 @@ func usage() {
   serialtap resume [RE]...               恢复采集（省略=全部）
   serialtap tray                         Windows 托盘常驻：状态/按设备暂停恢复/开日志
       [--config F] [--root DIR] [--sock PATH] [--poll-ms N]
+                                         （启动即自动拉起守护；多开有单实例守卫。
+                                          Windows 双击运行 = 本命令）
   serialtap proxy RE [--stop]            透明 USB 代理：为匹配设备开 TCP 端点透传串口
                                          （对业务程序等同直连；期间采集照常，可配 proxy_tap_exclude）
   serialtap release RE [--for 5m]        临时让出串口给外部工具（默认空闲 3s 自动回采）
@@ -144,6 +146,11 @@ func discardLog(string, ...any) {}
 func Run(args []string) int {
 	setupConsole() // Windows: 控制台输出切 UTF-8 代码页（其余平台空操作）
 	if len(args) == 0 {
+		// Windows：双击/portable 直开 → 托盘 + 自动拉起守护（#83）；
+		// 其余平台维持打印用法
+		if code, handled := noArgsRun(); handled {
+			return code
+		}
 		usage()
 		return 2
 	}
@@ -449,9 +456,15 @@ func cmdRun(args []string) error {
 			Logf:        stdoutLog,
 		})
 		if err != nil {
-			return err
+			// 采集优先：mesh 端口被占（同机另一实例/残留进程）不杀守护——
+			// 串口采集照常，仅本实例 mesh 降级关闭。托盘自动拉起（#83）在
+			// 已有实例占口时靠这里活着，否则子守护秒死且无诊断。
+			stdoutLog("[mesh] 启动失败，本实例 mesh 关闭（采集不受影响）: %v", err)
+			node = nil
 		}
-		defer node.Close()
+		if node != nil {
+			defer node.Close()
+		}
 	}
 
 	// Web 观测面板：状态/实时日志/事件只读展示 + 全部运行操作（暂停/恢复/

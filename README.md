@@ -16,6 +16,27 @@ uploading images and flashing — can be done from a browser.
 
 **English** | [简体中文](README.zh-CN.md)
 
+## Screenshots
+
+The bilingual panel (EN/中文) below runs live on a multi-node bench — devices
+across PCs over mesh, everything from one page (full tour in the
+[tutorial](docs/en/tutorial.md)):
+
+| Dashboard — devices, KPIs & running config | Logs — 5 panes incl. remote mesh devices |
+| --- | --- |
+| ![dashboard](docs/images/panel-dashboard.png) | ![logs](docs/images/panel-logs.png) |
+
+| Waveforms — named channels across the fleet | Flash dialog — image or IDF build, drag & drop |
+| --- | --- |
+| ![waveform](docs/images/panel-waveform.png) | ![flash](docs/images/panel-flash.png) |
+
+| Device identity — evidence-backed facts | Mesh — the whole fleet on one page |
+| --- | --- |
+| ![identity](docs/images/panel-identity.png) | ![mesh](docs/images/panel-mesh.png) |
+
+> Live captures from a real bench; hostnames, paths and network identifiers
+> in them are masked.
+
 ## Features
 
 - **Hot-plug capture**: polls for USB serial ports (1 s), one collector
@@ -97,11 +118,17 @@ rp2040-cdc) work on all three platforms.
 - **Windows**: `serialtap tray` is a separate resident systray process talking
   to the daemon only over the control socket (killing the tray never touches
   capture):
+  - **starting the tray auto-starts the daemon** if it isn't running, and
+    double-clicking `serialtap.exe` (or the installer shortcut) does exactly
+    that — open the tray and bring the daemon up
+  - a single-instance guard keeps repeated launches from stacking tray icons;
+    the extra instance prints a notice and exits
   - one menu item per device — the checkbox *is* the on/off switch; click to
     pause/resume that device
   - per-device submenu: **view serial log** (latest full log in the system
     editor), **open log directory**
-  - pause all / resume all; one-click daemon start when it's not running
+  - pause all / resume all; the **start daemon** menu item remains as a manual
+    entry
   - **open web panel**; hover shows the live device count; grey icon =
     daemon not connected
 
@@ -351,21 +378,22 @@ or after positional arguments.
 
 ## Documentation
 
+- [Tutorial](docs/en/tutorial.md) — from zero to flashing from the browser:
+  install, panel tour, daily operations, mesh setup, troubleshooting
 - [Architecture](docs/en/architecture.md) — package layering and dependency
   rules, collector state machine, open-once-and-hold, release/flash/reopen
-  orchestration, testability seams
+  orchestration, device identity, tray lifecycle, security model,
+  testability seams
 - [CLI reference](docs/en/cli-reference.md) — every command and flag
 - [Configuration](docs/en/configuration.md) — every field and default,
   device-naming chain, PAUSED file, built-in signatures, log rotation
 - [Control protocol](docs/en/control-protocol.md) — speak the daemon's JSON
-  line protocol from any language; the `peer` field routes requests over the
-  mesh channel
+  line protocol from any language (scripting integration, SSH-tunnel remote
+  use); the `peer` field routes requests over the mesh channel
 - [Waveform guide](docs/en/waveform-guide.md) — the panel oscilloscope from
   zero to reading charts: auto-detection, custom-extraction regex tutorial
   (templates + live preview), interpretation methods and examples (the panel's
   ? button carries a condensed in-app help page)
-- [Control protocol](docs/en/control-protocol.md) — the ctl socket's JSON
-  line protocol in full (scripting integration, SSH-tunnel remote use)
 - [Deployment](docs/en/deployment.md) — installers, systemd/launchd/Task
   Scheduler, disk management
 - [Contributing](CONTRIBUTING.md) — build/test/lint, TDD and injection seams,

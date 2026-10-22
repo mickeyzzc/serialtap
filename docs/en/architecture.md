@@ -312,3 +312,86 @@ not abort an in-flight `Read` and `connect()` to a closed listener blocks
 forever — the ctl server's Close actively disconnects accepted connections
 with a bounded wait; USB-CDC devices often fail the first
 open/SetCommState after a reset — the flash client retries to absorb it.
+
+## Device identity (facts)
+
+`internal/facts` turns "which board is this / what state is it in" into a
+side-product that accumulates automatically and **never touches the capture
+path**: the collector feeds every log line to facts alongside its own
+processing (pure in-memory matching, no IO).
+
+- **Three origins, ranked**: `#DEV` firmware self-description (origin=dev,
+  top) > esptool deep-identify probe > passive log rules (lowest). A lower
+  origin never overwrites an established fact; same-origin updates win
+  (IP/channel drift).
+- **Passive rules** are calibrated against real device logs (reset banner →
+  reset cause, esp_psram line → PSRAM, wifi lines → channel/IP/SSID); every
+  fact carries its evidence line and timestamp — the panel detail table can
+  trace each conclusion back to the exact log line.
+- **Deep identify**: one click in the identity dialog runs an esptool
+  `flash_id` probe (resets the board; asks first) and backfills chip revision /
+  MAC / flash size / device ID as probe facts.
+- **Persistence**: `<root>/<dev>/info.json`; after a daemon restart or name
+  inheritance, the last 256KB of log is replayed to restore identity in
+  seconds. Summary fields (model/chip/flash/psram…) broadcast with status and
+  mesh aggregation.
+- **Bounds**: `#DEV` keys capped at 32, values truncated to 256 — a rogue
+  firmware cannot balloon info.json; SSID/IP are masked by default in the panel.
+
+## Tray & daemon lifecycle (Windows)
+
+The tray (`internal/tray`) is a **pure ctl client**: it never touches serial
+ports or log files — tray crash or exit has zero effect on capture.
+
+- **Single-instance guard**: named mutex `Local\serialtap-tray-singleton` —
+  shortcuts/double-clicks can fire repeatedly; the second instance prints a
+  notice and exits instead of stacking icons.
+- **Probe-and-spawn on startup**: one status round-trip on the ctl socket
+  (wedged — connected but silent — counts as down); if nothing answers, a
+  hidden `serialtap run` is spawned, its output landing in
+  `<root>/tray-spawn.log` (the only diagnostic surface of a windowless child).
+  Spawn happens once at startup: a daemon that exits later is not resurrected,
+  symmetric with "quitting the tray never touches the daemon".
+- **No-args entry point**: bare `serialtap.exe` on Windows = tray (double-click
+  just works); `-h` still prints the full usage; other platforms keep the
+  usage output.
+- **Capture-first degradation**: a mesh port conflict with another local
+  instance no longer kills `run` — mesh turns off for this instance with a log
+  line, serial capture continues (the tray-spawned child used to die instantly
+  in that scenario).
+- macOS is a different shape: `run` embeds the menu-bar tray in-process (CGO);
+  see Platform support.
+
+## Security model overview
+
+Three trust rings, each defended independently:
+
+1. **ctl socket (same user, same machine)**: unix socket 0600 (Windows
+   AF_UNIX has no permission semantics — any local process can connect; the
+   boundary is documented); a live instance holding the socket refuses a
+   second `run`.
+2. **Web panel (loopback)**: binds 127.0.0.1 by default. The `apiGuard`
+   middleware — Host allowlist while loopback-bound (DNS-rebinding defense);
+   non-loopback Origin rejected under any binding; `/api/flash` additionally
+   requires the `X-serialtap: 1` custom header (multipart is a CORS-simple
+   content type — a hidden form can flash without preflight otherwise). The
+   panel HTML/JS is a single embedded file with no external dependencies;
+   template interpolations pass a static gate (XSS). The `panel-rev`
+   fingerprint rides every status response, so stale pages self-heal within
+   1s after a daemon upgrade.
+3. **mesh (LAN)**: per-connection bidirectional keys derived from the PSK
+   (AES-256-GCM + frame-sequence AAD against replay + salt dedup against
+   session replay); holding the key is gate one — **self-reported IDs plus a
+   shared passphrase mean a key holder can impersonate an approved ID**, so
+   gate two (approve/pending/revoked) guards against accidental connections,
+   not insiders; `mesh_access: ro` rejects every write command and data
+   tunnel (uploads included) at the inbound throat. Sensitive artifacts (NVS
+   dumps / flash images / download tokens) have a full lifecycle: delete after
+   use + TTL + startup sweep. Binding the panel to `0.0.0.0` and
+   `mesh_auto_approve` are knowing trade-offs, called out in docs and startup
+   warnings.
+
+**Logging discipline**: mesh frame bodies (which may contain NVS secrets),
+keys, and anything beyond key fingerprints never reach the logs; device logs
+are local-only data (never committed), and documentation screenshots are
+desensitized by convention.

@@ -87,10 +87,10 @@ func newNodePair(t *testing.T, forward ctl.Handler, proxy ProxyAPI) *nodePair {
 	b := startNode(t, "bench-b", rootB, nil, nil)
 	addr := fmt.Sprintf("127.0.0.1:%d", a.self.Port)
 	b.reg.SetStatic([]string{addr})
-	// 静态种子按址先拨一次学身份（生产里 mesh status 聚合做同样的事）
-	if _, err := b.Call(addr, ctl.Request{Cmd: "status"}, func(ctl.Response) bool { return false }); err != nil {
-		t.Fatalf("静态种子引导失败: %v", err)
-	}
+	// 静态种子按址先拨一次学身份（生产里 mesh status 聚合做同样的事）。
+	// 命令被拒也无妨——身份在握手阶段已学习，这次调用只为播种注册表
+	//（Call 的 End 帧裁决修复后，拒绝不再被静默吞掉，此处不应视为失败）。
+	_, _ = b.Call(addr, ctl.Request{Cmd: "status"}, func(ctl.Response) bool { return false })
 	return &nodePair{a: a, b: b, rootA: rootA, rootB: rootB, forwardA: forward}
 }
 

@@ -546,6 +546,11 @@ func (n *Node) call(peerName string, req ctl.Request, onResp func(ctl.Response) 
 		return nil, err
 	}
 	n.logf("[mesh] → peer %s: cmd=%s", ident.Name, req.Cmd)
+	// End 帧的裁决：此前无条件 return nil——拒绝帧（OK:false+End，如未授权
+	// 闸门、ro 闸门、对端业务错误）被当"成功"吞掉，调用方只见零响应与
+	// nil 错误（真机表现：快速失败路径未命中时偶发"远端操作静默无效果"）
+	var sawOK bool
+	var lastResp *ctl.Response
 	for {
 		t, payload, rerr := ch.Recv()
 		if rerr != nil {
@@ -558,10 +563,22 @@ func (n *Node) call(peerName string, req ctl.Request, onResp func(ctl.Response) 
 		if jerr := json.Unmarshal(payload, &rf); jerr != nil || rf.ID != id {
 			continue
 		}
+		if rf.Resp != nil {
+			lastResp = rf.Resp
+			if rf.Resp.OK {
+				sawOK = true
+			}
+		}
 		if rf.Resp != nil && onResp != nil && onResp(*rf.Resp) {
 			return rf.File, nil
 		}
 		if rf.End {
+			if !sawOK {
+				if lastResp != nil {
+					return nil, fmt.Errorf("peer %s 拒绝: %s", ident.Name, lastResp.Error)
+				}
+				return nil, fmt.Errorf("peer %s 无响应即结束", ident.Name)
+			}
 			return rf.File, nil
 		}
 

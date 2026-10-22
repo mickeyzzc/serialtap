@@ -249,3 +249,65 @@ Windows 侧的工程结论（实测沉淀）：AF_UNIX 上 `conn.Close()` 不中
 `Read`、对已关监听的 `connect()` 会永久阻塞 —— ctl 服务端 Close 需要
 主动断开已接受连接 + 限时兜底；CDC 设备复位后首次 open/SetCommState
 常瞬时失败 —— flash 客户端带重试吸收。
+
+## 设备身份画像（facts）
+
+`internal/facts` 把"这块板是谁/什么状态"做成自动积累的旁路产物，**不占用
+采集主路径**：collector 每喂一行日志，facts 同步喂一次（纯内存匹配，无 IO）。
+
+- **三级来源与优先级**：`#DEV` 固件自述（origin=dev，最高）> esptool 深度
+  识别探测（probe）> 被动日志规则（log，最低）。低优先级来源不覆盖高优先
+  级已确立的事实；同来源新值可覆盖（IP/信道会漂移）。
+- **被动规则**用真机日志行校准（复位 banner→复位原因、esp_psram 行→
+  PSRAM、wifi 行→信道/IP/SSID），每条事实带证据行与时间戳——面板详情表
+  可回溯"这个结论是从哪行日志来的"。
+- **深度识别**：面板身份弹窗一键触发 esptool `flash_id` 探测（会复位板子，
+  有确认提示），芯片修订/MAC/flash 容量/器件 ID 回填为 probe 事实。
+- **持久化**：`<root>/<dev>/info.json`，守护重启/换名继承后从日志末尾回灌
+  256KB 秒级恢复身份；摘要字段（model/chip/flash/psram…）随 status 与
+  mesh 聚合全网广播。
+- **边界**：`#DEV` 键空间封顶 32、值截断 256——固件侧异常输出不能撑爆
+  info.json；SSID/IP 在面板展示侧默认掩码。
+
+## 托盘与守护生命周期（Windows）
+
+托盘（`internal/tray`）是**纯 ctl 客户端**：不碰串口、不落日志，与守护只经
+控制 socket 通信——托盘崩溃/退出对采集零影响。
+
+- **单实例守卫**：命名互斥体 `Local\serialtap-tray-singleton`——快捷方式/
+  双击可被反复触发，第二实例提示后即退，不堆图标。
+- **启动即探活自动拉起**：ctl socket 发一条 status（一问一答；楔死——
+  连上但不应答——视作未运行），未运行则后台无窗口 spawn
+  `serialtap run`；子进程输出落 `<root>/tray-spawn.log`（无窗口进程的
+  唯一诊断面）。仅启动时拉起一次：运行中守护退出不自动重拉，与
+  「退出托盘不影响守护」对称。
+- **无参数入口**：Windows 上裸跑 `serialtap.exe` = 进托盘（= 双击即用）；
+  `-h` 照旧输出全部命令；非 Windows 平台维持打印用法。
+- **采集优先降级**：mesh 端口被同机其他实例占用时 `run` 不再致命退出——
+  本实例 mesh 关闭并记日志，串口采集照常（托盘拉起的子守护在端口冲突
+  场景下此前会秒死）。
+- macOS 是另一种形态：`run` 默认内嵌菜单栏托盘（同进程，CGO），行为见
+  平台支持一节。
+
+## 安全模型总览
+
+信任域从内到外三层，每层独立设防：
+
+1. **ctl socket（本机同用户）**：unix socket 0600（Windows AF_UNIX 无权限
+   语义，本机任意进程可连——文档明示边界）；有活实例持锁时拒绝第二实例。
+2. **Web 面板（回环）**：默认只听 127.0.0.1。`apiGuard` 中间件——回环绑定
+   时 Host 白名单（防 DNS rebinding）；任意绑定时仍拦非回环 Origin；
+   `/api/flash` 额外要求 `X-serialtap: 1` 自定义头（multipart 是
+   CORS-simple 内容类型，表单可免预检直刷）。面板 HTML/JS 无外部依赖、
+   单文件内嵌，模板插值经静态门禁（XSS）。`panel-rev` 指纹随 status 下发，
+   守护升级后旧页面 1s 内自愈刷新。
+3. **mesh（LAN）**：PSK 派生每连接双向密钥（AES-256-GCM + 帧序 AAD 防重放
+   + salt 查重防会话重放）；持钥是第一道门，**节点自报 ID + 全员共享口令
+   意味着持钥者可冒充已批准 ID**——第二道门（approve/pending/revoked）
+   防误连不防内鬼；`mesh_access: ro` 在入站咽喉拒绝一切写命令与数据隧道
+   （含上传）。敏感产物（NVS dump/刷机镜像/下载 token）全生命周期回收：
+   用后即删 + TTL + 启动清扫。`0.0.0.0` 面板与 `mesh_auto_approve` 都是
+   明知权衡，文档与启动告警同步提示。
+
+**日志纪律**：mesh 帧体（可能含 NVS 凭据）、密钥、密钥指纹之外的口令
+信息永不落日志；设备日志属本地数据（不入仓），仓库侧文档截图一律脱敏。
