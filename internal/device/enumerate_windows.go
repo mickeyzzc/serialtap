@@ -100,11 +100,14 @@ func usbSerialMetaAt(rootKey registry.Key, enumRoot string) map[string]usbMeta {
 		if err != nil {
 			continue
 		}
-		// 复合接口子键（&MI_zz）下的串口：父设备键下唯一实例时，
-		// 用父实例（板子序列号/MAC）作身份 —— 换口不变，日志续写
-		parentInst := ""
+		// 复合接口子键（&MI_zz）下的串口：优先按 usbccgp 的 ParentIdPrefix
+		// 前缀匹配父实例（板子序列号/MAC）作身份 —— 换口不变，日志续写。
+		// Enum 树会残留已拔设备的父条目（同 VID:PID 板插拔过就永久多一条），
+		// singleInstance 会因此误判"多实例"退化回位置身份；前缀匹配不受
+		// 残留影响（残留父的前缀对不上当前接口实例）。
+		parentVP := ""
 		if mi != "" {
-			parentInst = singleInstance(rootKey, enumRoot, strings.TrimSuffix(vp, "&"+mi))
+			parentVP = strings.TrimSuffix(vp, "&"+mi)
 		}
 		for _, inst := range instances {
 			dpPath := enumRoot + `\` + vp + `\` + inst + `\Device Parameters`
@@ -120,15 +123,59 @@ func usbSerialMetaAt(rootKey registry.Key, enumRoot string) map[string]usbMeta {
 			if _, dup := out[portName]; dup {
 				continue // 同口多驱动条目（如换过驱动），取第一个
 			}
+			parentInst := ""
+			if parentVP != "" {
+				parentInst = parentByPrefix(rootKey, enumRoot, parentVP, inst)
+				if parentInst == "" {
+					parentInst = singleInstance(rootKey, enumRoot, parentVP)
+				}
+			}
 			key, pnp := inst, "USB\\"+vp+"\\"+inst
 			if parentInst != "" {
 				key = parentInst
-				pnp = "USB\\" + strings.TrimSuffix(vp, "&"+mi) + "\\" + parentInst
+				pnp = "USB\\" + parentVP + "\\" + parentInst
 			}
 			out[portName] = usbMeta{vid: vid, pid: pid, instance: key, pnp: pnp}
 		}
 	}
 	return out
+}
+
+// parentByPrefix: 复合设备按接口实例前缀找父实例。usbccgp 生成的接口子设备
+// 实例形如 "<ParentIdPrefix>&0000"（如 6&371a1be5&1&0000），父设备键值
+// ParentIdPrefix 记录同一前缀（6&371a1be5&1）—— 遍历父键实例，前缀能匹配
+// 当前接口实例的唯一父即目标（板子序列号/MAC）。多父同前缀属异常布局，
+// 返回空由调用方退回 singleInstance 语义。
+func parentByPrefix(rootKey registry.Key, enumRoot, vidpid, childInst string) string {
+	k, err := registry.OpenKey(rootKey, enumRoot+`\`+vidpid,
+		registry.READ|registry.ENUMERATE_SUB_KEYS)
+	if err != nil {
+		return ""
+	}
+	defer k.Close()
+	insts, err := k.ReadSubKeyNames(-1)
+	if err != nil {
+		return ""
+	}
+	hit := ""
+	for _, inst := range insts {
+		ik, err := registry.OpenKey(rootKey, enumRoot+`\`+vidpid+`\`+inst, registry.READ)
+		if err != nil {
+			continue
+		}
+		pfx, _, err := ik.GetStringValue("ParentIdPrefix")
+		ik.Close()
+		if err != nil || pfx == "" {
+			continue
+		}
+		if childInst == pfx || strings.HasPrefix(childInst, pfx+"&") {
+			if hit != "" {
+				return ""
+			}
+			hit = inst
+		}
+	}
+	return hit
 }
 
 // singleInstance: <enumRoot>\<vidpid> 下若恰好一个实例则返回它（复合设备找父序列号）。
